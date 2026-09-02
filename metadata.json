@@ -1,0 +1,6 @@
+{
+  "name": "Diblo - Urban Assistance Platform",
+  "description": "Personalized on-demand urban assistance platform for Mumbai. Book verified human assistants by the hour for shopping, senior citizen care, hospital visits, errands, queues, paperwork, and everyday tasks.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
