@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BookingProvider, useBooking } from './context/BookingContext';
+import { GoogleMapsProvider } from './components/maps/GoogleMapsProvider';
 import { RoleSwitcher } from './components/common/RoleSwitcher';
 import { NotificationToast } from './components/common/NotificationToast';
 import { CustomerHeader } from './components/customer/CustomerHeader';
@@ -135,7 +136,9 @@ export function App() {
   return (
     <AuthProvider>
       <BookingProvider>
-        <MainAppContent />
+        <GoogleMapsProvider>
+          <MainAppContent />
+        </GoogleMapsProvider>
       </BookingProvider>
     </AuthProvider>
   );

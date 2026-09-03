@@ -26,22 +26,22 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
   });
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6 pb-24 md:pb-12 text-[#14213D]">
+    <div className="max-w-4xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 pb-24 md:pb-12 text-[#14213D]">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black">My Assistance Bookings</h1>
+          <h1 className="text-2xl sm:text-3xl font-black">My Assistance Bookings</h1>
           <p className="text-xs text-gray-500 mt-0.5">Track active errands and view past assistance receipts</p>
         </div>
         <button
           onClick={onOpenBooking}
-          className="px-5 py-2.5 rounded-2xl bg-[#F42F73] text-white font-bold text-xs shadow-md shadow-[#F42F73]/20 hover:bg-[#D81B60] transition-colors"
+          className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-[#F42F73] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 hover:bg-[#D81B60] transition-colors min-h-[44px] flex items-center justify-center"
         >
           Book New Assistant @ ₹149/hr
         </button>
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold max-w-md">
+      <div className="flex gap-1.5 sm:gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold max-w-md overflow-x-auto scrollbar-none">
         {[
           { id: 'ALL', label: 'All Bookings' },
           { id: 'ACTIVE', label: 'Active / Live' },
@@ -51,8 +51,8 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
           <button
             key={tab.id}
             onClick={() => setFilter(tab.id as any)}
-            className={`flex-1 py-2 rounded-xl transition-all ${
-              filter === tab.id ? 'bg-white text-[#F42F73] font-bold shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            className={`flex-1 py-2 px-2.5 rounded-xl transition-all whitespace-nowrap min-h-[38px] flex items-center justify-center ${
+              filter === tab.id ? 'bg-white text-[#F42F73] font-bold shadow-xs' : 'text-gray-600 hover:text-gray-900'
             }`}
           >
             {tab.label}
@@ -63,7 +63,7 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
       {/* Bookings List */}
       <div className="space-y-4">
         {filtered.length === 0 ? (
-          <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 space-y-3">
+          <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-gray-100 space-y-3">
             <div className="text-gray-400 text-3xl">📋</div>
             <div className="text-sm font-bold text-gray-700">No bookings in this section</div>
             <p className="text-xs text-gray-400 max-w-xs mx-auto">
@@ -76,11 +76,11 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
             return (
               <div
                 key={b.id}
-                className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm hover:shadow-md transition-all space-y-4"
+                className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs hover:shadow-md transition-all space-y-4"
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-gray-400 font-mono">{b.bookingNumber}</span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
@@ -97,7 +97,7 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
                     <h3 className="text-base font-bold text-[#14213D] mt-0.5">{b.serviceName}</h3>
                   </div>
 
-                  <div className="text-right">
+                  <div className="text-left sm:text-right">
                     <div className="text-xs font-bold text-gray-400">Total Paid</div>
                     <div className="text-lg font-black text-[#F42F73]">₹{b.totalAmount}</div>
                   </div>
@@ -105,26 +105,26 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-gray-600">
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-gray-400" />
+                    <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
                     <span>{b.scheduledDate} at {b.startTime} ({b.totalHours} hrs)</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-gray-400" />
+                    <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
                     <span className="truncate">{b.location.area}, Mumbai</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
                     <span>Assistant: <strong>{b.assistantName || 'Assigned Partner'}</strong></span>
                   </div>
                 </div>
 
                 {/* Bottom Action Strip */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     {b.invoiceNumber && (
                       <button
                         onClick={() => setSelectedInvoiceBooking(b)}
-                        className="px-3.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-700 flex items-center gap-1.5 transition-colors"
+                        className="px-3.5 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-700 flex items-center gap-1.5 transition-colors min-h-[40px]"
                       >
                         <FileText className="w-3.5 h-3.5 text-[#F42F73]" />
                         <span>Tax Invoice</span>
@@ -134,7 +134,7 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
                     {b.status === 'COMPLETED' && !b.rating && (
                       <button
                         onClick={() => setRatingBooking(b)}
-                        className="px-3.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-800 flex items-center gap-1.5 border border-amber-200 transition-colors"
+                        className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-800 flex items-center gap-1.5 border border-amber-200 transition-colors min-h-[40px]"
                       >
                         <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
                         <span>Rate Assistant</span>
@@ -152,7 +152,7 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
                   {isActive && (
                     <button
                       onClick={() => onSelectBooking(b)}
-                      className="px-4 py-2 rounded-xl bg-[#F42F73] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm hover:bg-[#D81B60]"
+                      className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#F42F73] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs hover:bg-[#D81B60] min-h-[40px]"
                     >
                       <span>Track Live Assistance</span>
                       <ChevronRight className="w-3.5 h-3.5" />

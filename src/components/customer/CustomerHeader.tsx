@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown } from 'lucide-react';
+import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown, Menu, X, Clock, HelpCircle, Sparkles } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 
@@ -15,6 +15,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const mumbaiAreas = [
     'Bandra West, Mumbai',
@@ -27,19 +28,24 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
     'Lower Parel, Mumbai'
   ];
 
+  const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => {
+    onSelectTab(tab);
+    setMobileMenuOpen(false);
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-100 transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-        {/* Brand Logo & Tagline */}
-        <div className="flex items-center gap-6">
+      <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
+        {/* Brand Logo & Location */}
+        <div className="flex items-center gap-2 sm:gap-6">
           <div
-            onClick={() => onSelectTab('HOME')}
-            className="cursor-pointer flex items-baseline gap-1 select-none"
+            onClick={() => handleTabClick('HOME')}
+            className="cursor-pointer flex items-baseline gap-1 select-none py-1"
           >
             <span className="text-2xl sm:text-3xl font-black text-[#F42F73] tracking-tighter lowercase">
               diblo
             </span>
-            <span className="text-[10px] sm:text-xs font-extrabold text-[#14213D] uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">
+            <span className="text-[10px] sm:text-xs font-extrabold uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] px-1.5 py-0.5 rounded ml-1 hidden xs:inline-block">
               Mumbai
             </span>
           </div>
@@ -48,16 +54,17 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           <div className="relative">
             <button
               onClick={() => setIsLocationDropdownOpen(!isLocationDropdownOpen)}
-              className="flex items-center gap-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 px-3 py-1.5 rounded-full text-xs font-semibold text-[#14213D] transition-colors"
+              className="flex items-center gap-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold text-[#14213D] transition-colors min-h-[36px]"
+              aria-label="Select Operating Zone"
             >
-              <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-              <span className="max-w-[120px] sm:max-w-[180px] truncate">{selectedArea}</span>
-              <ChevronDown className="w-3 h-3 text-gray-400" />
+              <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
+              <span className="max-w-[100px] sm:max-w-[150px] md:max-w-[180px] truncate text-left">{selectedArea}</span>
+              <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
             </button>
 
             {isLocationDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-60 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50">
-                <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+              <div className="absolute top-full left-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50">
+                <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
                   Select Mumbai Operating Zone
                 </div>
                 {mumbaiAreas.map((area) => (
@@ -81,7 +88,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
         </div>
 
         {/* Desktop Navigation Links */}
-        <nav className="hidden md:flex items-center gap-1 text-sm font-semibold">
+        <nav className="hidden lg:flex items-center gap-1 text-sm font-semibold">
           {[
             { id: 'HOME', label: 'Home' },
             { id: 'BOOKINGS', label: 'My Bookings' },
@@ -92,9 +99,9 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
             <button
               key={item.id}
               onClick={() => onSelectTab(item.id as any)}
-              className={`px-3.5 py-2 rounded-xl transition-all relative ${
+              className={`px-3.5 py-2 rounded-xl transition-all relative min-h-[40px] flex items-center ${
                 activeTab === item.id
-                  ? 'text-[#F42F73] bg-[#FFF0F5]'
+                  ? 'text-[#F42F73] bg-[#FFF0F5] font-bold'
                   : 'text-gray-600 hover:text-[#14213D] hover:bg-gray-50'
               }`}
             >
@@ -107,46 +114,132 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
         </nav>
 
         {/* Right CTA & Emergency Safety Buttons */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
           {/* Active Booking Floating Chip (If booking in progress) */}
           {activeBooking && (
             <button
               onClick={() => onSelectTab('ACTIVITY')}
-              className="hidden sm:flex items-center gap-2 bg-[#FFF0F5] border border-[#F42F73]/30 text-[#F42F73] px-3.5 py-1.5 rounded-full text-xs font-bold animate-pulse"
+              className="hidden sm:flex items-center gap-2 bg-[#FFF0F5] border border-[#F42F73]/30 text-[#F42F73] px-3 py-1.5 rounded-full text-xs font-bold animate-pulse min-h-[36px]"
             >
               <span className="w-2 h-2 rounded-full bg-[#F42F73]" />
-              <span>Live: {activeBooking.status.replace('_', ' ')}</span>
+              <span className="hidden md:inline">Live: </span>
+              <span>{activeBooking.status.replace('_', ' ')}</span>
             </button>
           )}
 
           {/* SOS Safety Button */}
           <button
             onClick={() => setShowSosModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold transition-all active:scale-95"
+            className="flex items-center justify-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold transition-all active:scale-95 min-h-[38px] min-w-[38px]"
             title="Emergency Safety & SOS"
+            aria-label="Emergency SOS"
           >
-            <AlertTriangle className="w-3.5 h-3.5" />
+            <AlertTriangle className="w-4 h-4 shrink-0" />
             <span className="hidden sm:inline">SOS Desk</span>
           </button>
 
           {/* Book Assistant Primary CTA */}
           <button
             onClick={onOpenBooking}
-            className="bg-[#F42F73] hover:bg-[#D81B60] text-white px-4 py-2 rounded-full text-xs sm:text-sm font-bold shadow-md shadow-[#F42F73]/25 transition-all active:scale-95 flex items-center gap-1.5"
+            className="bg-[#F42F73] hover:bg-[#D81B60] text-white px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold shadow-md shadow-[#F42F73]/25 transition-all active:scale-95 flex items-center justify-center gap-1.5 min-h-[38px] whitespace-nowrap"
           >
-            <span>Book an Assistant</span>
+            <Sparkles className="w-3.5 h-3.5 hidden xs:inline" />
+            <span>Book Assistant</span>
           </button>
 
-          {/* Geometric User Avatar Circle */}
+          {/* User Avatar Circle */}
           <button
             onClick={() => onSelectTab('PROFILE')}
-            className="w-9 h-9 rounded-full bg-[#14213D] text-white text-xs font-bold flex items-center justify-center hover:ring-2 hover:ring-[#F42F73] transition-all shrink-0 ml-1"
+            className="w-9 h-9 rounded-full bg-[#14213D] text-white text-xs font-bold flex items-center justify-center hover:ring-2 hover:ring-[#F42F73] transition-all shrink-0 min-w-[36px] min-h-[36px]"
             title="My Profile"
+            aria-label="User Profile"
           >
             {currentUser?.name ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'AK'}
           </button>
+
+          {/* Mobile Menu Hamburger Button (Hidden on Desktop) */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="lg:hidden p-2 rounded-xl text-gray-700 hover:bg-gray-100 transition-colors min-w-[40px] min-h-[40px] flex items-center justify-center ml-0.5"
+            aria-label="Open Menu"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
         </div>
       </div>
+
+      {/* Mobile Drawer Menu */}
+      {mobileMenuOpen && (
+        <div className="lg:hidden fixed inset-x-0 top-16 bg-white/98 backdrop-blur-xl border-b border-gray-200 shadow-2xl z-50 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200 max-h-[85vh] overflow-y-auto">
+          {/* Mobile Zone Selector */}
+          <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100">
+            <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Operating Area</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {mumbaiAreas.slice(0, 6).map((area) => (
+                <button
+                  key={area}
+                  onClick={() => setSelectedArea(area)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
+                    selectedArea === area
+                      ? 'bg-[#F42F73] text-white font-bold'
+                      : 'bg-white border border-gray-200 text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {area.split(',')[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Mobile Navigation List */}
+          <div className="space-y-1">
+            {[
+              { id: 'HOME', label: 'Home Page' },
+              { id: 'BOOKINGS', label: 'My Bookings & Receipts' },
+              { id: 'ACTIVITY', label: 'Live Assistance & GPS' },
+              { id: 'SUPPORT', label: 'Customer Helpdesk 24x7' },
+              { id: 'PROFILE', label: 'My Profile & Addresses' }
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => handleTabClick(item.id as any)}
+                className={`w-full text-left px-4 py-3 rounded-2xl text-sm font-bold flex items-center justify-between transition-colors min-h-[44px] ${
+                  activeTab === item.id
+                    ? 'bg-[#FFF0F5] text-[#F42F73]'
+                    : 'text-[#14213D] hover:bg-gray-50'
+                }`}
+              >
+                <span>{item.label}</span>
+                {item.id === 'ACTIVITY' && activeBooking && (
+                  <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-extrabold">LIVE</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Mobile Quick Action Buttons */}
+          <div className="pt-2 space-y-2 border-t border-gray-100">
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenBooking();
+              }}
+              className="w-full py-3 rounded-2xl bg-[#F42F73] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 min-h-[46px]"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Book Assistant @ ₹149/hr</span>
+            </button>
+
+            <a
+              href="tel:8291919829"
+              className="w-full py-2.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#14213D] font-bold text-xs flex items-center justify-center gap-2 min-h-[44px] transition-colors"
+            >
+              <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
+              <span>24x7 Mumbai Helpline (8291919829)</span>
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* SOS Emergency Modal */}
       {showSosModal && (
@@ -164,21 +257,21 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
             <div className="space-y-2 pt-2">
               <a
                 href="tel:8291919829"
-                className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[44px]"
               >
                 <Phone className="w-4 h-4" />
                 <span>Call Diblo Emergency Desk (8291919829)</span>
               </a>
               <a
                 href="tel:112"
-                className="w-full py-3 rounded-xl bg-gray-900 text-white font-bold text-sm flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gray-900 text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[44px]"
               >
                 <Shield className="w-4 h-4" />
                 <span>Call Mumbai Police (112)</span>
               </a>
               <button
                 onClick={() => setShowSosModal(false)}
-                className="w-full py-2.5 text-xs text-gray-500 font-semibold hover:text-gray-800"
+                className="w-full py-2.5 text-xs text-gray-500 font-semibold hover:text-gray-800 min-h-[44px]"
               >
                 Dismiss
               </button>

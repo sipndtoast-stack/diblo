@@ -127,7 +127,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, page })
               <h3 className="text-lg font-black text-[#14213D]">{activeContent.title}</h3>
               <p className="text-xs text-gray-400 mt-0.5">{activeContent.subtitle}</p>
             </div>
-            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100">
+            <button onClick={onClose} aria-label="Close legal modal" className="p-2 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100 flex items-center justify-center min-h-[44px] min-w-[44px]">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -139,7 +139,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, page })
           <div className="pt-4 border-t border-gray-100 flex justify-end">
             <button
               onClick={onClose}
-              className="px-6 py-2.5 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-bold transition-all"
+              className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs sm:text-sm font-bold transition-all min-h-[44px] flex items-center justify-center"
             >
               Understood & Close
             </button>

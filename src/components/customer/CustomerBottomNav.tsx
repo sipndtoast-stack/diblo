@@ -19,8 +19,8 @@ export const CustomerBottomNav: React.FC<CustomerBottomNavProps> = ({ activeTab,
   ];
 
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-gray-200/80 px-2 py-1.5 shadow-lg">
-      <div className="grid grid-cols-5 gap-1">
+    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/98 backdrop-blur-xl border-t border-gray-200/80 px-1 pt-1.5 pb-2 sm:pb-1.5 shadow-xl">
+      <div className="grid grid-cols-5 gap-0.5 max-w-md mx-auto">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -28,17 +28,18 @@ export const CustomerBottomNav: React.FC<CustomerBottomNavProps> = ({ activeTab,
             <button
               key={item.id}
               onClick={() => onSelectTab(item.id as any)}
-              className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all relative ${
-                isActive ? 'text-[#F42F73]' : 'text-gray-500 hover:text-gray-900'
+              className={`flex flex-col items-center justify-center py-1 rounded-xl transition-all relative min-h-[44px] ${
+                isActive ? 'text-[#F42F73]' : 'text-gray-500 hover:text-gray-900 active:scale-95'
               }`}
+              aria-label={item.label}
             >
               <div className="relative">
                 <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
                 {item.badge && (
-                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-[#10B981] rounded-full border-2 border-white animate-pulse" />
+                  <span className="absolute -top-1 -right-1.5 w-2.5 h-2.5 bg-[#10B981] rounded-full border-2 border-white animate-pulse" />
                 )}
               </div>
-              <span className={`text-[10px] mt-0.5 ${isActive ? 'font-bold' : 'font-medium'}`}>
+              <span className={`text-[10px] mt-0.5 leading-tight ${isActive ? 'font-bold' : 'font-medium'}`}>
                 {item.label}
               </span>
             </button>

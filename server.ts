@@ -49,11 +49,15 @@ async function startServer() {
   // ==========================================
   app.get('/api/health', (req, res) => {
     const razorpayInfo = getRazorpayClient();
+    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
     res.json({
       status: 'ok',
       service: 'Diblo Urban Assistance Platform API',
       city: 'Mumbai',
       version: '1.0.0',
+      maps: {
+        configured: Boolean(mapsKey && mapsKey.trim().length > 0)
+      },
       firebase: {
         initialized: firebaseStatus.isInitialized,
         error: firebaseStatus.error || null
@@ -65,6 +69,180 @@ async function startServer() {
       environment: process.env.NODE_ENV || 'development',
       timestamp: new Date().toISOString()
     });
+  });
+
+  // ==========================================
+  // GOOGLE MAPS PLATFORM PROXY & CONFIG
+  // ==========================================
+  app.get('/api/maps/config', (req, res) => {
+    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+    res.json({
+      configured: Boolean(mapsKey && mapsKey.trim().length > 0),
+      apiKey: mapsKey ? mapsKey.trim() : null
+    });
+  });
+
+  // Reverse Geocoding Proxy (lat/lng -> formatted address)
+  app.get('/api/maps/reverse-geocode', async (req, res) => {
+    const { lat, lng } = req.query;
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'Latitude and Longitude are required' });
+    }
+
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+
+    if (!mapsKey) {
+      // Graceful fallback for local preview without key
+      return res.json({
+        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
+        area: 'Mumbai',
+        lat: latitude,
+        lng: longitude,
+        isFallback: true
+      });
+    }
+
+    try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(mapsKey)}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.results && data.results.length > 0) {
+        const result = data.results[0];
+        // Extract sublocality or locality
+        let area = 'Mumbai';
+        for (const comp of result.address_components) {
+          if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
+            area = comp.long_name;
+            break;
+          } else if (comp.types.includes('locality')) {
+            area = comp.long_name;
+          }
+        }
+
+        return res.json({
+          formattedAddress: result.formatted_address,
+          placeId: result.place_id,
+          area,
+          lat: result.geometry.location.lat,
+          lng: result.geometry.location.lng,
+          isFallback: false
+        });
+      }
+
+      return res.json({
+        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
+        area: 'Mumbai',
+        lat: latitude,
+        lng: longitude,
+        isFallback: true
+      });
+    } catch (err: any) {
+      console.error('[MAPS PROXY] Reverse geocode error occurred');
+      return res.json({
+        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
+        area: 'Mumbai',
+        lat: latitude,
+        lng: longitude,
+        isFallback: true
+      });
+    }
+  });
+
+  // Forward Geocoding / Search Proxy (query -> lat/lng & address)
+  app.get('/api/maps/geocode', async (req, res) => {
+    const { address } = req.query;
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({ error: 'Address query is required' });
+    }
+
+    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    const query = address.trim();
+
+    if (!mapsKey) {
+      // Return predefined Mumbai landmark matches if no key
+      const lower = query.toLowerCase();
+      let mockLat = 19.0596;
+      let mockLng = 72.8295;
+      let area = 'Bandra West';
+
+      if (lower.includes('andheri')) {
+        mockLat = 19.1197;
+        mockLng = 72.8468;
+        area = 'Andheri West';
+      } else if (lower.includes('powai')) {
+        mockLat = 19.1176;
+        mockLng = 72.9060;
+        area = 'Powai';
+      } else if (lower.includes('dadar')) {
+        mockLat = 19.0178;
+        mockLng = 72.8478;
+        area = 'Dadar';
+      } else if (lower.includes('colaba') || lower.includes('gate of india')) {
+        mockLat = 18.9067;
+        mockLng = 72.8147;
+        area = 'Colaba';
+      } else if (lower.includes('bkc') || lower.includes('kurla')) {
+        mockLat = 19.0657;
+        mockLng = 72.8687;
+        area = 'BKC';
+      } else if (lower.includes('juhu')) {
+        mockLat = 19.1075;
+        mockLng = 72.8263;
+        area = 'Juhu';
+      }
+
+      return res.json({
+        results: [
+          {
+            formattedAddress: `${query}, ${area}, Mumbai, Maharashtra`,
+            area,
+            lat: mockLat,
+            lng: mockLng,
+            isFallback: true
+          }
+        ]
+      });
+    }
+
+    try {
+      // Append Mumbai for context if not specified
+      const searchQuery = query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai, India`;
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(mapsKey)}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.results && data.results.length > 0) {
+        const results = data.results.slice(0, 5).map((r: any) => {
+          let area = 'Mumbai';
+          for (const comp of r.address_components) {
+            if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
+              area = comp.long_name;
+              break;
+            } else if (comp.types.includes('locality')) {
+              area = comp.long_name;
+            }
+          }
+          return {
+            formattedAddress: r.formatted_address,
+            placeId: r.place_id,
+            area,
+            lat: r.geometry.location.lat,
+            lng: r.geometry.location.lng,
+            isFallback: false
+          };
+        });
+
+        return res.json({ results });
+      }
+
+      return res.json({ results: [] });
+    } catch (err: any) {
+      console.error('[MAPS PROXY] Geocode error occurred');
+      return res.json({ results: [] });
+    }
   });
 
   // ==========================================

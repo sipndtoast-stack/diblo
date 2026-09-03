@@ -136,10 +136,10 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
             {step === 'SELECT' && (
               <div className="space-y-5">
                 {/* Method Tabs */}
-                <div className="grid grid-cols-4 gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold">
                   <button
                     onClick={() => setSelectedMethod('UPI')}
-                    className={`py-2 px-1 rounded-xl flex flex-col items-center gap-1 transition-all ${
+                    className={`py-2.5 px-1 rounded-xl flex flex-col items-center justify-center gap-1 transition-all min-h-[44px] ${
                       selectedMethod === 'UPI' ? 'bg-white text-[#F42F73] shadow-sm' : 'text-gray-600 hover:text-[#14213D]'
                     }`}
                   >
@@ -148,7 +148,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedMethod('CARD')}
-                    className={`py-2 px-1 rounded-xl flex flex-col items-center gap-1 transition-all ${
+                    className={`py-2.5 px-1 rounded-xl flex flex-col items-center justify-center gap-1 transition-all min-h-[44px] ${
                       selectedMethod === 'CARD' ? 'bg-white text-[#F42F73] shadow-sm' : 'text-gray-600 hover:text-[#14213D]'
                     }`}
                   >
@@ -157,7 +157,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedMethod('NETBANKING')}
-                    className={`py-2 px-1 rounded-xl flex flex-col items-center gap-1 transition-all ${
+                    className={`py-2.5 px-1 rounded-xl flex flex-col items-center justify-center gap-1 transition-all min-h-[44px] ${
                       selectedMethod === 'NETBANKING' ? 'bg-white text-[#F42F73] shadow-sm' : 'text-gray-600 hover:text-[#14213D]'
                     }`}
                   >
@@ -166,7 +166,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedMethod('WALLET')}
-                    className={`py-2 px-1 rounded-xl flex flex-col items-center gap-1 transition-all ${
+                    className={`py-2.5 px-1 rounded-xl flex flex-col items-center justify-center gap-1 transition-all min-h-[44px] ${
                       selectedMethod === 'WALLET' ? 'bg-white text-[#F42F73] shadow-sm' : 'text-gray-600 hover:text-[#14213D]'
                     }`}
                   >

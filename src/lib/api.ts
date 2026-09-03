@@ -339,5 +339,39 @@ export const api = {
   async resetSeedData() {
     const res = await authFetch('/api/seed/reset', { method: 'POST' });
     return res.json();
+  },
+
+  // Google Maps Platform
+  async getMapsConfig(): Promise<{ configured: boolean; apiKey: string | null }> {
+    try {
+      const res = await authFetch('/api/maps/config');
+      return res.json();
+    } catch {
+      return { configured: false, apiKey: null };
+    }
+  },
+
+  async reverseGeocode(lat: number, lng: number): Promise<{ formattedAddress: string; area: string; lat: number; lng: number; isFallback?: boolean }> {
+    try {
+      const res = await authFetch(`/api/maps/reverse-geocode?lat=${lat}&lng=${lng}`);
+      return res.json();
+    } catch {
+      return {
+        formattedAddress: `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E, Mumbai, Maharashtra`,
+        area: 'Mumbai',
+        lat,
+        lng,
+        isFallback: true
+      };
+    }
+  },
+
+  async geocodeAddress(address: string): Promise<{ results: Array<{ formattedAddress: string; area: string; lat: number; lng: number; isFallback?: boolean }> }> {
+    try {
+      const res = await authFetch(`/api/maps/geocode?address=${encodeURIComponent(address)}`);
+      return res.json();
+    } catch {
+      return { results: [] };
+    }
   }
 };

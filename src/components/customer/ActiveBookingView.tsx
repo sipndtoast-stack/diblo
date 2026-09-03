@@ -100,11 +100,11 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-24 md:pb-12 text-[#14213D]">
+    <div className="max-w-4xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-24 md:pb-12 text-[#14213D]">
       {/* Top Status Banner */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
               Booking {activeBooking.bookingNumber}
             </span>
@@ -112,10 +112,10 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
               {activeBooking.status.replace('_', ' ')}
             </span>
           </div>
-          <h2 className="text-xl font-black text-[#14213D] mt-1">{activeBooking.serviceName}</h2>
+          <h2 className="text-xl sm:text-2xl font-black text-[#14213D] mt-1">{activeBooking.serviceName}</h2>
           <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-            <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-            <span>{activeBooking.location.address} ({activeBooking.location.area})</span>
+            <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
+            <span className="break-words">{activeBooking.location.address} ({activeBooking.location.area})</span>
           </div>
         </div>
 
@@ -124,9 +124,9 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
           activeBooking.status === 'ACCEPTED' ||
           activeBooking.status === 'ON_THE_WAY' ||
           activeBooking.status === 'ARRIVED') && (
-          <div className="bg-[#FFF0F5] border border-[#F42F73]/30 p-3.5 rounded-2xl text-center shrink-0">
+          <div className="bg-[#FFF0F5] border border-[#F42F73]/30 p-3.5 sm:p-4 rounded-2xl text-center shrink-0 w-full sm:w-auto">
             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Start Task OTP</div>
-            <div className="text-2xl font-black text-[#F42F73] font-mono tracking-widest mt-0.5">
+            <div className="text-2xl sm:text-3xl font-black text-[#F42F73] font-mono tracking-widest mt-0.5">
               {activeBooking.startOtp || '5829'}
             </div>
             <div className="text-[10px] text-gray-500">Share with assistant upon arrival</div>
@@ -135,9 +135,9 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
 
         {/* In-Progress Live Timer */}
         {activeBooking.status === 'IN_PROGRESS' && (
-          <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-2xl text-center shrink-0">
+          <div className="bg-emerald-50 border border-emerald-200 p-3.5 sm:p-4 rounded-2xl text-center shrink-0 w-full sm:w-auto">
             <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Task In Progress</div>
-            <div className="text-2xl font-black text-emerald-600 font-mono tracking-widest mt-0.5">
+            <div className="text-2xl sm:text-3xl font-black text-emerald-600 font-mono tracking-widest mt-0.5">
               {formatTimer(activeBooking.timerElapsedSeconds || 320)}
             </div>
             <div className="text-[10px] text-emerald-700">Booked for {activeBooking.totalHours} hrs</div>
@@ -155,18 +155,20 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
             </span>
             <span className="text-gray-500 font-medium">GPS Tracking Active</span>
           </div>
-          <MapView
-            assistantLocation={liveAssistantCoords}
-            customerLocation={{ lat: activeBooking.location.lat, lng: activeBooking.location.lng }}
-            height="340px"
-            etaMinutes={activeBooking.status === 'ON_THE_WAY' ? liveEtaMinutes : 0}
-            distanceKm={activeBooking.status === 'ON_THE_WAY' ? liveDistanceKm : 0}
-          />
+          <div className="w-full rounded-2xl overflow-hidden shadow-xs border border-gray-100">
+            <MapView
+              assistantLocation={liveAssistantCoords}
+              customerLocation={{ lat: activeBooking.location.lat, lng: activeBooking.location.lng }}
+              height="320px"
+              etaMinutes={activeBooking.status === 'ON_THE_WAY' ? liveEtaMinutes : 0}
+              distanceKm={activeBooking.status === 'ON_THE_WAY' ? liveDistanceKm : 0}
+            />
+          </div>
         </div>
       )}
 
       {/* Assigned Assistant Card */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm space-y-4">
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
         <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Assigned Diblo Assistant</div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
@@ -176,11 +178,11 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
                 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80'
               }
               alt="Assistant"
-              className="w-14 h-14 rounded-2xl object-cover border-2 border-gray-100 shadow-sm"
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border-2 border-gray-100 shadow-xs shrink-0"
             />
             <div>
-              <div className="flex items-center gap-2">
-                <h4 className="font-extrabold text-base text-[#14213D]">{activeBooking.assistantName || 'Rajesh Sharma'}</h4>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="font-extrabold text-base sm:text-lg text-[#14213D]">{activeBooking.assistantName || 'Rajesh Sharma'}</h4>
                 <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
                   <ShieldCheck className="w-3 h-3" />
                   <span>Verified</span>
@@ -196,17 +198,17 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
           </div>
 
           {/* Quick Communication Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <a
               href={`tel:${activeBooking.assistantPhone || '9820554433'}`}
-              className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px]"
             >
               <Phone className="w-4 h-4 text-[#F42F73]" />
               <span>Call</span>
             </a>
             <button
               onClick={() => setChatOpen(!chatOpen)}
-              className="px-4 py-2.5 rounded-xl bg-[#FFF0F5] hover:bg-[#F42F73] hover:text-white text-[#F42F73] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-[#FFF0F5] hover:bg-[#F42F73] hover:text-white text-[#F42F73] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px]"
             >
               <MessageSquare className="w-4 h-4" />
               <span>Chat</span>
@@ -231,11 +233,11 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
                 value={newMsg}
                 onChange={(e) => setNewMsg(e.target.value)}
                 placeholder="Type a message..."
-                className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs"
+                className="flex-1 px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs min-h-[44px]"
               />
               <button
                 onClick={handleSendChat}
-                className="px-4 py-2 rounded-xl bg-[#14213D] text-white text-xs font-bold"
+                className="px-4 py-2.5 rounded-xl bg-[#14213D] text-white text-xs font-bold min-h-[44px]"
               >
                 Send
               </button>
@@ -258,7 +260,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
             <button
               onClick={() => handleExtend(1)}
               disabled={isExtending}
-              className="px-4 py-2 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center gap-1"
+              className="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center justify-center gap-1 min-h-[44px]"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add +1 Hour (₹149)</span>
@@ -266,7 +268,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
             <button
               onClick={() => handleExtend(2)}
               disabled={isExtending}
-              className="px-4 py-2 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center gap-1"
+              className="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center justify-center gap-1 min-h-[44px]"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add +2 Hours (₹298)</span>
@@ -277,11 +279,11 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
 
       {/* Action Buttons: Invoice, Rating, Complete, Cancel */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {activeBooking.invoiceNumber && (
             <button
               onClick={() => setShowInvoiceModal(true)}
-              className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[44px]"
             >
               <FileText className="w-4 h-4 text-[#F42F73]" />
               <span>View Tax Invoice</span>
@@ -291,7 +293,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
           {activeBooking.status === 'COMPLETED' && !activeBooking.rating && (
             <button
               onClick={() => setShowRatingModal(true)}
-              className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+              className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
             >
               <Star className="w-4 h-4 fill-gray-900" />
               <span>Rate Assistant</span>
@@ -302,7 +304,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
         {activeBooking.status !== 'COMPLETED' && activeBooking.status !== 'CANCELLED' && (
           <button
             onClick={() => setShowCancelModal(true)}
-            className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors"
+            className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors py-2 px-1 min-h-[44px] flex items-center"
           >
             Cancel Booking
           </button>

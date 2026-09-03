@@ -27,6 +27,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { api } from '../../lib/api';
 import { RazorpayCheckoutModal } from '../common/RazorpayCheckoutModal';
+import { LocationPickerMap } from '../maps/LocationPickerMap';
 
 interface BookingFlowModalProps {
   isOpen: boolean;
@@ -222,15 +223,16 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
           initial={{ opacity: 0, scale: 0.96, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 20 }}
-          className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden border border-gray-100 flex flex-col my-auto max-h-[92vh]"
+          className="bg-white w-full max-w-xl 2xl:max-w-2xl rounded-3xl shadow-2xl overflow-hidden border border-gray-100 flex flex-col my-auto max-h-[95vh] sm:max-h-[92vh]"
         >
           {/* Top Step Header */}
-          <div className="bg-[#14213D] text-white px-5 sm:px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="bg-[#14213D] text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 sm:gap-3">
               {currentStep > 1 && (
                 <button
                   onClick={() => setCurrentStep((prev) => prev - 1)}
-                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors min-h-[36px]"
+                  aria-label="Previous step"
                 >
                   <ArrowLeft className="w-4 h-4" />
                 </button>
@@ -239,7 +241,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 <div className="text-[10px] font-bold text-[#F42F73] uppercase tracking-wider">
                   Step {currentStep} of 6
                 </div>
-                <div className="text-sm sm:text-base font-bold text-white">
+                <div className="text-xs sm:text-base font-bold text-white leading-tight">
                   {currentStep === 1 && 'Select Assistance Service'}
                   {currentStep === 2 && 'Customer Mobile & OTP'}
                   {currentStep === 3 && 'Select Location in Mumbai'}
@@ -252,14 +254,15 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
 
             <button
               onClick={onClose}
-              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+              className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors min-h-[36px]"
+              aria-label="Close modal"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
           {/* Progress Indicator Bar */}
-          <div className="w-full bg-gray-100 h-1 flex">
+          <div className="w-full bg-gray-100 h-1.5 flex">
             {[1, 2, 3, 4, 5, 6].map((st) => (
               <div
                 key={st}
@@ -271,7 +274,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
           </div>
 
           {/* Scrollable Form Content */}
-          <div className="p-5 sm:p-6 overflow-y-auto space-y-6">
+          <div className="p-4 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6">
             {/* ======================================================== */}
             {/* STEP 1: SELECT SERVICE */}
             {/* ======================================================== */}
@@ -281,16 +284,16 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                   Choose the type of human assistance you need. All services are billed at ₹149/hour.
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 max-h-[360px] sm:max-h-[380px] overflow-y-auto pr-1">
                   {SERVICES.map((s) => {
                     const isSelected = selectedService.id === s.id;
                     return (
                       <div
                         key={s.id}
                         onClick={() => setSelectedService(s)}
-                        className={`p-3.5 rounded-2xl border text-left cursor-pointer transition-all flex items-start gap-3 ${
+                        className={`p-3 sm:p-3.5 rounded-2xl border text-left cursor-pointer transition-all flex items-start gap-3 min-h-[56px] ${
                           isSelected
-                            ? 'border-[#F42F73] bg-[#FFF0F5] shadow-sm'
+                            ? 'border-[#F42F73] bg-[#FFF0F5] shadow-xs'
                             : 'border-gray-200 hover:border-gray-300 bg-white'
                         }`}
                       >
@@ -316,7 +319,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
 
                 <button
                   onClick={() => setCurrentStep(2)}
-                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                 >
                   <span>Next: Customer Verification</span>
                   <ArrowRight className="w-4 h-4" />
@@ -341,14 +344,14 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       placeholder="e.g. Aarav Mehta"
-                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                      className="w-full px-3.5 py-3 sm:py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-[#14213D] mb-1">Mobile Number</label>
                     <div className="flex gap-2">
-                      <div className="px-3 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 flex items-center">
+                      <div className="px-3 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 flex items-center min-h-[44px]">
                         🇮🇳 +91
                       </div>
                       <input
@@ -357,13 +360,13 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
                         placeholder="9820123456"
-                        className="flex-1 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                        className="flex-1 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
                       />
                       {!otpSent ? (
                         <button
                           type="button"
                           onClick={handleSendOtp}
-                          className="px-4 py-2.5 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#1E293B]"
+                          className="px-4 py-2.5 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#1E293B] min-h-[44px]"
                         >
                           Send OTP
                         </button>
@@ -371,7 +374,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                         <button
                           type="button"
                           onClick={handleSendOtp}
-                          className="px-3 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200"
+                          className="px-3 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200 min-h-[44px]"
                         >
                           Resend
                         </button>
@@ -393,7 +396,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                         value={otp}
                         onChange={(e) => setOtp(e.target.value)}
                         placeholder="1234"
-                        className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-center text-lg font-mono font-bold tracking-widest text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                        className="w-full px-3.5 py-3 bg-gray-50 border border-gray-200 rounded-xl text-center text-xl font-mono font-bold tracking-widest text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[48px]"
                       />
                     </motion.div>
                   )}
@@ -410,7 +413,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                   {otpSent ? (
                     <button
                       onClick={handleVerifyOtp}
-                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                     >
                       <span>Verify & Continue</span>
                       <ArrowRight className="w-4 h-4" />
@@ -418,7 +421,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                   ) : (
                     <button
                       onClick={handleSendOtp}
-                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                     >
                       <span>Send Verification OTP</span>
                       <ArrowRight className="w-4 h-4" />
@@ -438,7 +441,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 </div>
 
                 {/* Location Type Pills */}
-                <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold">
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-gray-100 p-1 rounded-2xl text-xs font-semibold">
                   {[
                     { id: 'SAVED', label: 'Saved Address' },
                     { id: 'CURRENT', label: 'Current GPS' },
@@ -447,9 +450,9 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                     <button
                       key={t.id}
                       onClick={() => setSelectedAddressType(t.id as any)}
-                      className={`py-2 px-2 rounded-xl text-center transition-all ${
+                      className={`py-2 px-1.5 sm:px-2 rounded-xl text-center transition-all min-h-[38px] flex items-center justify-center ${
                         selectedAddressType === t.id
-                          ? 'bg-white text-[#F42F73] font-bold shadow-sm'
+                          ? 'bg-white text-[#F42F73] font-bold shadow-xs'
                           : 'text-gray-600 hover:text-gray-900'
                       }`}
                     >
@@ -477,7 +480,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                             : 'border-gray-200 hover:border-gray-300'
                         }`}
                       >
-                        <MapPin className={`w-4 h-4 mt-0.5 ${savedAddressId === addr.id ? 'text-[#F42F73]' : 'text-gray-400'}`} />
+                        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${savedAddressId === addr.id ? 'text-[#F42F73]' : 'text-gray-400'}`} />
                         <div className="flex-1">
                           <div className="text-xs font-bold text-[#14213D] flex items-center justify-between">
                             <span>{addr.title} ({addr.area})</span>
@@ -490,46 +493,56 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                   </div>
                 )}
 
-                {/* Custom Address Input */}
+                {/* Custom Address / Interactive Map */}
                 {(selectedAddressType === 'CUSTOM' || selectedAddressType === 'CURRENT') && (
-                  <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-200">
-                    <div>
-                      <label className="block text-xs font-bold text-[#14213D] mb-1">Building / Street Address</label>
-                      <input
-                        type="text"
-                        value={customAddress}
-                        onChange={(e) => setCustomAddress(e.target.value)}
-                        placeholder="Flat no., building name, street"
-                        className="w-full px-3.5 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-3">
+                    <LocationPickerMap
+                      initialLat={customLat}
+                      initialLng={customLng}
+                      initialAddress={customAddress}
+                      initialArea={customArea}
+                      height="240px"
+                      showConfirmButton={false}
+                      onLocationSelected={(loc) => {
+                        setCustomLat(loc.lat);
+                        setCustomLng(loc.lng);
+                        setCustomAddress(loc.address);
+                        setCustomArea(loc.area);
+                      }}
+                    />
+
+                    <div className="bg-gray-50 p-3.5 rounded-2xl border border-gray-200 space-y-3">
                       <div>
-                        <label className="block text-xs font-bold text-[#14213D] mb-1">Landmark</label>
+                        <label className="block text-xs font-bold text-[#14213D] mb-1">Flat / Building / Specific Door Details</label>
                         <input
                           type="text"
-                          value={customLandmark}
-                          onChange={(e) => setCustomLandmark(e.target.value)}
-                          placeholder="Near metro station"
-                          className="w-full px-3.5 py-2 bg-white border border-gray-200 rounded-xl text-xs text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                          value={customAddress}
+                          onChange={(e) => setCustomAddress(e.target.value)}
+                          placeholder="e.g. Flat 502, Orchid Heights, Carter Road"
+                          className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
                         />
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-[#14213D] mb-1">Area / Suburb</label>
-                        <select
-                          value={customArea}
-                          onChange={(e) => setCustomArea(e.target.value)}
-                          className="w-full px-3.5 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
-                        >
-                          <option value="Bandra West">Bandra West</option>
-                          <option value="Andheri West">Andheri West</option>
-                          <option value="Powai">Powai</option>
-                          <option value="Colaba">Colaba</option>
-                          <option value="Dadar">Dadar</option>
-                          <option value="Juhu">Juhu</option>
-                          <option value="Thane West">Thane West</option>
-                          <option value="Lower Parel">Lower Parel</option>
-                        </select>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-bold text-[#14213D] mb-1">Landmark (Optional)</label>
+                          <input
+                            type="text"
+                            value={customLandmark}
+                            onChange={(e) => setCustomLandmark(e.target.value)}
+                            placeholder="Near Cafe Coffee Day"
+                            className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-[#14213D] mb-1">Selected Area</label>
+                          <input
+                            type="text"
+                            value={customArea}
+                            onChange={(e) => setCustomArea(e.target.value)}
+                            placeholder="Bandra West"
+                            className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -537,12 +550,12 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
 
                 {/* Optional Second Destination (for errand / hospital run) */}
                 <div className="pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-700">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-700 min-h-[32px]">
                     <input
                       type="checkbox"
                       checked={hasDestination}
                       onChange={(e) => setHasDestination(e.target.checked)}
-                      className="rounded text-[#F42F73] focus:ring-[#F42F73]"
+                      className="rounded text-[#F42F73] focus:ring-[#F42F73] w-4 h-4"
                     />
                     <span>Add a 2nd stop / hospital / market destination</span>
                   </label>
@@ -552,14 +565,14 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       value={destinationAddress}
                       onChange={(e) => setDestinationAddress(e.target.value)}
                       placeholder="e.g. Lilavati Hospital OPD / Nature's Basket Pali Hill"
-                      className="mt-2 w-full px-3.5 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                      className="mt-2 w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
                     />
                   )}
                 </div>
 
                 <button
                   onClick={() => setCurrentStep(4)}
-                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                 >
                   <span>Next: Choose Date & Duration</span>
                   <ArrowRight className="w-4 h-4" />
@@ -588,7 +601,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       <button
                         key={d.id}
                         onClick={() => setDateType(d.id as any)}
-                        className={`py-2.5 rounded-xl border text-xs font-bold transition-all ${
+                        className={`py-2.5 rounded-xl border text-xs font-bold transition-all min-h-[44px] flex items-center justify-center ${
                           dateType === d.id
                             ? 'border-[#F42F73] bg-[#FFF0F5] text-[#F42F73]'
                             : 'border-gray-200 hover:border-gray-300 text-gray-700'
@@ -604,7 +617,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       type="date"
                       value={customDate}
                       onChange={(e) => setCustomDate(e.target.value)}
-                      className="mt-2 w-full px-3.5 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D]"
+                      className="mt-2 w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-[#14213D] min-h-[44px]"
                     />
                   )}
                 </div>
@@ -615,7 +628,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                   <select
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#14213D]"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#14213D] min-h-[44px]"
                   >
                     {[
                       '06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM',
@@ -635,18 +648,18 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       <div className="text-[11px] text-gray-500">Minimum 2 hours requirement</div>
                     </div>
 
-                    <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-xl border border-gray-200 shadow-sm">
+                    <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-xl border border-gray-200 shadow-xs">
                       <button
                         onClick={() => setBookedHours((prev) => Math.max(2, prev - 1))}
                         disabled={bookedHours <= 2}
-                        className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-30 flex items-center justify-center text-gray-800 transition-colors"
+                        className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-30 flex items-center justify-center text-gray-800 transition-colors min-h-[32px]"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="font-extrabold text-sm text-[#14213D] w-6 text-center">{bookedHours}</span>
                       <button
                         onClick={() => setBookedHours((prev) => Math.min(10, prev + 1))}
-                        className="w-7 h-7 rounded-lg bg-[#FFF0F5] hover:bg-[#F42F73] hover:text-white flex items-center justify-center text-[#F42F73] transition-colors"
+                        className="w-8 h-8 rounded-lg bg-[#FFF0F5] hover:bg-[#F42F73] hover:text-white flex items-center justify-center text-[#F42F73] transition-colors min-h-[32px]"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -666,7 +679,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
 
                 <button
                   onClick={() => setCurrentStep(5)}
-                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                 >
                   <span>Next: Errand Details & Notes</span>
                   <ArrowRight className="w-4 h-4" />
@@ -710,7 +723,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       <button
                         key={g.id}
                         onClick={() => setGenderPreference(g.id as any)}
-                        className={`py-2 rounded-xl border text-xs font-bold transition-all ${
+                        className={`py-2.5 rounded-xl border text-xs font-bold transition-all min-h-[44px] flex items-center justify-center ${
                           genderPreference === g.id
                             ? 'border-[#F42F73] bg-[#FFF0F5] text-[#F42F73]'
                             : 'border-gray-200 hover:border-gray-300 text-gray-700'
@@ -723,14 +736,14 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 </div>
 
                 {/* Emergency Contact */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-[#14213D] mb-1">Contact Person</label>
                     <input
                       type="text"
                       value={contactName}
                       onChange={(e) => setContactName(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-[#14213D]"
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-[#14213D] min-h-[44px]"
                     />
                   </div>
                   <div>
@@ -739,14 +752,14 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       type="tel"
                       value={emergencyPhone}
                       onChange={(e) => setEmergencyPhone(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-[#14213D]"
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-[#14213D] min-h-[44px]"
                     />
                   </div>
                 </div>
 
                 <button
                   onClick={() => setCurrentStep(6)}
-                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
                 >
                   <span>Next: Review & Confirm</span>
                   <ArrowRight className="w-4 h-4" />
@@ -798,12 +811,12 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       value={couponCode}
                       onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                       placeholder="ENTER COUPON"
-                      className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-mono font-bold text-[#14213D] uppercase"
+                      className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-mono font-bold text-[#14213D] uppercase min-h-[44px]"
                     />
                     <button
                       onClick={handleApplyCoupon}
                       disabled={isApplyingCoupon}
-                      className="px-4 py-2 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#1E293B]"
+                      className="px-4 py-2 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#1E293B] min-h-[44px]"
                     >
                       Apply
                     </button>
@@ -847,7 +860,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 {/* Primary CTA: Confirm & Pay */}
                 <button
                   onClick={handleConfirmAndPay}
-                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-black text-sm shadow-xl shadow-[#F42F73]/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                  className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-black text-xs sm:text-sm shadow-xl shadow-[#F42F73]/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] min-h-[48px]"
                 >
                   <Lock className="w-4 h-4" />
                   <span>Confirm & Pay ₹{totalAmount}</span>

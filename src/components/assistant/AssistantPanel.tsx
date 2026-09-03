@@ -143,22 +143,22 @@ export const AssistantPanel: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* Metric Cards Banner */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-1">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
             <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Today's Earnings</div>
             <div className="text-xl sm:text-2xl font-black text-emerald-600">₹{assistantProfile?.earnings?.today || 1490}</div>
             <div className="text-[10px] text-gray-500">Fixed rate ₹120/hr payout</div>
           </div>
 
-          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-1">
+          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
             <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Completed Tasks</div>
             <div className="text-xl sm:text-2xl font-black text-[#14213D]">{assistantProfile?.completedTasksCount || 342}</div>
             <div className="text-[10px] text-gray-500">100% On-Time Record</div>
           </div>
 
-          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-1">
+          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
             <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Customer Rating</div>
             <div className="text-xl sm:text-2xl font-black text-amber-500 flex items-center gap-1">
               <span>{assistantProfile?.rating || 4.9}</span>
@@ -167,7 +167,7 @@ export const AssistantPanel: React.FC = () => {
             <div className="text-[10px] text-gray-500">Top Rated Assistant</div>
           </div>
 
-          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-1">
+          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
             <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Weekly Payout</div>
             <div className="text-xl sm:text-2xl font-black text-[#14213D]">₹{assistantProfile?.earnings?.week || 8450}</div>
             <div className="text-[10px] text-emerald-600 font-semibold">Auto-transfers every Monday</div>
@@ -176,22 +176,22 @@ export const AssistantPanel: React.FC = () => {
 
         {/* ACTIVE TASK SECTION */}
         {activeTask ? (
-          <div className="bg-white rounded-3xl p-6 border-2 border-[#F42F73] shadow-lg space-y-6">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-[#F42F73] shadow-lg space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-4">
               <div>
-                <span className="bg-[#FFF0F5] text-[#F42F73] text-xs font-black px-2.5 py-1 rounded-full uppercase">
+                <span className="bg-[#FFF0F5] text-[#F42F73] text-xs font-black px-2.5 py-1 rounded-full uppercase inline-block">
                   ACTIVE ASSISTANCE: {activeTask.status.replace('_', ' ')}
                 </span>
-                <h3 className="text-xl font-black text-[#14213D] mt-2">{activeTask.serviceName}</h3>
+                <h3 className="text-xl sm:text-2xl font-black text-[#14213D] mt-2">{activeTask.serviceName}</h3>
                 <div className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 text-[#F42F73]" />
-                  <span>{activeTask.location.address} ({activeTask.location.area})</span>
+                  <MapPin className="w-4 h-4 text-[#F42F73] shrink-0" />
+                  <span className="line-clamp-1">{activeTask.location.address} ({activeTask.location.area})</span>
                 </div>
               </div>
 
-              <div className="text-right">
+              <div className="text-left sm:text-right">
                 <div className="text-xs font-bold text-gray-400">Assistance Duration</div>
-                <div className="text-lg font-black text-[#14213D]">{activeTask.totalHours} Hours (@ ₹149/hr)</div>
+                <div className="text-base sm:text-lg font-black text-[#14213D]">{activeTask.totalHours} Hours (@ ₹149/hr)</div>
               </div>
             </div>
 
@@ -211,7 +211,7 @@ export const AssistantPanel: React.FC = () => {
               <div className="flex items-center gap-2">
                 <a
                   href={`tel:${activeTask.customerPhone}`}
-                  className="px-4 py-2 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-bold flex items-center gap-1.5"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-bold flex items-center justify-center gap-1.5 min-h-[44px]"
                 >
                   <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
                   <span>Call Customer</span>
@@ -223,12 +223,12 @@ export const AssistantPanel: React.FC = () => {
             <div className="space-y-3">
               <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">Current Action Step</div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {/* Step 1: On the way */}
                 {(activeTask.status === 'ASSIGNED' || activeTask.status === 'ACCEPTED') && (
                   <button
                     onClick={() => handleStartRoute(activeTask.id)}
-                    className="py-4 px-6 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-[#F42F73]/20 transition-all"
+                    className="py-4 px-6 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-[#F42F73]/20 transition-all min-h-[48px]"
                   >
                     <Navigation className="w-4 h-4" />
                     <span>Start Navigation to Customer</span>
@@ -239,7 +239,7 @@ export const AssistantPanel: React.FC = () => {
                 {activeTask.status === 'ON_THE_WAY' && (
                   <button
                     onClick={() => handleArrived(activeTask.id)}
-                    className="py-4 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all"
+                    className="py-4 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all min-h-[48px]"
                   >
                     <MapPin className="w-4 h-4" />
                     <span>I Have Arrived at Location</span>
@@ -250,7 +250,7 @@ export const AssistantPanel: React.FC = () => {
                 {activeTask.status === 'ARRIVED' && (
                   <button
                     onClick={() => setShowOtpModal(true)}
-                    className="py-4 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+                    className="py-4 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all min-h-[48px]"
                   >
                     <Key className="w-4 h-4" />
                     <span>Enter Customer Start OTP</span>
@@ -261,7 +261,7 @@ export const AssistantPanel: React.FC = () => {
                 {activeTask.status === 'IN_PROGRESS' && (
                   <button
                     onClick={() => handleCompleteTask(activeTask.id)}
-                    className="py-4 px-6 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg transition-all"
+                    className="py-4 px-6 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-all min-h-[48px]"
                   >
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <span>Complete Assistance Task</span>
@@ -273,7 +273,7 @@ export const AssistantPanel: React.FC = () => {
         ) : null}
 
         {/* Incoming Assistance Tasks Queue (Available in Mumbai) */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-base font-bold text-[#14213D]">Nearby Assistance Requests</h3>
@@ -290,11 +290,11 @@ export const AssistantPanel: React.FC = () => {
               <div>Stay online to receive automated dispatch notifications!</div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {incomingRequests.map((req) => (
                 <div
                   key={req.id}
-                  className="p-5 rounded-2xl border border-gray-200 hover:border-[#F42F73] transition-all bg-gray-50/50 space-y-3"
+                  className="p-4 sm:p-5 rounded-2xl border border-gray-200 hover:border-[#F42F73] transition-all bg-gray-50/50 space-y-3"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -309,18 +309,18 @@ export const AssistantPanel: React.FC = () => {
 
                   <div className="text-xs text-gray-600 space-y-1">
                     <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
+                      <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
                       <span className="truncate">{req.location.address} ({req.location.area})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-gray-400" />
+                      <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                       <span>{req.scheduledDate} at {req.startTime}</span>
                     </div>
                   </div>
 
                   <button
                     onClick={() => handleAcceptTask(req.id)}
-                    className="w-full py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                    className="w-full py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-xs min-h-[44px]"
                   >
                     <span>Accept Task Booking</span>
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -332,9 +332,9 @@ export const AssistantPanel: React.FC = () => {
         </div>
 
         {/* Assistant Completed Task History */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
           <h3 className="text-base font-bold text-[#14213D]">Recent Completed Tasks</h3>
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {bookings
               .filter((b) => b.status === 'COMPLETED')
               .slice(0, 4)

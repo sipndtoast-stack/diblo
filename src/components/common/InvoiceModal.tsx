@@ -26,7 +26,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
           className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-gray-100 flex flex-col max-h-[90vh]"
         >
           {/* Header Action Bar */}
-          <div className="bg-gray-50 border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+          <div className="bg-gray-50 border-b border-gray-100 px-4 sm:px-6 py-3.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Tax Invoice</span>
               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -36,14 +36,16 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
             <div className="flex items-center gap-2">
               <button
                 onClick={handlePrint}
-                className="p-2 text-gray-600 hover:text-[#14213D] hover:bg-gray-200 rounded-xl transition-colors"
+                className="p-2 text-gray-600 hover:text-[#14213D] hover:bg-gray-200 rounded-xl transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                 title="Print Invoice"
+                aria-label="Print Invoice"
               >
                 <Printer className="w-4 h-4" />
               </button>
               <button
                 onClick={onClose}
-                className="p-2 text-gray-600 hover:text-[#14213D] hover:bg-gray-200 rounded-xl transition-colors"
+                className="p-2 text-gray-600 hover:text-[#14213D] hover:bg-gray-200 rounded-xl transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close Invoice"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -51,9 +53,9 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
           </div>
 
           {/* Printable Invoice Body */}
-          <div className="p-6 overflow-y-auto space-y-6 text-[#14213D]" id="printable-invoice">
+          <div className="p-4 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6 text-[#14213D]" id="printable-invoice">
             {/* Brand Header */}
-            <div className="flex justify-between items-start border-b border-gray-100 pb-5">
+            <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b border-gray-100 pb-4 sm:pb-5">
               <div>
                 <div className="text-2xl font-black tracking-tight text-[#F42F73]">
                   diblo<span className="text-[#14213D]">.in</span>
@@ -64,7 +66,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
                   GSTIN: 27AABCD9912M1ZK • support@diblo.in
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-left sm:text-right">
                 <div className="text-xs font-bold text-gray-400">INVOICE NO</div>
                 <div className="text-sm font-extrabold text-[#14213D] font-mono">{booking.invoiceNumber || 'INV-2026-0089'}</div>
                 <div className="text-[11px] text-gray-500 mt-1">
@@ -74,7 +76,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
             </div>
 
             {/* Bill To & Service Details */}
-            <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-2xl text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 bg-gray-50 p-4 rounded-2xl text-xs">
               <div>
                 <div className="font-bold text-gray-400 uppercase text-[10px] mb-1">Billed To (Customer)</div>
                 <div className="font-bold text-sm text-[#14213D]">{booking.customerName}</div>
@@ -90,8 +92,8 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
             </div>
 
             {/* Itemized Fare Breakdown Table */}
-            <div>
-              <table className="w-full text-left text-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs min-w-[280px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-gray-400 font-semibold text-[10px] uppercase">
                     <th className="py-2">Description</th>
@@ -136,7 +138,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
             </div>
 
             {/* Payment & Security Footer */}
-            <div className="border-t border-gray-100 pt-4 flex items-center justify-between text-[11px] text-gray-500">
+            <div className="border-t border-gray-100 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-gray-500">
               <div>
                 <div>Payment Method: <span className="font-semibold text-gray-700">{booking.paymentMethod || 'Razorpay Gateway'}</span></div>
                 <div className="font-mono text-[10px] text-gray-400">Payment ID: {booking.paymentId || 'pay_verified_diblo'}</div>
@@ -149,17 +151,17 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, onClose, boo
           </div>
 
           {/* Bottom Action */}
-          <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+          <div className="p-4 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
             <button
               onClick={handlePrint}
-              className="flex-1 py-3 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+              className="flex-1 py-3 px-4 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all min-h-[44px]"
             >
               <Download className="w-4 h-4" />
               <span>Download PDF Invoice</span>
             </button>
             <button
               onClick={onClose}
-              className="px-6 py-3 rounded-2xl bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-bold text-xs transition-all"
+              className="px-6 py-3 rounded-2xl bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-bold text-xs transition-all min-h-[44px] flex items-center justify-center"
             >
               Close
             </button>

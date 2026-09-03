@@ -10,16 +10,47 @@
     --diblo-bg-light: #fcfcfc;
   }
   
+  html {
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: #fcfcfc;
     color: #14213D;
+    overflow-x: hidden;
+    min-height: 100vh;
     -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
   }
+
+  /* Responsive image & media rule */
+  img, svg, video, canvas, audio, iframe, embed, object {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Fluid Typography Utilities using CSS clamp */
+.fluid-hero-title {
+  font-size: clamp(1.875rem, 4.5vw + 1rem, 3.75rem);
+  line-height: 1.12;
+}
+
+.fluid-section-title {
+  font-size: clamp(1.5rem, 3vw + 0.5rem, 2.5rem);
+  line-height: 1.2;
+}
+
+.fluid-card-title {
+  font-size: clamp(1.125rem, 1.8vw + 0.3rem, 1.375rem);
+  line-height: 1.3;
 }
 
 /* Custom scrollbar */
