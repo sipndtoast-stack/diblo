@@ -62,6 +62,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const switchRole = async (newRole: UserRole) => {
+    tokenStorage.setActiveRole(newRole);
     setCurrentRole(newRole);
     let targetPhone = '9820123456';
     if (newRole === 'ASSISTANT') targetPhone = '9820554433';
