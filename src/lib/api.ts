@@ -174,17 +174,55 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, otp, role, name })
       });
-      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, { success: false, error: 'Network error' });
+      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, {
+        success: false,
+        error: `Server responded with status ${res.status}`
+      });
       if (data.success && data.token) {
         tokenStorage.set(data.token);
       }
       return data;
     } catch (e: any) {
-      return { success: false, error: e.message };
+      return { success: false, error: e?.message || 'Failed to verify verification code' };
     }
   },
 
-  async loginWithEmail(email: string, password: string, role: UserRole = 'CUSTOMER', name?: string, isSignUp = false): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
+  async syncFirebaseAuth(payload: {
+    firebaseUid: string;
+    email: string;
+    name?: string;
+    role?: UserRole;
+    firebaseToken?: string;
+  }): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
+    try {
+      if (payload.role) {
+        tokenStorage.setActiveRole(payload.role);
+      }
+      const res = await authFetch('/api/auth/sync-firebase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, {
+        success: false,
+        error: `Server sync failed with status ${res.status}`
+      });
+      if (data.success && data.token) {
+        tokenStorage.set(data.token);
+      }
+      return data;
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Failed to synchronize Firebase session' };
+    }
+  },
+
+  async loginWithEmail(
+    email: string,
+    password: string,
+    role: UserRole = 'CUSTOMER',
+    name?: string,
+    isSignUp = false
+  ): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
     try {
       tokenStorage.setActiveRole(role);
       const res = await authFetch('/api/auth/login-email', {
@@ -192,13 +230,16 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role, name, isSignUp })
       });
-      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, { success: false, error: 'Network error' });
+      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, {
+        success: false,
+        error: `Authentication request failed (HTTP ${res.status})`
+      });
       if (data.success && data.token) {
         tokenStorage.set(data.token);
       }
       return data;
     } catch (e: any) {
-      return { success: false, error: e.message };
+      return { success: false, error: e?.message || 'Unable to connect to authentication service' };
     }
   },
 
@@ -429,6 +470,15 @@ export const api = {
     return safeJson<AssistantProfile>(res);
   },
 
+  async createAssistantProfile(data: any): Promise<AssistantProfile> {
+    const res = await authFetch('/api/assistants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return safeJson<AssistantProfile>(res);
+  },
+
   async toggleAssistantOnline(id: string): Promise<{ success: boolean; isOnline?: boolean; error?: string }> {
     try {
       const res = await authFetch(`/api/assistants/${id}/toggle-online`, {
@@ -478,6 +528,15 @@ export const api = {
 
   async getCustomer(id: string): Promise<CustomerProfile> {
     const res = await authFetch(`/api/customers/${id}`);
+    return safeJson<CustomerProfile>(res);
+  },
+
+  async createCustomerProfile(data: any): Promise<CustomerProfile> {
+    const res = await authFetch('/api/customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
     return safeJson<CustomerProfile>(res);
   },
 

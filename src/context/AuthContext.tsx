@@ -1,7 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage } from '../lib/api';
-import { auth, onAuthStateChanged, firebaseSignOut } from '../lib/firebase';
+import {
+  auth,
+  onAuthStateChanged,
+  firebaseSignOut,
+  firebaseSignInWithEmail,
+  firebaseSignUpWithEmail,
+  isFirebaseConfigured,
+  getFirebaseErrorMessage
+} from '../lib/firebase';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -10,9 +18,16 @@ interface AuthContextType {
   assistantProfile: AssistantProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isFirebaseLive: boolean;
   switchRole: (role: UserRole) => Promise<void>;
   loginWithPhoneOtp: (phone: string, otp: string, role?: UserRole, name?: string) => Promise<{ success: boolean; error?: string }>;
-  loginWithEmailPassword: (email: string, pass: string, role?: UserRole, name?: string, isSignUp?: boolean) => Promise<{ success: boolean; error?: string }>;
+  loginWithEmailPassword: (
+    email: string,
+    pass: string,
+    role?: UserRole,
+    name?: string,
+    isSignUp?: boolean
+  ) => Promise<{ success: boolean; error?: string; code?: string }>;
   loginDemoUser: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
@@ -28,6 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const isFirebaseLive = isFirebaseConfigured();
 
   // Single Source of Truth: Firebase Auth listener + Persistent Session Check
   useEffect(() => {
@@ -46,7 +62,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (savedToken) {
-          // Verify with backend session endpoint (/api/auth/me)
           const meRes = await api.getMe().catch(() => null);
 
           if (isMounted) {
@@ -96,47 +111,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Subscribe to Firebase Auth listener as the core source of truth
+    // Subscribe to Firebase Auth listener when configured
     try {
-      unsubscribeFirebase = onAuthStateChanged(auth, (firebaseUser) => {
-        if (!isMounted) return;
-        if (!firebaseUser && !tokenStorage.get()) {
-          setCurrentUser(null);
-          setIsLoading(false);
-        }
-      });
+      if (auth) {
+        unsubscribeFirebase = onAuthStateChanged(auth, (firebaseUser) => {
+          if (!isMounted) return;
+          if (!firebaseUser && !tokenStorage.get()) {
+            setCurrentUser(null);
+            setIsLoading(false);
+          }
+        });
+      }
     } catch (err) {
       console.warn('[Diblo Auth] Firebase listener init:', err);
     }
 
-    // Run session check
     verifyAndLoadSession();
 
     return () => {
       isMounted = false;
-      if (unsubscribeFirebase) unsubscribeFirebase();
+      if (unsubscribeFirebase) {
+        unsubscribeFirebase();
+      }
     };
   }, []);
 
   const switchRole = async (newRole: UserRole) => {
-    tokenStorage.setActiveRole(newRole);
     setCurrentRole(newRole);
-
-    let targetPhone = '9820123456';
-    if (newRole === 'ASSISTANT') targetPhone = '9820554433';
-    else if (newRole === 'ADMIN') targetPhone = '9820001122';
-    else if (newRole === 'OPERATIONS') targetPhone = '9820003344';
+    tokenStorage.setActiveRole(newRole);
 
     try {
-      const authRes = await api.verifyOtp(targetPhone, '1234', newRole);
-      if (authRes.success && authRes.user) {
-        tokenStorage.setUser(authRes.user);
-        setCurrentUser(authRes.user);
-        if (newRole === 'CUSTOMER' && authRes.profile) {
-          setCustomerProfile(authRes.profile);
-        } else if (newRole === 'ASSISTANT' && authRes.profile) {
-          setAssistantProfile(authRes.profile);
+      if (newRole === 'CUSTOMER' && currentUser) {
+        let cust = await api.getCustomer(currentUser.phone).catch(() => null);
+        if (!cust) {
+          cust = await api.createCustomerProfile({
+            userId: currentUser.id,
+            name: currentUser.name,
+            phone: currentUser.phone,
+            addresses: [
+              {
+                id: `addr-${Date.now()}`,
+                title: 'Home',
+                address: 'Mumbai, Maharashtra',
+                area: 'Bandra West',
+                lat: 19.0596,
+                lng: 72.8295,
+                isDefault: true
+              }
+            ],
+            emergencyContact: {
+              name: 'Emergency Contact',
+              phone: '9820000000',
+              relationship: 'Family'
+            },
+            referralCode: `DIBLO-${currentUser.phone.slice(-4)}`
+          });
         }
+        setCustomerProfile(cust);
+      } else if (newRole === 'ASSISTANT' && currentUser) {
+        let asst = await api.getAssistant(currentUser.phone).catch(() => null);
+        if (!asst) {
+          asst = await api.createAssistantProfile({
+            userId: currentUser.id,
+            name: currentUser.name,
+            phone: currentUser.phone,
+            hourlyRate: 199,
+            serviceCategories: ['COMPANIONSHIP', 'LOCAL_MUMBAI_ERRANDS'],
+            skills: ['Hindi & English Speaker', 'Mumbai Navigator', 'Senior Care']
+          });
+        }
+        setAssistantProfile(asst);
       }
     } catch {
       // Role switch fallback
@@ -181,7 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: res.error || 'Verification failed. Please check the OTP.' };
     } catch (e: any) {
       console.error('OTP login failed', e);
-      return { success: false, error: e.message || 'Network error during login' };
+      return { success: false, error: e.message || 'Failed to complete OTP verification' };
     }
   };
 
@@ -191,7 +235,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role: UserRole = 'CUSTOMER',
     name?: string,
     isSignUp = false
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; error?: string; code?: string }> => {
+    // 1. Live Firebase Authentication flow when configured
+    if (isFirebaseConfigured() && auth) {
+      try {
+        let userCred;
+        if (isSignUp) {
+          userCred = await firebaseSignUpWithEmail(email, pass, name);
+        } else {
+          userCred = await firebaseSignInWithEmail(email, pass);
+        }
+
+        const firebaseUser = userCred.user;
+        const idToken = await firebaseUser.getIdToken();
+
+        // Synchronize authenticated Firebase user with Diblo backend profile
+        const syncRes = await api.syncFirebaseAuth({
+          firebaseUid: firebaseUser.uid,
+          email: firebaseUser.email || email,
+          name: name || firebaseUser.displayName || undefined,
+          role,
+          firebaseToken: idToken
+        });
+
+        if (syncRes.success && syncRes.user) {
+          tokenStorage.setUser(syncRes.user);
+          setCurrentUser(syncRes.user);
+          setCurrentRole(role);
+
+          if (role === 'CUSTOMER' && syncRes.profile) {
+            setCustomerProfile(syncRes.profile);
+          } else if (role === 'ASSISTANT' && syncRes.profile) {
+            setAssistantProfile(syncRes.profile);
+          }
+        }
+
+        // Navigate to Home upon successful login
+        if (typeof window !== 'undefined') {
+          window.history.pushState({}, '', '/');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        }
+
+        return { success: true };
+      } catch (fbErr: any) {
+        console.error('[Firebase Authentication Error]', fbErr);
+        const { code, message } = getFirebaseErrorMessage(fbErr);
+        return {
+          success: false,
+          code,
+          error: `[${code}] ${message}`
+        };
+      }
+    }
+
+    // 2. Development / Local test flow when Firebase API key is not yet set in environment
+    // Ensures end-to-end testing (New user -> Sign Up -> Home, Existing user -> Login -> Home) succeeds
     try {
       const res = await api.loginWithEmail(email, pass, role, name, isSignUp);
       if (res.success && res.user) {
@@ -213,9 +311,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         return { success: true };
       }
-      return { success: false, error: res.error || 'Authentication failed' };
+      return { success: false, error: res.error || 'Authentication failed. Please verify your credentials.' };
     } catch (e: any) {
-      return { success: false, error: e.message || 'Error signing in' };
+      return { success: false, error: e.message || 'Error communicating with authentication service' };
     }
   };
 
@@ -272,6 +370,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         assistantProfile,
         isAuthenticated: !!currentUser,
         isLoading,
+        isFirebaseLive,
         switchRole,
         loginWithPhoneOtp,
         loginWithEmailPassword,
@@ -288,6 +387,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
   return context;
 };

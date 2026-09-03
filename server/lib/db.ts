@@ -148,6 +148,27 @@ export const dbRepository = {
     return memoryUsers.find((u) => u.id === id) || null;
   },
 
+  async getUserById(id: string): Promise<User | null> {
+    return this.getUser(id);
+  },
+
+  async getUserByEmail(email: string): Promise<User | null> {
+    if (!email) return null;
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        const snapshot = await db.collection('users').where('email', '==', email).limit(1).get();
+        if (!snapshot.empty) {
+          const doc = snapshot.docs[0];
+          return { id: doc.id, ...(doc.data() as any) };
+        }
+      } catch (err) {
+        console.error('[DB] Error finding user by email:', err);
+      }
+    }
+    return memoryUsers.find((u) => (u as any).email?.toLowerCase() === email.toLowerCase()) || null;
+  },
+
   async getUserByPhone(phone: string): Promise<User | null> {
     const { isInitialized, db } = initializeFirebaseAdmin();
     if (isInitialized && db) {
@@ -220,6 +241,10 @@ export const dbRepository = {
     return memoryCustomers.find((c) => c.id === idOrUserId || c.userId === idOrUserId) || null;
   },
 
+  async getCustomerByUserId(userId: string): Promise<CustomerProfile | null> {
+    return this.getCustomer(userId);
+  },
+
   async saveCustomer(customer: CustomerProfile): Promise<CustomerProfile> {
     const idx = memoryCustomers.findIndex((c) => c.id === customer.id || c.phone === customer.phone);
     if (idx >= 0) {
@@ -285,6 +310,10 @@ export const dbRepository = {
       }
     }
     return memoryAssistants.find((a) => a.id === idOrUserId || a.userId === idOrUserId) || null;
+  },
+
+  async getAssistantByUserId(userId: string): Promise<AssistantProfile | null> {
+    return this.getAssistant(userId);
   },
 
   async saveAssistant(assistant: AssistantProfile): Promise<AssistantProfile> {

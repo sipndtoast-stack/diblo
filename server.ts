@@ -33,7 +33,7 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   // Initialize Firebase Admin on startup
   const firebaseStatus = initializeFirebaseAdmin();
@@ -49,6 +49,17 @@ async function startServer() {
   // ==========================================
   // SYSTEM & HEALTH
   // ==========================================
+  app.get('/api/config/firebase', (req, res) => {
+    res.json({
+      apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || '',
+      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-39440.firebaseapp.com',
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-39440',
+      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-39440.appspot.com',
+      messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '439493514637',
+      appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:439493514637:web:diblo39440app',
+    });
+  });
+
   app.get('/api/health', (req, res) => {
     const razorpayInfo = getRazorpayClient();
     const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -555,6 +566,115 @@ async function startServer() {
       user,
       profile
     });
+  });
+
+  // Sync session with Firebase Auth user
+  app.post('/api/auth/sync-firebase', async (req, res) => {
+    try {
+      const { firebaseUid, email, name, role = 'CUSTOMER', firebaseToken } = req.body;
+
+      if (!email && !firebaseUid) {
+        return res.status(400).json({ success: false, error: 'Firebase UID or email required' });
+      }
+
+      // Check if user already exists
+      let user = (await dbRepository.getUserByEmail(email)) || (await dbRepository.getUserById(firebaseUid));
+
+      if (!user) {
+        // Create new user linked to Firebase
+        user = {
+          id: firebaseUid || `usr-${Date.now()}`,
+          name: name || email.split('@')[0],
+          phone: '9820' + Math.floor(100000 + Math.random() * 900000),
+          email: email,
+          role: role as UserRole,
+          createdAt: new Date().toISOString()
+        };
+        await dbRepository.saveUser(user);
+      }
+
+      let profile = null;
+      if (user.role === 'CUSTOMER') {
+        profile = await dbRepository.getCustomerByUserId(user.id);
+        if (!profile) {
+          profile = {
+            id: `cust-${Date.now()}`,
+            userId: user.id,
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            addresses: [
+              {
+                id: `addr-${Date.now()}`,
+                title: 'Home',
+                address: 'Mumbai, Maharashtra',
+                area: 'Bandra West',
+                lat: 19.0596,
+                lng: 72.8295,
+                isDefault: true
+              }
+            ],
+            emergencyContact: {
+              name: 'Emergency Contact',
+              phone: '9820000000',
+              relationship: 'Family'
+            },
+            referralCode: `DIBLO-${user.phone.slice(-4)}`,
+            walletBalance: 100,
+            createdAt: new Date().toISOString()
+          };
+          await dbRepository.saveCustomer(profile);
+        }
+      } else if (user.role === 'ASSISTANT') {
+        profile = await dbRepository.getAssistantByUserId(user.id);
+        if (!profile) {
+          profile = {
+            id: `asst-${Date.now()}`,
+            userId: user.id,
+            name: user.name,
+            phone: user.phone,
+            rating: 4.9,
+            ratingCount: 1,
+            reviewsCount: 1,
+            completedTasksCount: 0,
+            hourlyRate: 199,
+            serviceCategories: ['COMPANIONSHIP', 'LOCAL_MUMBAI_ERRANDS'],
+            skills: ['Hindi & English Speaker', 'Mumbai Navigator', 'Senior Care'],
+            isVerified: true,
+            isOnline: true,
+            verificationStatus: 'VERIFIED',
+            currentLocation: {
+              lat: 19.0596,
+              lng: 72.8295,
+              address: 'Bandra West, Mumbai',
+              updatedAt: new Date().toISOString()
+            },
+            joinedAt: new Date().toISOString()
+          };
+          await dbRepository.saveAssistant(profile);
+        }
+      }
+
+      const token = generateAuthToken({
+        id: user.id,
+        userId: user.id,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        customerId: profile?.id
+      });
+
+      return res.json({
+        success: true,
+        token,
+        user,
+        profile
+      });
+    } catch (err: any) {
+      console.error('[sync-firebase error]', err);
+      return res.status(500).json({ success: false, error: err.message || 'Failed to sync Firebase session' });
+    }
   });
 
   // ==========================================
@@ -1106,9 +1226,108 @@ async function startServer() {
     }
   });
 
+  app.post('/api/assistants', async (req, res) => {
+    try {
+      const data = req.body;
+      const existing = await dbRepository.getAssistant(data.userId || data.phone || data.id);
+      if (existing) {
+        return res.json(existing);
+      }
+      const newAssistant: AssistantProfile = {
+        id: data.id || `asst-${Date.now()}`,
+        userId: data.userId || `usr-${Date.now()}`,
+        name: data.name || 'Assistant',
+        phone: data.phone || '9820000000',
+        email: data.email,
+        photo: data.photo || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+        rating: 4.9,
+        totalRatings: 1,
+        verificationStatus: 'VERIFIED',
+        policeVerified: true,
+        languages: ['English', 'Hindi', 'Marathi'],
+        serviceCapabilities: data.serviceCategories || ['DAILY_CHORES', 'CARE_COMPANION', 'LOCAL_MUMBAI_ERRANDS'],
+        serviceArea: ['Bandra', 'Andheri', 'Khar', 'Juhu', 'Santa Cruz'],
+        isOnline: true,
+        currentLocation: {
+          lat: 19.0596,
+          lng: 72.8295,
+          address: 'Bandra West, Mumbai',
+          area: 'Bandra West',
+          lastUpdated: new Date().toISOString()
+        },
+        earnings: {
+          today: 0,
+          week: 0,
+          month: 0,
+          total: 0,
+          pendingPayout: 0
+        },
+        documents: [],
+        bankDetails: {
+          accountNumber: 'XXXXXX1234',
+          ifsc: 'HDFC0001234',
+          bankName: 'HDFC Bank Bandra',
+          accountHolder: data.name || 'Assistant'
+        },
+        emergencyContact: {
+          name: 'Contact',
+          phone: '9820000000',
+          relationship: 'Family'
+        },
+        completedTasksCount: 0,
+        acceptanceRate: 100,
+        joinedDate: new Date().toISOString()
+      };
+      await dbRepository.saveAssistant(newAssistant);
+      res.json(newAssistant);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create assistant', details: err.message });
+    }
+  });
+
   // ==========================================
   // CUSTOMERS MANAGEMENT
   // ==========================================
+  app.post('/api/customers', async (req, res) => {
+    try {
+      const data = req.body;
+      const existing = await dbRepository.getCustomer(data.userId || data.phone || data.id);
+      if (existing) {
+        return res.json(existing);
+      }
+      const newCustomer: CustomerProfile = {
+        id: data.id || `cust-${Date.now()}`,
+        userId: data.userId || `usr-${Date.now()}`,
+        name: data.name || 'Customer',
+        phone: data.phone || '9820000000',
+        email: data.email || `${data.phone || Date.now()}@example.com`,
+        avatar: data.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
+        savedAddresses: data.addresses || [
+          {
+            id: `addr-${Date.now()}`,
+            title: 'Home',
+            address: 'Mumbai, Maharashtra',
+            area: 'Bandra West',
+            lat: 19.0596,
+            lng: 72.8295,
+            isDefault: true
+          }
+        ],
+        emergencyContact: data.emergencyContact || {
+          name: 'Emergency Contact',
+          phone: '9820000000',
+          relationship: 'Family'
+        },
+        referralCode: data.referralCode || `DIBLO-${(data.phone || '0000').slice(-4)}`,
+        walletBalance: 100,
+        createdAt: new Date().toISOString()
+      };
+      await dbRepository.saveCustomer(newCustomer);
+      res.json(newCustomer);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create customer', details: err.message });
+    }
+  });
   app.get('/api/customers', requireAuth, requireRole('ADMIN', 'OPERATIONS'), async (req, res) => {
     try {
       const list = await dbRepository.getCustomers();

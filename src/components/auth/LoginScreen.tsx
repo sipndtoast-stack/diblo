@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
-  const { loginWithPhoneOtp, loginWithEmailPassword, loginDemoUser } = useAuth();
+  const { loginWithPhoneOtp, loginWithEmailPassword, loginDemoUser, isFirebaseLive } = useAuth();
 
   // Auth modes: 'PHONE' | 'EMAIL' | 'DEMO'
   const [activeTab, setActiveTab] = useState<'PHONE' | 'EMAIL' | 'DEMO'>('PHONE');
@@ -94,7 +94,7 @@ export const LoginScreen: React.FC = () => {
         setErrorMessage(res.error || 'Failed to send OTP. Please try again.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Network error while sending OTP.');
+      setErrorMessage(err?.message || 'Unable to deliver verification code. Please check your network and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -295,16 +295,47 @@ export const LoginScreen: React.FC = () => {
           </button>
         </div>
 
+        {/* Firebase Authentication Status Pill */}
+        <div className="flex items-center justify-between px-2 py-1 text-[11px] text-gray-500 bg-gray-50/80 rounded-xl border border-gray-100">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isFirebaseLive ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-amber-500 ring-2 ring-amber-200'
+              }`}
+            />
+            <span>
+              Auth Engine:{' '}
+              <strong className="text-gray-700 font-semibold">
+                {isFirebaseLive ? 'Firebase Cloud' : 'Developer Sandbox'}
+              </strong>
+            </span>
+          </div>
+          <span className="text-gray-400 font-mono text-[10px]">diblo-39440</span>
+        </div>
+
         {/* Error / Success Notifications */}
         {errorMessage && (
-          <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5">
+          <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5 shadow-xs">
             <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-            <div className="flex-1 font-medium">{errorMessage}</div>
+            <div className="flex-1 space-y-1">
+              {errorMessage.includes('[') && errorMessage.includes(']') ? (
+                <div className="flex flex-col gap-1">
+                  <span className="inline-block px-1.5 py-0.5 rounded bg-red-100 border border-red-300 font-mono text-[10px] text-red-800 font-bold self-start">
+                    {errorMessage.slice(errorMessage.indexOf('[') + 1, errorMessage.indexOf(']'))}
+                  </span>
+                  <span className="font-medium text-xs text-red-700">
+                    {errorMessage.slice(errorMessage.indexOf(']') + 1).trim()}
+                  </span>
+                </div>
+              ) : (
+                <div className="font-medium">{errorMessage}</div>
+              )}
+            </div>
           </div>
         )}
 
         {successMessage && (
-          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs flex items-start gap-2.5">
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs flex items-start gap-2.5 shadow-xs">
             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
             <div className="flex-1 font-medium">{successMessage}</div>
           </div>
