@@ -3,10 +3,10 @@ import { UserRole } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { api } from '../../lib/api';
-import { User, ShieldCheck, Briefcase, RotateCcw, Sparkles } from 'lucide-react';
+import { User, ShieldCheck, Briefcase, RotateCcw, Sparkles, LogOut } from 'lucide-react';
 
 export const RoleSwitcher: React.FC = () => {
-  const { currentRole, switchRole, currentUser } = useAuth();
+  const { currentRole, switchRole, currentUser, logout } = useAuth();
   const { refreshBookings } = useBooking();
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
@@ -95,6 +95,15 @@ export const RoleSwitcher: React.FC = () => {
           >
             <RotateCcw className={`w-3 h-3 ${isResetting ? 'animate-spin' : ''}`} />
             <span>{resetSuccess ? 'Done!' : 'Reset Demo'}</span>
+          </button>
+
+          <button
+            onClick={() => logout()}
+            className="flex items-center gap-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-white px-2 sm:px-2.5 py-1 rounded-lg transition-colors text-[10px] sm:text-[11px] font-semibold border border-red-500/30 min-h-[32px]"
+            title="Log out and return to Login Screen"
+          >
+            <LogOut className="w-3 h-3" />
+            <span className="hidden xs:inline">Log Out</span>
           </button>
         </div>
       </div>

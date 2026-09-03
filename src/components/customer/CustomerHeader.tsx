@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown, Menu, X, Clock, HelpCircle, Sparkles } from 'lucide-react';
+import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown, Menu, X, Clock, HelpCircle, Sparkles, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
+import { PWAInstallButton } from '../common/PWAInstallButton';
 
 interface CustomerHeaderProps {
   onOpenBooking: () => void;
@@ -10,7 +11,7 @@ interface CustomerHeaderProps {
 }
 
 export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, onSelectTab, activeTab }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, logout } = useAuth();
   const { activeBooking } = useBooking();
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
@@ -138,6 +139,9 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
             <span className="hidden sm:inline">SOS Desk</span>
           </button>
 
+          {/* In-App PWA Install Quick Button */}
+          <PWAInstallButton className="hidden md:inline-flex" />
+
           {/* Book Assistant Primary CTA */}
           <button
             onClick={onOpenBooking}
@@ -219,6 +223,18 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
 
           {/* Mobile Quick Action Buttons */}
           <div className="pt-2 space-y-2 border-t border-gray-100">
+            {/* Mobile PWA Install option */}
+            <div className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FFF0F5] border border-[#F42F73]/20">
+              <div className="flex items-center gap-2.5">
+                <img src="/icon.svg" className="w-8 h-8 rounded-xl shrink-0" alt="Diblo" />
+                <div className="text-left">
+                  <div className="text-xs font-bold text-[#14213D]">Diblo App</div>
+                  <div className="text-[10px] text-gray-500">Fast home screen access</div>
+                </div>
+              </div>
+              <PWAInstallButton variant="compact" />
+            </div>
+
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
@@ -237,6 +253,17 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
               <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
               <span>24x7 Mumbai Helpline (8291919829)</span>
             </a>
+
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                logout();
+              }}
+              className="w-full py-2.5 rounded-2xl bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs flex items-center justify-center gap-2 min-h-[44px] transition-colors border border-red-100"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Log Out</span>
+            </button>
           </div>
         </div>
       )}

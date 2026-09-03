@@ -8,10 +8,12 @@ import {
   SupportTicket,
   ServiceItem,
   PlatformAnalytics,
-  UserRole
+  UserRole,
+  User
 } from '../types';
 
 const AUTH_TOKEN_KEY = 'diblo_auth_token';
+const AUTH_USER_KEY = 'diblo_auth_user';
 const ACTIVE_ROLE_KEY = 'diblo_active_role';
 
 export const tokenStorage = {
@@ -27,9 +29,27 @@ export const tokenStorage = {
       localStorage.setItem(AUTH_TOKEN_KEY, token);
     } catch {}
   },
+  getUser(): User | null {
+    try {
+      const raw = localStorage.getItem(AUTH_USER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  setUser(user: User | null) {
+    try {
+      if (user) {
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(AUTH_USER_KEY);
+      }
+    } catch {}
+  },
   clear() {
     try {
       localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_USER_KEY);
     } catch {}
   },
   getActiveRole(): UserRole {
@@ -159,6 +179,36 @@ export const api = {
         tokenStorage.set(data.token);
       }
       return data;
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async loginWithEmail(email: string, password: string, role: UserRole = 'CUSTOMER', name?: string, isSignUp = false): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
+    try {
+      tokenStorage.setActiveRole(role);
+      const res = await authFetch('/api/auth/login-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role, name, isSignUp })
+      });
+      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, { success: false, error: 'Network error' });
+      if (data.success && data.token) {
+        tokenStorage.set(data.token);
+      }
+      return data;
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async getMe(): Promise<{ success: boolean; user?: any; profile?: any; error?: string }> {
+    try {
+      const res = await authFetch('/api/auth/me');
+      if (res.status === 401) {
+        return { success: false, error: 'Unauthorized' };
+      }
+      return safeJson(res, { success: false, error: 'Failed to verify session' });
     } catch (e: any) {
       return { success: false, error: e.message };
     }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BookingProvider, useBooking } from './context/BookingContext';
 import { GoogleMapsProvider } from './components/maps/GoogleMapsProvider';
@@ -13,8 +13,11 @@ import { CustomerProfile } from './components/customer/CustomerProfile';
 import { CustomerSupport } from './components/customer/CustomerSupport';
 import { BookingFlowModal } from './components/customer/BookingFlowModal';
 import { LegalModal } from './components/customer/LegalModal';
+import { PWAInstallModal } from './components/common/PWAInstallModal';
 import { AssistantPanel } from './components/assistant/AssistantPanel';
 import { AdminPanel } from './components/admin/AdminPanel';
+import { AuthLoadingScreen } from './components/auth/AuthLoadingScreen';
+import { LoginScreen } from './components/auth/LoginScreen';
 import { ServiceItem, Booking } from './types';
 
 const MainAppContent: React.FC = () => {
@@ -128,8 +131,70 @@ const MainAppContent: React.FC = () => {
 
       {/* Global Realtime In-App Notification Toast */}
       <NotificationToast />
+
+      {/* Global PWA Install Popup */}
+      <PWAInstallModal />
     </div>
   );
+};
+
+/**
+ * AppRouter handles route protection and authentication gates:
+ * 1. Loading state -> Shows AuthLoadingScreen
+ * 2. Unauthenticated -> Forces redirect to /login and shows LoginScreen
+ * 3. Authenticated -> Allows access to Home/Dashboard and redirects /login to /
+ */
+const AppRouter: React.FC = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+  const [, setLocationPath] = useState(() =>
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
+
+  // Track browser history / popstate
+  useEffect(() => {
+    const onPopState = () => {
+      setLocationPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Route protection and URL redirection
+  useEffect(() => {
+    if (isLoading) return;
+
+    if (!isAuthenticated) {
+      // Unauthenticated users are redirected to /login
+      if (window.location.pathname !== '/login') {
+        window.history.replaceState({}, '', '/login');
+        setLocationPath('/login');
+      }
+    } else {
+      // Authenticated users on /login are redirected to /
+      if (window.location.pathname === '/login' || window.location.pathname === '/signup') {
+        window.history.replaceState({}, '', '/');
+        setLocationPath('/');
+      }
+    }
+  }, [isAuthenticated, isLoading]);
+
+  // 1. Auth Loading: Show clean branded splash loading
+  if (isLoading) {
+    return <AuthLoadingScreen />;
+  }
+
+  // 2. Unauthenticated: Render responsive Login / Sign Up screen exclusively
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#FAFAFA]">
+        <LoginScreen />
+        <PWAInstallModal />
+      </div>
+    );
+  }
+
+  // 3. Authenticated: Render protected MainAppContent
+  return <MainAppContent />;
 };
 
 export function App() {
@@ -137,7 +202,7 @@ export function App() {
     <AuthProvider>
       <BookingProvider>
         <GoogleMapsProvider>
-          <MainAppContent />
+          <AppRouter />
         </GoogleMapsProvider>
       </BookingProvider>
     </AuthProvider>

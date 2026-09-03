@@ -9,6 +9,7 @@ import {
   requireAuth,
   requireRole,
   generateAuthToken,
+  verifyAuthToken,
   createPhoneOtp,
   verifyPhoneOtp,
   AuthenticatedRequest
@@ -26,7 +27,8 @@ import {
   Coupon,
   SupportTicket,
   PlatformAnalytics,
-  UserRole
+  UserRole,
+  User
 } from './src/types';
 
 async function startServer() {
@@ -431,6 +433,127 @@ async function startServer() {
       token,
       user,
       profile: customerProfile || assistantProfile || null
+    });
+  });
+
+  // Verify currently authenticated user session (/api/auth/me)
+  app.get('/api/auth/me', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No authorization token provided' });
+    }
+    const token = authHeader.split(' ')[1];
+    const decoded = verifyAuthToken(token);
+    if (!decoded) {
+      return res.status(401).json({ success: false, error: 'Invalid or expired session token' });
+    }
+
+    const cleanPhone = decoded.phone ? decoded.phone.replace(/\D/g, '').slice(-10) : '';
+    let user = cleanPhone ? await dbRepository.getUserByPhone(cleanPhone) : null;
+    let customerProfile: CustomerProfile | null = null;
+    let assistantProfile: AssistantProfile | null = null;
+
+    if (decoded.role === 'CUSTOMER') {
+      customerProfile = cleanPhone ? await dbRepository.getCustomer(cleanPhone) : null;
+    } else if (decoded.role === 'ASSISTANT') {
+      assistantProfile = cleanPhone ? await dbRepository.getAssistant(cleanPhone) : null;
+    }
+
+    if (!user) {
+      user = {
+        id: decoded.id || decoded.userId,
+        name: decoded.name,
+        phone: decoded.phone,
+        email: decoded.email || `${decoded.phone || 'user'}@diblo.in`,
+        role: decoded.role,
+        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    return res.json({
+      success: true,
+      user,
+      profile: customerProfile || assistantProfile || null
+    });
+  });
+
+  // Email & password authentication route
+  app.post('/api/auth/login-email', async (req, res) => {
+    const { email, password, role = 'CUSTOMER', name, isSignUp } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const targetRole: UserRole = ['CUSTOMER', 'ASSISTANT', 'ADMIN', 'OPERATIONS'].includes(role)
+      ? role
+      : 'CUSTOMER';
+
+    const cleanPhone = `982${Math.floor(1000000 + Math.random() * 9000000)}`;
+    const displayName = name || cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+
+    const user: User = {
+      id: `user-${targetRole.toLowerCase()}-${Date.now()}`,
+      name: displayName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      role: targetRole,
+      avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+      createdAt: new Date().toISOString()
+    };
+
+    let profile: any = null;
+    if (targetRole === 'CUSTOMER') {
+      profile = {
+        id: `cust-${Date.now()}`,
+        userId: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        avatar: user.avatar,
+        savedAddresses: [
+          {
+            id: `addr-${Date.now()}`,
+            title: 'Home',
+            address: 'Mumbai, Maharashtra',
+            area: 'Bandra West',
+            lat: 19.0596,
+            lng: 72.8295,
+            isDefault: true
+          }
+        ],
+        emergencyContact: {
+          name: 'Emergency Contact',
+          phone: '9820000000',
+          relationship: 'Family'
+        },
+        referralCode: `DIBLO-${user.phone.slice(-4)}`,
+        walletBalance: 100,
+        createdAt: new Date().toISOString()
+      };
+      await dbRepository.saveCustomer(profile);
+      await dbRepository.saveUser(user);
+    }
+
+    const token = generateAuthToken({
+      id: user.id,
+      userId: user.id,
+      phone: user.phone,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      customerId: profile?.id
+    });
+
+    return res.json({
+      success: true,
+      token,
+      user,
+      profile
     });
   });
 

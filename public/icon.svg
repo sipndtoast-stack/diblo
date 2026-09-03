@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="dibloGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF387F" />
+      <stop offset="50%" stop-color="#F42F73" />
+      <stop offset="100%" stop-color="#D8175A" />
+    </linearGradient>
+    <filter id="subtleShadow" x="-10%" y="-10%" width="120%" height="125%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#700B2B" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Background Squircle -->
+  <rect width="512" height="512" rx="128" fill="url(#dibloGrad)" />
+
+  <!-- Inner Soft Highlight -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-opacity="0.18" />
+
+  <!-- Diblo Stylized "d" Emblem with Assistive Heart/Sparkle -->
+  <g filter="url(#subtleShadow)">
+    <!-- Lowercase "d" glyph custom path -->
+    <!-- Vertical stem with rounded top -->
+    <path d="M 312 110
+             C 328 110, 340 122, 340 138
+             L 340 374
+             C 340 390, 328 402, 312 402
+             C 296 402, 284 390, 284 374
+             L 284 358
+             C 264 390, 228 406, 188 406
+             C 120 406, 72 352, 72 278
+             C 72 204, 120 150, 188 150
+             C 228 150, 264 166, 284 198
+             L 284 138
+             C 284 122, 296 110, 312 110 Z
+             M 206 206
+             C 162 206, 130 238, 130 278
+             C 130 318, 162 350, 206 350
+             C 250 350, 284 318, 284 278
+             C 284 238, 250 206, 206 206 Z"
+          fill="#FFFFFF" />
+
+    <!-- Assistance Sparkle / Star dot at top right of the stem -->
+    <path d="M 388 132
+             C 388 156, 408 176, 432 176
+             C 408 176, 388 196, 388 220
+             C 388 196, 368 176, 344 176
+             C 368 176, 388 156, 388 132 Z"
+          fill="#FFF0F5" />
+    
+    <!-- Small auxiliary spark -->
+    <circle cx="438" cy="116" r="10" fill="#FFFFFF" opacity="0.9" />
+  </g>
+</svg>

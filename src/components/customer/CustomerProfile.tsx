@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check } from 'lucide-react';
+import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check, LogOut } from 'lucide-react';
 
 export const CustomerProfile: React.FC = () => {
-  const { currentUser, customerProfile, updateCustomerProfile } = useAuth();
+  const { currentUser, customerProfile, updateCustomerProfile, logout } = useAuth();
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [newTitle, setNewTitle] = useState('Office');
   const [newAddress, setNewAddress] = useState('Godrej One, Vikhroli East, Mumbai');
@@ -194,6 +194,23 @@ export const CustomerProfile: React.FC = () => {
             Active SOS Contact
           </span>
         </div>
+      </div>
+
+      {/* Account Session & Logout */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h4 className="text-sm font-bold text-[#14213D]">Session & Security</h4>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Logged in as {currentUser?.name} ({currentUser?.phone || currentUser?.email})
+          </p>
+        </div>
+        <button
+          onClick={() => logout()}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs transition-colors border border-red-100 min-h-[40px]"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Log Out of Diblo</span>
+        </button>
       </div>
     </div>
   );
