@@ -1,0 +1,200 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered platform user account with authentication profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["CUSTOMER", "ASSISTANT", "ADMIN", "OPERATIONS"] },
+        "avatar": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "role", "createdAt"]
+    },
+    "CustomerProfile": {
+      "title": "CustomerProfile",
+      "description": "Customer specific details, saved addresses, emergency contacts, and wallet balance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "email": { "type": "string", "format": "email" },
+        "avatar": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "walletBalance": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "phone", "createdAt"]
+    },
+    "AssistantProfile": {
+      "title": "AssistantProfile",
+      "description": "Assistant partner profile with verification, skills, service areas, and live status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "email": { "type": "string" },
+        "photo": { "type": "string" },
+        "rating": { "type": "number" },
+        "totalRatings": { "type": "number" },
+        "verificationStatus": { "type": "string", "enum": ["VERIFIED", "PENDING", "REJECTED", "SUSPENDED"] },
+        "policeVerified": { "type": "boolean" },
+        "isOnline": { "type": "boolean" },
+        "completedTasksCount": { "type": "number" },
+        "acceptanceRate": { "type": "number" },
+        "activeBookingId": { "type": "string" },
+        "joinedDate": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "phone", "verificationStatus", "isOnline"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "On-demand or scheduled assistant booking record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingNumber": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "bookedHours": { "type": "number" },
+        "totalHours": { "type": "number" },
+        "hourlyRate": { "type": "number" },
+        "baseAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["SEARCHING", "ASSIGNED", "ACCEPTED", "ON_THE_WAY", "ARRIVED", "OTP_VERIFIED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+        "assistantId": { "type": "string" },
+        "startOtp": { "type": "string" },
+        "paymentStatus": { "type": "string", "enum": ["PENDING", "PAID", "REFUNDED", "FAILED"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "bookingNumber", "customerId", "serviceId", "totalAmount", "status", "paymentStatus", "createdAt"]
+    },
+    "PricingConfig": {
+      "title": "PricingConfig",
+      "description": "System pricing configuration parameters",
+      "type": "object",
+      "properties": {
+        "baseHourlyPrice": { "type": "number" },
+        "minimumBookingHours": { "type": "number" },
+        "additionalHourPrice": { "type": "number" },
+        "peakHourMultiplier": { "type": "number" },
+        "weekendMultiplier": { "type": "number" },
+        "taxesPercentage": { "type": "number" },
+        "currency": { "type": "string" }
+      },
+      "required": ["baseHourlyPrice", "minimumBookingHours", "currency"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount and promotional coupon codes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "maxDiscount": { "type": "number" },
+        "minBookingHours": { "type": "number" },
+        "expiryDate": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "code", "isActive"]
+    },
+    "Society": {
+      "title": "Society",
+      "description": "Gated residential society partnership record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "area": { "type": "string" },
+        "pinCode": { "type": "string" },
+        "residentsCount": { "type": "number" },
+        "partnershipStatus": { "type": "string" }
+      },
+      "required": ["id", "name", "area", "residentsCount"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Customer and Assistant support and emergency desk tickets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketNumber": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] },
+        "subject": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "ticketNumber", "userId", "status", "subject", "createdAt"]
+    },
+    "PaymentRecord": {
+      "title": "PaymentRecord",
+      "description": "Razorpay transaction record and settlement log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "orderId": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "amountPaise": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["CREATED", "SUCCESS", "FAILED"] },
+        "signatureVerified": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "bookingId", "orderId", "amountPaise", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User authentication records and core roles"
+    },
+    "/customers/{customerId}": {
+      "schema": "CustomerProfile",
+      "description": "Customer profiles and saved addresses"
+    },
+    "/assistants/{assistantId}": {
+      "schema": "AssistantProfile",
+      "description": "Assistant partner profiles, verification docs, and live status"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "All customer bookings and lifecycle progress"
+    },
+    "/pricing/{configId}": {
+      "schema": "PricingConfig",
+      "description": "Platform hourly pricing and tax rates"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Promo codes and discount rules"
+    },
+    "/societies/{societyId}": {
+      "schema": "Society",
+      "description": "Mumbai gated society partnership registry"
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Support tickets and user dispute desk"
+    },
+    "/payments/{paymentRecordId}": {
+      "schema": "PaymentRecord",
+      "description": "Payment records and Razorpay transaction logs"
+    }
+  }
+}

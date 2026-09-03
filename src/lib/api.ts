@@ -11,10 +11,47 @@ import {
   UserRole
 } from '../types';
 
+const AUTH_TOKEN_KEY = 'diblo_auth_token';
+
+export const tokenStorage = {
+  get(): string | null {
+    try {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(token: string) {
+    try {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+    } catch {}
+  },
+  clear() {
+    try {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    } catch {}
+  }
+};
+
+async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(options.headers || {});
+  const token = tokenStorage.get();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return fetch(url, { ...options, headers });
+}
+
 export const api = {
+  // Health
+  async checkHealth() {
+    const res = await authFetch('/api/health');
+    return res.json();
+  },
+
   // Auth
   async sendOtp(phone: string) {
-    const res = await fetch('/api/auth/send-otp', {
+    const res = await authFetch('/api/auth/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone })
@@ -23,27 +60,31 @@ export const api = {
   },
 
   async verifyOtp(phone: string, otp: string, role: UserRole = 'CUSTOMER', name?: string) {
-    const res = await fetch('/api/auth/verify-otp', {
+    const res = await authFetch('/api/auth/verify-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, otp, role, name })
     });
-    return res.json();
+    const data = await res.json();
+    if (data.success && data.token) {
+      tokenStorage.set(data.token);
+    }
+    return data;
   },
 
   // Services & Pricing
   async getServices(): Promise<ServiceItem[]> {
-    const res = await fetch('/api/services');
+    const res = await authFetch('/api/services');
     return res.json();
   },
 
   async getPricing(): Promise<PricingConfig> {
-    const res = await fetch('/api/pricing');
+    const res = await authFetch('/api/pricing');
     return res.json();
   },
 
   async updatePricing(pricing: Partial<PricingConfig>) {
-    const res = await fetch('/api/pricing', {
+    const res = await authFetch('/api/pricing', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(pricing)
@@ -53,12 +94,12 @@ export const api = {
 
   // Coupons
   async getCoupons(): Promise<Coupon[]> {
-    const res = await fetch('/api/coupons');
+    const res = await authFetch('/api/coupons');
     return res.json();
   },
 
   async applyCoupon(code: string, bookedHours: number, baseAmount: number) {
-    const res = await fetch('/api/coupons/apply', {
+    const res = await authFetch('/api/coupons/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, bookedHours, baseAmount })
@@ -67,7 +108,7 @@ export const api = {
   },
 
   async createCoupon(coupon: Partial<Coupon>) {
-    const res = await fetch('/api/coupons', {
+    const res = await authFetch('/api/coupons', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(coupon)
@@ -78,17 +119,17 @@ export const api = {
   // Bookings
   async getBookings(params?: { customerId?: string; assistantId?: string; status?: string }): Promise<Booking[]> {
     const query = new URLSearchParams(params as Record<string, string>).toString();
-    const res = await fetch(`/api/bookings?${query}`);
+    const res = await authFetch(`/api/bookings?${query}`);
     return res.json();
   },
 
   async getBooking(id: string): Promise<Booking> {
-    const res = await fetch(`/api/bookings/${id}`);
+    const res = await authFetch(`/api/bookings/${id}`);
     return res.json();
   },
 
   async createBooking(bookingData: Partial<Booking>): Promise<Booking> {
-    const res = await fetch('/api/bookings', {
+    const res = await authFetch('/api/bookings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bookingData)
@@ -97,7 +138,7 @@ export const api = {
   },
 
   async acceptBooking(id: string, assistantId?: string) {
-    const res = await fetch(`/api/bookings/${id}/accept`, {
+    const res = await authFetch(`/api/bookings/${id}/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ assistantId })
@@ -106,7 +147,7 @@ export const api = {
   },
 
   async arriveBooking(id: string) {
-    const res = await fetch(`/api/bookings/${id}/arrive`, {
+    const res = await authFetch(`/api/bookings/${id}/arrive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -114,7 +155,7 @@ export const api = {
   },
 
   async verifyBookingOtp(id: string, otp: string) {
-    const res = await fetch(`/api/bookings/${id}/verify-otp`, {
+    const res = await authFetch(`/api/bookings/${id}/verify-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ otp })
@@ -123,7 +164,7 @@ export const api = {
   },
 
   async extendBookingHours(id: string, extraHours: number) {
-    const res = await fetch(`/api/bookings/${id}/extend-hours`, {
+    const res = await authFetch(`/api/bookings/${id}/extend-hours`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extraHours })
@@ -132,7 +173,7 @@ export const api = {
   },
 
   async completeBooking(id: string) {
-    const res = await fetch(`/api/bookings/${id}/complete`, {
+    const res = await authFetch(`/api/bookings/${id}/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -140,7 +181,7 @@ export const api = {
   },
 
   async cancelBooking(id: string, reason: string) {
-    const res = await fetch(`/api/bookings/${id}/cancel`, {
+    const res = await authFetch(`/api/bookings/${id}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason })
@@ -149,7 +190,7 @@ export const api = {
   },
 
   async rateBooking(id: string, ratingData: { stars: number; comment?: string; feedbackTags?: string[]; isAssistantRating?: boolean }) {
-    const res = await fetch(`/api/bookings/${id}/rate`, {
+    const res = await authFetch(`/api/bookings/${id}/rate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ratingData)
@@ -160,24 +201,24 @@ export const api = {
   // Assistants
   async getAssistants(params?: { area?: string; status?: string; online?: boolean }): Promise<AssistantProfile[]> {
     const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
-    const res = await fetch(`/api/assistants?${query}`);
+    const res = await authFetch(`/api/assistants?${query}`);
     return res.json();
   },
 
   async getAssistant(id: string): Promise<AssistantProfile> {
-    const res = await fetch(`/api/assistants/${id}`);
+    const res = await authFetch(`/api/assistants/${id}`);
     return res.json();
   },
 
   async toggleAssistantOnline(id: string) {
-    const res = await fetch(`/api/assistants/${id}/toggle-online`, {
+    const res = await authFetch(`/api/assistants/${id}/toggle-online`, {
       method: 'PUT'
     });
     return res.json();
   },
 
   async updateAssistantStatus(id: string, data: { status?: string; policeVerified?: boolean }) {
-    const res = await fetch(`/api/assistants/${id}/status`, {
+    const res = await authFetch(`/api/assistants/${id}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -186,7 +227,7 @@ export const api = {
   },
 
   async updateAssistantLocation(id: string, locationData: { lat: number; lng: number; address?: string; area?: string; heading?: number }) {
-    const res = await fetch(`/api/assistants/${id}/location`, {
+    const res = await authFetch(`/api/assistants/${id}/location`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(locationData)
@@ -196,17 +237,17 @@ export const api = {
 
   // Customers
   async getCustomers(): Promise<CustomerProfile[]> {
-    const res = await fetch('/api/customers');
+    const res = await authFetch('/api/customers');
     return res.json();
   },
 
   async getCustomer(id: string): Promise<CustomerProfile> {
-    const res = await fetch(`/api/customers/${id}`);
+    const res = await authFetch(`/api/customers/${id}`);
     return res.json();
   },
 
   async addCustomerAddress(customerId: string, address: { title: string; address: string; landmark?: string; area: string; lat: number; lng: number; isDefault?: boolean }) {
-    const res = await fetch(`/api/customers/${customerId}/address`, {
+    const res = await authFetch(`/api/customers/${customerId}/address`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(address)
@@ -216,12 +257,12 @@ export const api = {
 
   // Societies
   async getSocieties(): Promise<Society[]> {
-    const res = await fetch('/api/societies');
+    const res = await authFetch('/api/societies');
     return res.json();
   },
 
   async createSociety(society: Partial<Society>) {
-    const res = await fetch('/api/societies', {
+    const res = await authFetch('/api/societies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(society)
@@ -230,7 +271,7 @@ export const api = {
   },
 
   async updateSociety(id: string, data: Partial<Society>) {
-    const res = await fetch(`/api/societies/${id}`, {
+    const res = await authFetch(`/api/societies/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -240,7 +281,7 @@ export const api = {
 
   // Payments
   async createPaymentOrder(amount: number, bookingId: string) {
-    const res = await fetch('/api/payments/create-order', {
+    const res = await authFetch('/api/payments/create-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount, bookingId })
@@ -249,7 +290,7 @@ export const api = {
   },
 
   async verifyPayment(paymentDetails: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature?: string; bookingId: string; paymentMethod?: string }) {
-    const res = await fetch('/api/payments/verify', {
+    const res = await authFetch('/api/payments/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(paymentDetails)
@@ -260,12 +301,12 @@ export const api = {
   // Support
   async getSupportTickets(userId?: string, role?: string): Promise<SupportTicket[]> {
     const query = new URLSearchParams({ userId: userId || '', role: role || '' }).toString();
-    const res = await fetch(`/api/support/tickets?${query}`);
+    const res = await authFetch(`/api/support/tickets?${query}`);
     return res.json();
   },
 
   async createSupportTicket(ticketData: Partial<SupportTicket>) {
-    const res = await fetch('/api/support/tickets', {
+    const res = await authFetch('/api/support/tickets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ticketData)
@@ -274,7 +315,7 @@ export const api = {
   },
 
   async replySupportTicket(id: string, replyData: { text: string; senderId: string; senderName: string; senderRole: UserRole; status?: string }) {
-    const res = await fetch(`/api/support/tickets/${id}/reply`, {
+    const res = await authFetch(`/api/support/tickets/${id}/reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(replyData)
@@ -284,13 +325,19 @@ export const api = {
 
   // Analytics
   async getAnalytics(): Promise<PlatformAnalytics> {
-    const res = await fetch('/api/analytics');
+    const res = await authFetch('/api/analytics');
+    return res.json();
+  },
+
+  // Admin Seed
+  async seedDatabase(force = false) {
+    const res = await authFetch(`/api/admin/seed?force=${force}`, { method: 'POST' });
     return res.json();
   },
 
   // Seed Reset
   async resetSeedData() {
-    const res = await fetch('/api/seed/reset', { method: 'POST' });
+    const res = await authFetch('/api/seed/reset', { method: 'POST' });
     return res.json();
   }
 };
