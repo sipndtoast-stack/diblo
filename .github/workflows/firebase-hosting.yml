@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -25,7 +25,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies with Bun
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile || bun install
 
       - name: Build frontend
         run: bun run build
@@ -47,6 +47,6 @@ jobs:
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_DIBLO_3944A || secrets.FIREBASE_SERVICE_ACCOUNT }}'
           channelId: live
           projectId: diblo-3944a

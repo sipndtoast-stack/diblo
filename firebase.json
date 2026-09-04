@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "diblo-3944a",
     "public": "dist",
     "ignore": [
       "firebase.json",
