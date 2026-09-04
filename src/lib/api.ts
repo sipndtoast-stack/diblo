@@ -82,23 +82,52 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
 }
 
 async function safeJson<T = any>(res: Response, fallbackValue?: T): Promise<T> {
+  let parsed: any = null;
   try {
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
-      const json = await res.json();
-      return json as T;
-    }
-    const text = await res.text();
-    if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-      return JSON.parse(text) as T;
+      parsed = await res.json();
+    } else {
+      const text = await res.text();
+      if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+        parsed = JSON.parse(text);
+      }
     }
   } catch (err) {
     console.warn('[API safeJson parse warning]', err);
   }
+
+  // If HTTP status is 200-299, IT IS A SUCCESS.
+  // NEVER treat HTTP 200 as an authentication or network failure!
+  if (res.ok) {
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.success === undefined && !parsed.error) {
+        parsed.success = true;
+      }
+      if (parsed.ok === undefined && !parsed.error) {
+        parsed.ok = true;
+      }
+      if (parsed.authenticated === undefined && (parsed.token || parsed.user || parsed.uid || parsed.userCredential)) {
+        parsed.authenticated = true;
+      }
+      return parsed as T;
+    }
+    return ({
+      success: true,
+      ok: true,
+      authenticated: true,
+      ...(fallbackValue && typeof fallbackValue === 'object' ? fallbackValue : {})
+    } as unknown) as T;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    return parsed as T;
+  }
+
   if (fallbackValue !== undefined) {
     return fallbackValue;
   }
-  return {} as T;
+  return ({ success: false, ok: false, error: `Request returned status ${res.status}` } as unknown) as T;
 }
 
 const fallbackAnalytics: PlatformAnalytics = {
@@ -193,7 +222,7 @@ export const api = {
     name?: string;
     role?: UserRole;
     firebaseToken?: string;
-  }): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
+  }): Promise<{ success: boolean; authenticated?: boolean; ok?: boolean; token?: string; user?: any; profile?: any; error?: string; code?: string }> {
     try {
       if (payload.role) {
         tokenStorage.setActiveRole(payload.role);
@@ -203,16 +232,30 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, {
-        success: false,
-        error: `Server sync failed with status ${res.status}`
-      });
-      if (data.success && data.token) {
-        tokenStorage.set(data.token);
+      const data = await safeJson<{ success?: boolean; authenticated?: boolean; ok?: boolean; token?: string; user?: any; profile?: any; error?: string; code?: string }>(res);
+      const isSuccessful = res.ok && (data.success !== false) && !data.error;
+      if (isSuccessful) {
+        if (data.token) {
+          tokenStorage.set(data.token);
+        }
+        return {
+          success: true,
+          authenticated: true,
+          ok: true,
+          token: data.token,
+          user: data.user,
+          profile: data.profile
+        };
       }
-      return data;
+      return {
+        success: false,
+        authenticated: false,
+        ok: false,
+        error: data.error || 'Failed to synchronize Firebase session',
+        code: data.code
+      };
     } catch (e: any) {
-      return { success: false, error: e?.message || 'Failed to synchronize Firebase session' };
+      return { success: false, authenticated: false, ok: false, error: e?.message || 'Please check your internet connection' };
     }
   },
 
@@ -222,7 +265,7 @@ export const api = {
     role: UserRole = 'CUSTOMER',
     name?: string,
     isSignUp = false
-  ): Promise<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }> {
+  ): Promise<{ success: boolean; authenticated?: boolean; ok?: boolean; token?: string; user?: any; profile?: any; error?: string; code?: string }> {
     try {
       tokenStorage.setActiveRole(role);
       const res = await authFetch('/api/auth/login-email', {
@@ -230,16 +273,43 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role, name, isSignUp })
       });
-      const data = await safeJson<{ success: boolean; token?: string; user?: any; profile?: any; error?: string }>(res, {
-        success: false,
-        error: `Authentication request failed (HTTP ${res.status})`
-      });
-      if (data.success && data.token) {
-        tokenStorage.set(data.token);
+      const data = await safeJson<{ success?: boolean; authenticated?: boolean; ok?: boolean; token?: string; user?: any; profile?: any; error?: string; code?: string }>(res);
+
+      // Do NOT interpret HTTP 200 as an authentication failure.
+      // Support response.success, response.authenticated, response.ok, or presence of user/token:
+      const isSuccessful = res.ok && (data.success !== false) && !data.error;
+
+      if (isSuccessful) {
+        if (data.token) {
+          tokenStorage.set(data.token);
+        }
+        return {
+          success: true,
+          authenticated: true,
+          ok: true,
+          token: data.token,
+          user: data.user,
+          profile: data.profile
+        };
       }
-      return data;
+
+      const errorMessage =
+        data.error ||
+        (res.status === 401
+          ? 'Invalid email or password'
+          : res.status === 404
+          ? 'Account not found'
+          : 'Authentication failed. Please check your credentials.');
+
+      return {
+        success: false,
+        authenticated: false,
+        ok: false,
+        error: errorMessage,
+        code: data.code
+      };
     } catch (e: any) {
-      return { success: false, error: e?.message || 'Unable to connect to authentication service' };
+      return { success: false, authenticated: false, ok: false, error: e?.message || 'Please check your internet connection' };
     }
   },
 

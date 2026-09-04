@@ -8,9 +8,13 @@ import {
   updateProfile,
   onAuthStateChanged as fbOnAuthStateChanged,
   signOut as fbSignOut,
+  browserLocalPersistence,
+  setPersistence,
   User as FirebaseUser,
   NextOrObserver
 } from 'firebase/auth';
+
+export type { UserCredential, FirebaseUser };
 
 export interface FirebaseClientConfig {
   apiKey: string;
@@ -21,14 +25,14 @@ export interface FirebaseClientConfig {
   appId: string;
 }
 
-// Client configuration loaded strictly from environment variables without hardcoded keys
+// Client configuration pointing strictly to verified Firebase project diblo-3944a
 export const firebaseConfig: FirebaseClientConfig = {
   apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) || '',
-  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || 'diblo-39440.firebaseapp.com',
-  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-39440',
-  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || 'diblo-39440.appspot.com',
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || 'diblo-3944a.firebaseapp.com',
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-3944a',
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || 'diblo-3944a.appspot.com',
   messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || '439493514637',
-  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || '1:439493514637:web:diblo39440app',
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || '1:439493514637:web:diblo3944a',
 };
 
 // Check if Firebase is fully configured with an API key
@@ -55,6 +59,9 @@ let authInstance: Auth | null = null;
 if (appInstance && isFirebaseConfigured()) {
   try {
     authInstance = getAuth(appInstance);
+    setPersistence(authInstance, browserLocalPersistence).catch((e) => {
+      console.warn('[Firebase Auth Persistence Notice]', e);
+    });
   } catch (err) {
     console.warn('[Firebase Auth Init]', err);
   }
@@ -65,7 +72,7 @@ export const auth: Auth | null = authInstance;
 export function getFirebaseAuth(): Auth {
   if (!authInstance) {
     if (!isFirebaseConfigured()) {
-      const error: any = new Error('Firebase API key is missing or not configured.');
+      const error: any = new Error('Authentication configuration error: Firebase API key is missing or not configured.');
       error.code = 'auth/invalid-api-key';
       throw error;
     }
@@ -73,19 +80,22 @@ export function getFirebaseAuth(): Auth {
       appInstance = initializeApp(firebaseConfig);
     }
     authInstance = getAuth(appInstance);
+    setPersistence(authInstance, browserLocalPersistence).catch((e) => {
+      console.warn('[Firebase Auth Persistence Notice]', e);
+    });
   }
   return authInstance;
 }
 
 /**
- * Standard Firebase error mapping to provide clear, actionable feedback
- * and distinguish exact Firebase error codes rather than generic "Network Error".
+ * Standard Firebase error mapping to provide clear, user-friendly feedback
+ * and distinguish exact Firebase error codes rather than generic network errors.
  */
 export function getFirebaseErrorMessage(error: any): { code: string; message: string; raw: string } {
   if (!error) {
     return {
       code: 'auth/unknown-error',
-      message: 'An unknown authentication error occurred.',
+      message: 'Authentication failed. Please try again.',
       raw: ''
     };
   }
@@ -109,48 +119,43 @@ export function getFirebaseErrorMessage(error: any): { code: string; message: st
 
   let message = '';
   switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+      message = 'Invalid email or password';
+      break;
+    case 'auth/user-not-found':
+      message = 'Account not found';
+      break;
+    case 'auth/too-many-requests':
+      message = 'Too many login attempts';
+      break;
     case 'auth/network-request-failed':
-      message =
-        'Network request failed. Unable to reach Firebase Authentication servers. Please check your internet connection, firewall, or authorized domains.';
+      message = 'Please check your internet connection';
       break;
     case 'auth/invalid-api-key':
     case 'auth/api-key-not-valid':
-      message =
-        'Invalid or missing Firebase API key. Please configure VITE_FIREBASE_API_KEY in your environment settings.';
+    case 'auth/configuration-not-found':
+      message = 'Authentication configuration error';
       break;
     case 'auth/operation-not-allowed':
-      message =
-        'Email/Password sign-in is disabled in Firebase Console. Please enable it in Firebase Console > Authentication > Sign-in method.';
-      break;
-    case 'auth/invalid-credential':
-      message = 'Invalid email or password. Please verify your credentials and try again.';
-      break;
-    case 'auth/invalid-email':
-      message = 'The email address is badly formatted. Please enter a valid email address.';
-      break;
-    case 'auth/email-already-in-use':
-      message = 'This email address is already registered. Please sign in instead.';
-      break;
-    case 'auth/weak-password':
-      message = 'The password is too weak. Firebase requires at least 6 characters.';
-      break;
-    case 'auth/too-many-requests':
-      message =
-        'Access to this account has been temporarily disabled due to many failed login attempts. Please try again later or reset your password.';
-      break;
-    case 'auth/user-not-found':
-      message = 'No user account found with this email address. Please sign up first.';
-      break;
-    case 'auth/wrong-password':
-      message = 'Incorrect password. Please verify and try again.';
+      message = 'Email/Password sign-in is disabled in Firebase Console. Please enable it in Firebase Console.';
       break;
     case 'auth/unauthorized-domain': {
       const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
       message = `Domain "${currentHost}" is not authorized. Please add it to Firebase Console > Authentication > Settings > Authorized domains.`;
       break;
     }
+    case 'auth/invalid-email':
+      message = 'Invalid email address. Please enter a valid email.';
+      break;
+    case 'auth/email-already-in-use':
+      message = 'This email address is already registered. Please sign in instead.';
+      break;
+    case 'auth/weak-password':
+      message = 'Password must be at least 6 characters.';
+      break;
     case 'auth/user-disabled':
-      message = 'This user account has been disabled by an administrator.';
+      message = 'This user account has been disabled.';
       break;
     case 'auth/popup-closed-by-user':
       message = 'Authentication popup was closed before completing.';

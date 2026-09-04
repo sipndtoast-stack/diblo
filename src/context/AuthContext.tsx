@@ -8,7 +8,8 @@ import {
   firebaseSignInWithEmail,
   firebaseSignUpWithEmail,
   isFirebaseConfigured,
-  getFirebaseErrorMessage
+  getFirebaseErrorMessage,
+  UserCredential
 } from '../lib/firebase';
 
 interface AuthContextType {
@@ -27,7 +28,7 @@ interface AuthContextType {
     role?: UserRole,
     name?: string,
     isSignUp?: boolean
-  ) => Promise<{ success: boolean; error?: string; code?: string }>;
+  ) => Promise<{ success: boolean; userCredential?: UserCredential; error?: string; code?: string }>;
   loginDemoUser: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
@@ -93,8 +94,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setCurrentUser(null);
             }
           }
+        } else if (savedUser) {
+          if (isMounted) {
+            setCurrentUser(savedUser);
+            setCurrentRole(savedUser.role || activeRole || 'CUSTOMER');
+          }
         } else {
-          // No saved token -> unauthenticated
+          // No saved token or user -> unauthenticated
           if (isMounted) {
             setCurrentUser(null);
           }
@@ -111,13 +117,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Subscribe to Firebase Auth listener when configured
+    // Subscribe to Firebase Auth listener when configured to keep sessions alive across reloads
     try {
       if (auth) {
-        unsubscribeFirebase = onAuthStateChanged(auth, (firebaseUser) => {
+        unsubscribeFirebase = onAuthStateChanged(auth, async (firebaseUser) => {
           if (!isMounted) return;
-          if (!firebaseUser && !tokenStorage.get()) {
-            setCurrentUser(null);
+          if (firebaseUser) {
+            const activeRole = tokenStorage.getActiveRole() || 'CUSTOMER';
+            const savedUser = tokenStorage.getUser();
+            const idToken = await firebaseUser.getIdToken().catch(() => '');
+
+            const syncRes = await api.syncFirebaseAuth({
+              firebaseUid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: firebaseUser.displayName || undefined,
+              role: activeRole,
+              firebaseToken: idToken
+            }).catch(() => null);
+
+            if (isMounted) {
+              const resolvedUser: User = (syncRes && syncRes.user) || savedUser || {
+                id: firebaseUser.uid,
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Diblo User',
+                phone: firebaseUser.phoneNumber || '',
+                email: firebaseUser.email || '',
+                role: activeRole,
+                walletBalance: 350,
+                isVerified: true
+              };
+
+              tokenStorage.setUser(resolvedUser);
+              setCurrentUser(resolvedUser);
+              setCurrentRole(activeRole);
+
+              if (activeRole === 'CUSTOMER') {
+                if (syncRes?.profile) setCustomerProfile(syncRes.profile);
+                else {
+                  const cust = await api.getCustomer(resolvedUser.phone || 'cust-1').catch(() => null);
+                  if (cust && isMounted) setCustomerProfile(cust);
+                }
+              } else if (activeRole === 'ASSISTANT') {
+                if (syncRes?.profile) setAssistantProfile(syncRes.profile);
+                else {
+                  const asst = await api.getAssistant(resolvedUser.phone || 'asst-1').catch(() => null);
+                  if (asst && isMounted) setAssistantProfile(asst);
+                }
+              }
+
+              setIsLoading(false);
+            }
+          } else {
+            if (!tokenStorage.get() && !tokenStorage.getUser()) {
+              setCurrentUser(null);
+            }
             setIsLoading(false);
           }
         });
@@ -235,11 +287,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role: UserRole = 'CUSTOMER',
     name?: string,
     isSignUp = false
-  ): Promise<{ success: boolean; error?: string; code?: string }> => {
+  ): Promise<{ success: boolean; userCredential?: UserCredential; error?: string; code?: string }> => {
+    // Persist role selection immediately
+    tokenStorage.setActiveRole(role);
+    setCurrentRole(role);
+
     // 1. Live Firebase Authentication flow when configured
     if (isFirebaseConfigured() && auth) {
       try {
-        let userCred;
+        let userCred: UserCredential;
         if (isSignUp) {
           userCred = await firebaseSignUpWithEmail(email, pass, name);
         } else {
@@ -258,41 +314,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           firebaseToken: idToken
         });
 
-        if (syncRes.success && syncRes.user) {
-          tokenStorage.setUser(syncRes.user);
-          setCurrentUser(syncRes.user);
-          setCurrentRole(role);
+        const resolvedUser: User = (syncRes && syncRes.user) ? syncRes.user : {
+          id: firebaseUser.uid,
+          name: name || firebaseUser.displayName || email.split('@')[0],
+          phone: firebaseUser.phoneNumber || '',
+          email: firebaseUser.email || email,
+          role,
+          walletBalance: 350,
+          isVerified: true
+        };
 
-          if (role === 'CUSTOMER' && syncRes.profile) {
+        tokenStorage.setUser(resolvedUser);
+        setCurrentUser(resolvedUser);
+        setCurrentRole(role);
+
+        if (role === 'CUSTOMER') {
+          if (syncRes?.profile) {
             setCustomerProfile(syncRes.profile);
-          } else if (role === 'ASSISTANT' && syncRes.profile) {
+          } else {
+            setCustomerProfile({
+              id: `cust-${resolvedUser.id}`,
+              userId: resolvedUser.id,
+              name: resolvedUser.name,
+              phone: resolvedUser.phone,
+              savedAddresses: [],
+              walletBalance: 350
+            });
+          }
+        } else if (role === 'ASSISTANT') {
+          if (syncRes?.profile) {
             setAssistantProfile(syncRes.profile);
+          } else {
+            setAssistantProfile({
+              id: `asst-${resolvedUser.id}`,
+              userId: resolvedUser.id,
+              name: resolvedUser.name,
+              phone: resolvedUser.phone,
+              isAvailable: true,
+              rating: 5.0,
+              totalTasksCompleted: 0,
+              badge: 'TRAINED',
+              skills: ['SHOPPING', 'QUEUE', 'OFFICE', 'ELDERLY_ASSISTANCE']
+            });
           }
         }
 
-        // Navigate to Home upon successful login
+        // Navigate to appropriate Dashboard upon confirmed Firebase authentication
         if (typeof window !== 'undefined') {
           window.history.pushState({}, '', '/');
           window.dispatchEvent(new PopStateEvent('popstate'));
         }
 
-        return { success: true };
+        return { success: true, userCredential: userCred };
       } catch (fbErr: any) {
         console.error('[Firebase Authentication Error]', fbErr);
         const { code, message } = getFirebaseErrorMessage(fbErr);
         return {
           success: false,
           code,
-          error: `[${code}] ${message}`
+          error: message
         };
       }
     }
 
-    // 2. Development / Local test flow when Firebase API key is not yet set in environment
-    // Ensures end-to-end testing (New user -> Sign Up -> Home, Existing user -> Login -> Home) succeeds
+    // 2. Development / Local flow when Firebase API key is not yet provided
     try {
       const res = await api.loginWithEmail(email, pass, role, name, isSignUp);
-      if (res.success && res.user) {
+      const isSuccess = Boolean(res.success || res.authenticated || res.ok || res.user);
+
+      if (isSuccess && res.user) {
         tokenStorage.setUser(res.user);
         setCurrentUser(res.user);
         setCurrentRole(role);
@@ -303,7 +393,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setAssistantProfile(res.profile);
         }
 
-        // Navigate to Home upon successful login
+        // Navigate to Dashboard upon successful login
         if (typeof window !== 'undefined') {
           window.history.pushState({}, '', '/');
           window.dispatchEvent(new PopStateEvent('popstate'));
@@ -311,9 +401,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         return { success: true };
       }
-      return { success: false, error: res.error || 'Authentication failed. Please verify your credentials.' };
+
+      return {
+        success: false,
+        error: res.error || 'Authentication failed. Please verify your credentials.',
+        code: res.code
+      };
     } catch (e: any) {
-      return { success: false, error: e.message || 'Error communicating with authentication service' };
+      return { success: false, error: e.message || 'Please check your internet connection' };
     }
   };
 

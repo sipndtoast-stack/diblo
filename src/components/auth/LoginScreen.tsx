@@ -310,7 +310,7 @@ export const LoginScreen: React.FC = () => {
               </strong>
             </span>
           </div>
-          <span className="text-gray-400 font-mono text-[10px]">diblo-39440</span>
+          <span className="text-gray-400 font-mono text-[10px]">diblo-3944a</span>
         </div>
 
         {/* Error / Success Notifications */}
