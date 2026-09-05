@@ -68,6 +68,61 @@ export const tokenStorage = {
   }
 };
 
+export interface StaffSession {
+  authenticated: boolean;
+  eplId: string;
+  name: string;
+  number?: string;
+  email?: string;
+  role: 'Assistant' | 'Admin';
+}
+
+const STAFF_TOKEN_KEY = 'diblo_staff_token';
+const STAFF_SESSION_KEY = 'diblo_staff_session';
+
+export const staffSessionStorage = {
+  getToken(): string | null {
+    try {
+      return localStorage.getItem(STAFF_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  setToken(token: string) {
+    try {
+      localStorage.setItem(STAFF_TOKEN_KEY, token);
+    } catch {}
+  },
+  getSession(): StaffSession | null {
+    try {
+      const raw = localStorage.getItem(STAFF_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  setSession(session: StaffSession) {
+    try {
+      // NEVER store password in session
+      const cleanSession: StaffSession = {
+        authenticated: Boolean(session.authenticated),
+        eplId: session.eplId,
+        name: session.name,
+        number: session.number,
+        email: session.email,
+        role: session.role
+      };
+      localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(cleanSession));
+    } catch {}
+  },
+  clear() {
+    try {
+      localStorage.removeItem(STAFF_TOKEN_KEY);
+      localStorage.removeItem(STAFF_SESSION_KEY);
+    } catch {}
+  }
+};
+
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
   const token = tokenStorage.get();
@@ -791,5 +846,83 @@ export const api = {
     } catch {
       return { results: [] };
     }
+  },
+
+  // Staff Authentication Methods (Google Sheet: Staff Details verification)
+  async loginStaff(
+    mobileNumber: string,
+    password: string
+  ): Promise<{
+    success: boolean;
+    role?: 'Assistant' | 'Admin';
+    eplId?: string;
+    name?: string;
+    number?: string;
+    email?: string;
+    token?: string;
+    message?: string;
+  }> {
+    try {
+      const res = await fetch('/api/staff/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobileNumber, password })
+      });
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        return { success: false, message: 'Staff login service is temporarily unavailable. Please try again.' };
+      }
+      if (data.success && data.token) {
+        staffSessionStorage.setToken(data.token);
+        staffSessionStorage.setSession({
+          authenticated: true,
+          eplId: data.eplId || '',
+          name: data.name || '',
+          number: data.number || mobileNumber,
+          email: data.email || '',
+          role: data.role
+        });
+      }
+      return data;
+    } catch (err) {
+      return { success: false, message: 'Staff login service is temporarily unavailable. Please try again.' };
+    }
+  },
+
+  async getStaffSession(): Promise<{ success: boolean; authenticated: boolean; eplId?: string; name?: string; number?: string; email?: string; role?: 'Assistant' | 'Admin'; message?: string }> {
+    const token = staffSessionStorage.getToken();
+    if (!token) {
+      return { success: false, authenticated: false };
+    }
+    try {
+      const res = await fetch('/api/staff/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        staffSessionStorage.clear();
+        return { success: false, authenticated: false };
+      }
+      const data = await res.json();
+      return data;
+    } catch {
+      const cached = staffSessionStorage.getSession();
+      if (cached && cached.authenticated) {
+        return { success: true, ...cached };
+      }
+      return { success: false, authenticated: false };
+    }
+  },
+
+  async logoutStaff(): Promise<void> {
+    const token = staffSessionStorage.getToken();
+    if (token) {
+      try {
+        await fetch('/api/staff/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } catch {}
+    }
+    staffSessionStorage.clear();
   }
 };

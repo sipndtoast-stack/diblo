@@ -366,12 +366,21 @@ const LeafletMapViewInner: React.FC<MapViewProps> = ({
 };
 
 // ============================================================
+// GOOGLE MAPS CONDITIONAL WRAPPER (ONLY MOUNTED UNDER APIPROVIDER)
+// ============================================================
+const GoogleMapViewConditional: React.FC<MapViewProps> = (props) => {
+  const apiStatus = useApiLoadingStatus();
+  if (apiStatus === APILoadingStatus.LOADED) {
+    return <GoogleMapViewInner {...props} />;
+  }
+  return <LeafletMapViewInner {...props} />;
+};
+
+// ============================================================
 // MAIN COMPONENT EXPORT
 // ============================================================
 export const MapView: React.FC<MapViewProps> = (props) => {
   const { isConfigured } = useGoogleMaps();
-  const apiStatus = useApiLoadingStatus();
-  const isGoogleMapsReady = isConfigured && apiStatus === APILoadingStatus.LOADED;
 
   const {
     height = '320px',
@@ -386,8 +395,8 @@ export const MapView: React.FC<MapViewProps> = (props) => {
       className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
       style={{ height }}
     >
-      {isGoogleMapsReady ? (
-        <GoogleMapViewInner {...props} />
+      {isConfigured ? (
+        <GoogleMapViewConditional {...props} />
       ) : (
         <LeafletMapViewInner {...props} />
       )}

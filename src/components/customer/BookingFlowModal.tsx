@@ -42,7 +42,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
   preSelectedService,
   onBookingSuccess
 }) => {
-  const { currentUser, customerProfile, loginWithPhoneOtp } = useAuth();
+  const { currentUser, customerProfile } = useAuth();
   const { createBooking } = useBooking();
 
   // Current Step (1 to 6)
@@ -51,13 +51,10 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
   // Step 1: Service
   const [selectedService, setSelectedService] = useState<ServiceItem>(preSelectedService || SERVICES[0]);
 
-  // Step 2: Customer Phone & OTP
+  // Step 2: Customer Phone & Contact
   const [phone, setPhone] = useState(currentUser?.phone || '9820123456');
-  const [otp, setOtp] = useState('');
   const [customerName, setCustomerName] = useState(currentUser?.name || 'Aarav Mehta');
-  const [otpSent, setOtpSent] = useState(false);
   const [otpError, setOtpError] = useState('');
-  const [demoOtpHint, setDemoOtpHint] = useState('1234');
 
   // Step 3: Location
   const [selectedAddressType, setSelectedAddressType] = useState<'SAVED' | 'CURRENT' | 'CUSTOM'>('SAVED');
@@ -110,33 +107,15 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
   const taxAmount = Math.round((netSubtotal * 5) / 100); // 5% GST
   const totalAmount = netSubtotal + taxAmount;
 
-  // OTP handlers
-  const handleSendOtp = async () => {
+  // Contact details confirmation handler
+  const handleContinueFromContact = () => {
     setOtpError('');
-    if (!phone || phone.length < 10) {
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
       setOtpError('Please enter a valid 10-digit mobile number');
       return;
     }
-    try {
-      const res = await api.sendOtp(phone);
-      setOtpSent(true);
-      if (res.demoOtp) {
-        setDemoOtpHint(res.demoOtp);
-        setOtp(res.demoOtp); // Auto-fill for ultra smooth testing
-      }
-    } catch {
-      setOtpError('Failed to send OTP');
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    setOtpError('');
-    const success = await loginWithPhoneOtp(phone, otp || '1234', 'CUSTOMER', customerName);
-    if (success) {
-      setCurrentStep(3); // Move to Location
-    } else {
-      setOtpError('Invalid OTP. Use 1234 or the generated code.');
-    }
+    setCurrentStep(3); // Move to Location
   };
 
   // Coupon handler
@@ -243,7 +222,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 </div>
                 <div className="text-xs sm:text-base font-bold text-white leading-tight">
                   {currentStep === 1 && 'Select Assistance Service'}
-                  {currentStep === 2 && 'Customer Mobile & OTP'}
+                  {currentStep === 2 && 'Customer Contact Details'}
                   {currentStep === 3 && 'Select Location in Mumbai'}
                   {currentStep === 4 && 'Date, Time & Duration'}
                   {currentStep === 5 && 'Instructions & Preference'}
@@ -328,12 +307,12 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
             )}
 
             {/* ======================================================== */}
-            {/* STEP 2: MOBILE NUMBER & OTP (RAPIDO/UBER STYLE) */}
+            {/* STEP 2: CUSTOMER CONTACT DETAILS */}
             {/* ======================================================== */}
             {currentStep === 2 && (
               <div className="space-y-4">
                 <div className="text-xs text-gray-500 font-medium">
-                  Enter your mobile number to receive a secure login OTP.
+                  Confirm your contact information so your Diblo assistant can coordinate with you smoothly.
                 </div>
 
                 <div className="space-y-3">
@@ -362,44 +341,8 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                         placeholder="9820123456"
                         className="flex-1 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[44px]"
                       />
-                      {!otpSent ? (
-                        <button
-                          type="button"
-                          onClick={handleSendOtp}
-                          className="px-4 py-2.5 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#1E293B] min-h-[44px]"
-                        >
-                          Send OTP
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleSendOtp}
-                          className="px-3 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200 min-h-[44px]"
-                        >
-                          Resend
-                        </button>
-                      )}
                     </div>
                   </div>
-
-                  {otpSent && (
-                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-xs font-bold text-[#14213D]">Enter 4-Digit OTP</label>
-                        <span className="text-[11px] text-[#F42F73] font-bold bg-[#FFF0F5] px-2 py-0.5 rounded">
-                          Demo OTP: {demoOtpHint}
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        maxLength={4}
-                        value={otp}
-                        onChange={(e) => setOtp(e.target.value)}
-                        placeholder="1234"
-                        className="w-full px-3.5 py-3 bg-gray-50 border border-gray-200 rounded-xl text-center text-xl font-mono font-bold tracking-widest text-[#14213D] focus:outline-none focus:border-[#F42F73] min-h-[48px]"
-                      />
-                    </motion.div>
-                  )}
 
                   {otpError && (
                     <div className="text-xs text-red-500 font-medium flex items-center gap-1">
@@ -410,23 +353,13 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                 </div>
 
                 <div className="pt-2">
-                  {otpSent ? (
-                    <button
-                      onClick={handleVerifyOtp}
-                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
-                    >
-                      <span>Verify & Continue</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleSendOtp}
-                      className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
-                    >
-                      <span>Send Verification OTP</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    onClick={handleContinueFromContact}
+                    className="w-full py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs sm:text-sm shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all min-h-[48px]"
+                  >
+                    <span>Continue to Location</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             )}

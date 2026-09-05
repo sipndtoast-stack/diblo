@@ -16,7 +16,8 @@ import {
   Edit2,
   FileCheck,
   Search,
-  ArrowUpRight
+  ArrowUpRight,
+  LogOut
 } from 'lucide-react';
 import {
   LineChart,
@@ -33,6 +34,7 @@ import {
   Cell
 } from 'recharts';
 import { api } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { MapView } from '../common/MapView';
 import {
@@ -47,6 +49,7 @@ import {
 } from '../../types';
 
 export const AdminPanel: React.FC = () => {
+  const { logoutStaff, staffUser } = useAuth();
   const { bookings, refreshBookings } = useBooking();
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT'>('OVERVIEW');
 
@@ -215,10 +218,26 @@ export const AdminPanel: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 text-xs text-gray-300">
-            <div className="flex items-center gap-1.5 bg-black/30 px-3 py-1.5 rounded-full border border-white/10">
+            <div className="hidden sm:flex items-center gap-1.5 bg-black/30 px-3 py-1.5 rounded-full border border-white/10">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>{assistants.filter((a) => a.isOnline).length} Assistants Online in Mumbai</span>
+              <span>{assistants.filter((a) => a.isOnline).length} Assistants Online</span>
             </div>
+
+            {staffUser && (
+              <div className="hidden md:flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-full border border-white/10 text-white font-medium">
+                <span>{staffUser.name}</span>
+                <span className="text-[10px] text-gray-300">({staffUser.eplId})</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => logoutStaff()}
+              className="flex items-center gap-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs"
+              title="Log out of Staff Portal"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Logout</span>
+            </button>
           </div>
         </div>
 

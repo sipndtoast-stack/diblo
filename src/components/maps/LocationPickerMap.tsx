@@ -103,6 +103,28 @@ const GoogleMapInner: React.FC<{
   );
 };
 
+// Status-aware wrapper for Google Map inner component (only rendered when Google Maps is configured)
+const GoogleMapInnerWithStatus: React.FC<{
+  lat: number;
+  lng: number;
+  onMapClick: (lat: number, lng: number) => void;
+  onMarkerDragEnd?: (lat: number, lng: number) => void;
+  fallback: React.ReactNode;
+}> = ({ lat, lng, onMapClick, onMarkerDragEnd, fallback }) => {
+  const apiStatus = useApiLoadingStatus();
+  if (apiStatus !== APILoadingStatus.LOADED) {
+    return <>{fallback}</>;
+  }
+  return (
+    <GoogleMapInner
+      lat={lat}
+      lng={lng}
+      onMapClick={onMapClick}
+      onMarkerDragEnd={onMarkerDragEnd}
+    />
+  );
+};
+
 export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   initialLat = 19.0596,
   initialLng = 72.8295,
@@ -114,7 +136,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   onConfirm
 }) => {
   const { isConfigured, apiKey } = useGoogleMaps();
-  const apiStatus = useApiLoadingStatus();
 
   const [selectedLat, setSelectedLat] = useState<number>(initialLat);
   const [selectedLng, setSelectedLng] = useState<number>(initialLng);
@@ -235,7 +256,53 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     });
   };
 
-  const isMapReady = isConfigured && apiStatus === APILoadingStatus.LOADED;
+  const fallbackView = (
+    /* Graceful Interactive Fallback if API key is in setup or loading */
+    <div className="relative w-full h-full flex flex-col items-center justify-center p-4 text-center bg-linear-to-b from-slate-50 to-slate-100">
+      {/* Visual Map Grid Graphic */}
+      <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#14213D_1px,transparent_1px)] [background-size:16px_16px]" />
+
+      <div className="relative z-10 max-w-sm space-y-3">
+        <div className="w-12 h-12 rounded-2xl bg-white shadow-md border border-gray-200 flex items-center justify-center mx-auto">
+          <MapPin className="w-6 h-6 text-[#F42F73]" />
+        </div>
+
+        <div>
+          <div className="text-xs font-bold text-[#14213D]">
+            {formattedAddress}
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">
+            Coordinates: {selectedLat.toFixed(4)}° N, {selectedLng.toFixed(4)}° E ({selectedArea})
+          </div>
+        </div>
+
+        {/* Quick Mumbai Locality Chips */}
+        <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
+          {[
+            { name: 'Bandra West', lat: 19.0596, lng: 72.8295 },
+            { name: 'Andheri West', lat: 19.1197, lng: 72.8468 },
+            { name: 'Powai', lat: 19.1176, lng: 72.9060 },
+            { name: 'BKC', lat: 19.0657, lng: 72.8687 },
+            { name: 'Dadar', lat: 19.0178, lng: 72.8478 }
+          ].map((loc) => (
+            <button
+              key={loc.name}
+              type="button"
+              onClick={() => handleLocationUpdate(loc.lat, loc.lng)}
+              className="px-2.5 py-1 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold text-[#14213D] shadow-xs active:scale-95 transition-all"
+            >
+              {loc.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="text-[10px] text-gray-400 flex items-center justify-center gap-1">
+          <Info className="w-3 h-3" />
+          <span>Click chips or search above to position pin</span>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="w-full space-y-3">
@@ -308,59 +375,16 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
         style={{ height }}
       >
-        {isMapReady ? (
-          <GoogleMapInner
+        {isConfigured ? (
+          <GoogleMapInnerWithStatus
             lat={selectedLat}
             lng={selectedLng}
             onMapClick={handleLocationUpdate}
             onMarkerDragEnd={handleLocationUpdate}
+            fallback={fallbackView}
           />
         ) : (
-          /* Graceful Interactive Fallback if API key is in setup or loading */
-          <div className="relative w-full h-full flex flex-col items-center justify-center p-4 text-center bg-linear-to-b from-slate-50 to-slate-100">
-            {/* Visual Map Grid Graphic */}
-            <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#14213D_1px,transparent_1px)] [background-size:16px_16px]" />
-
-            <div className="relative z-10 max-w-sm space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-white shadow-md border border-gray-200 flex items-center justify-center mx-auto">
-                <MapPin className="w-6 h-6 text-[#F42F73]" />
-              </div>
-
-              <div>
-                <div className="text-xs font-bold text-[#14213D]">
-                  {formattedAddress}
-                </div>
-                <div className="text-[11px] text-gray-500 mt-0.5">
-                  Coordinates: {selectedLat.toFixed(4)}° N, {selectedLng.toFixed(4)}° E ({selectedArea})
-                </div>
-              </div>
-
-              {/* Quick Mumbai Locality Chips */}
-              <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
-                {[
-                  { name: 'Bandra West', lat: 19.0596, lng: 72.8295 },
-                  { name: 'Andheri West', lat: 19.1197, lng: 72.8468 },
-                  { name: 'Powai', lat: 19.1176, lng: 72.9060 },
-                  { name: 'BKC', lat: 19.0657, lng: 72.8687 },
-                  { name: 'Dadar', lat: 19.0178, lng: 72.8478 }
-                ].map((loc) => (
-                  <button
-                    key={loc.name}
-                    type="button"
-                    onClick={() => handleLocationUpdate(loc.lat, loc.lng)}
-                    className="px-2.5 py-1 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold text-[#14213D] shadow-xs active:scale-95 transition-all"
-                  >
-                    {loc.name}
-                  </button>
-                ))}
-              </div>
-
-              <div className="text-[10px] text-gray-400 flex items-center justify-center gap-1">
-                <Info className="w-3 h-3" />
-                <span>Click chips or search above to position pin</span>
-              </div>
-            </div>
-          </div>
+          fallbackView
         )}
 
         {/* Floating "Click on map to drop pin" Tip */}

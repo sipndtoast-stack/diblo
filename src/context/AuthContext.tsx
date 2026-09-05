@@ -1,446 +1,164 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
-import { api, tokenStorage } from '../lib/api';
-import {
-  auth,
-  onAuthStateChanged,
-  firebaseSignOut,
-  firebaseSignInWithEmail,
-  firebaseSignUpWithEmail,
-  isFirebaseConfigured,
-  getFirebaseErrorMessage,
-  UserCredential
-} from '../lib/firebase';
+import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
+import { MOCK_CUSTOMERS, MOCK_ASSISTANTS } from '../data/mockData';
 
-interface AuthContextType {
-  currentUser: User | null;
+const DEFAULT_USERS: Record<UserRole, User> = {
+  CUSTOMER: {
+    id: 'user-c-1',
+    name: 'Aarav Mehta',
+    phone: '9820123456',
+    email: 'aarav.mehta@gmail.com',
+    role: 'CUSTOMER',
+    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+    createdAt: '2026-01-10T10:00:00Z'
+  },
+  ASSISTANT: {
+    id: 'user-a-1',
+    name: 'Rajesh Sharma',
+    phone: '9820554433',
+    email: 'rajesh.sharma@diblo.in',
+    role: 'ASSISTANT',
+    avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+    createdAt: '2025-10-15T10:00:00Z'
+  },
+  ADMIN: {
+    id: 'user-admin-1',
+    name: 'Kabir Varma',
+    phone: '9820001122',
+    email: 'admin@diblo.in',
+    role: 'ADMIN',
+    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=200&q=80',
+    createdAt: '2025-01-01T00:00:00Z'
+  },
+  OPERATIONS: {
+    id: 'user-ops-1',
+    name: 'Sneha Kulkarni',
+    phone: '9820003344',
+    email: 'ops.mumbai@diblo.in',
+    role: 'OPERATIONS',
+    avatar: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=200&q=80',
+    createdAt: '2025-06-01T00:00:00Z'
+  }
+};
+
+const DEFAULT_CUSTOMER_PROFILE: CustomerProfile = MOCK_CUSTOMERS[0];
+const DEFAULT_ASSISTANT_PROFILE: AssistantProfile = MOCK_ASSISTANTS[0];
+
+export interface AuthContextType {
+  currentUser: User;
   currentRole: UserRole;
   customerProfile: CustomerProfile | null;
   assistantProfile: AssistantProfile | null;
+  staffUser: StaffSession | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   isFirebaseLive: boolean;
   switchRole: (role: UserRole) => Promise<void>;
-  loginWithPhoneOtp: (phone: string, otp: string, role?: UserRole, name?: string) => Promise<{ success: boolean; error?: string }>;
-  loginWithEmailPassword: (
+  updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
+  updateAssistantProfile: (profile: Partial<AssistantProfile>) => void;
+  loginStaff: (mobileNumber: string, password: string) => Promise<{ success: boolean; role?: 'Assistant' | 'Admin'; message?: string; eplId?: string; name?: string; number?: string; email?: string }>;
+  logoutStaff: () => Promise<void>;
+  logout?: () => Promise<void>;
+  loginWithPhoneOtp?: (phone: string, otp: string, role?: UserRole, name?: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithEmailPassword?: (
     email: string,
     pass: string,
     role?: UserRole,
     name?: string,
     isSignUp?: boolean
-  ) => Promise<{ success: boolean; userCredential?: UserCredential; error?: string; code?: string }>;
-  loginDemoUser: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
-  logout: () => Promise<void>;
-  updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
-  updateAssistantProfile: (profile: Partial<AssistantProfile>) => void;
+  ) => Promise<{ success: boolean }>;
+  loginDemoUser?: (role: UserRole) => Promise<{ success: boolean }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Authentication starts as unauthenticated (null) and loading (true)
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [currentRole, setCurrentRole] = useState<UserRole>('CUSTOMER');
-  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
-  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const isFirebaseLive = isFirebaseConfigured();
+  // Initial staff session from secure storage (only minimal metadata: authenticated, eplId, name, role)
+  const [staffUser, setStaffUser] = useState<StaffSession | null>(() => staffSessionStorage.getSession());
+  const initialRole = tokenStorage.getActiveRole() || 'CUSTOMER';
+  const [currentRole, setCurrentRole] = useState<UserRole>(initialRole);
+  const [currentUser, setCurrentUser] = useState<User>(DEFAULT_USERS[initialRole] || DEFAULT_USERS.CUSTOMER);
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(DEFAULT_CUSTOMER_PROFILE);
+  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(DEFAULT_ASSISTANT_PROFILE);
+  const [isLoading] = useState<boolean>(false);
 
-  // Single Source of Truth: Firebase Auth listener + Persistent Session Check
+  // Validate active staff session on mount
   useEffect(() => {
     let isMounted = true;
-    let unsubscribeFirebase: (() => void) | null = null;
-
-    async function verifyAndLoadSession() {
-      setIsLoading(true);
-      try {
-        const savedToken = tokenStorage.get();
-        const savedUser = tokenStorage.getUser();
-        const activeRole = tokenStorage.getActiveRole();
-
-        if (activeRole) {
-          setCurrentRole(activeRole);
-        }
-
-        if (savedToken) {
-          const meRes = await api.getMe().catch(() => null);
-
+    async function verifySession() {
+      const cached = staffSessionStorage.getSession();
+      if (cached && cached.authenticated) {
+        try {
+          const verified = await api.getStaffSession();
           if (isMounted) {
-            if (meRes?.success && meRes.user) {
-              setCurrentUser(meRes.user);
-              const resolvedRole = meRes.user.role || activeRole || 'CUSTOMER';
-              setCurrentRole(resolvedRole);
-
-              if (resolvedRole === 'CUSTOMER') {
-                if (meRes.profile) setCustomerProfile(meRes.profile);
-                else {
-                  const cust = await api.getCustomer(meRes.user.phone || 'cust-1').catch(() => null);
-                  if (cust && isMounted) setCustomerProfile(cust);
-                }
-              } else if (resolvedRole === 'ASSISTANT') {
-                if (meRes.profile) setAssistantProfile(meRes.profile);
-                else {
-                  const asst = await api.getAssistant(meRes.user.phone || 'asst-1').catch(() => null);
-                  if (asst && isMounted) setAssistantProfile(asst);
-                }
-              }
-            } else if (savedUser) {
-              // Graceful fallback if backend session is valid locally
-              setCurrentUser(savedUser);
-              setCurrentRole(savedUser.role || activeRole || 'CUSTOMER');
+            if (verified.success && verified.authenticated && verified.role && verified.eplId) {
+              const updatedSession: StaffSession = {
+                authenticated: true,
+                eplId: verified.eplId,
+                name: verified.name || cached.name,
+                role: verified.role
+              };
+              setStaffUser(updatedSession);
+              staffSessionStorage.setSession(updatedSession);
             } else {
-              // Invalid session
-              tokenStorage.clear();
-              setCurrentUser(null);
+              setStaffUser(null);
+              staffSessionStorage.clear();
             }
           }
-        } else if (savedUser) {
-          if (isMounted) {
-            setCurrentUser(savedUser);
-            setCurrentRole(savedUser.role || activeRole || 'CUSTOMER');
+        } catch {
+          // Keep cached session if network check fails
+        }
+      }
+    }
+    verifySession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Sync profile data on role change
+  useEffect(() => {
+    let isMounted = true;
+    async function loadActiveProfile() {
+      try {
+        if (currentRole === 'CUSTOMER') {
+          const cust = await api.getCustomer(currentUser.phone || '9820123456').catch(() => null);
+          if (cust && isMounted) {
+            setCustomerProfile(cust);
           }
-        } else {
-          // No saved token or user -> unauthenticated
-          if (isMounted) {
-            setCurrentUser(null);
+        } else if (currentRole === 'ASSISTANT') {
+          const asst = await api.getAssistant(currentUser.phone || '9820554433').catch(() => null);
+          if (asst && isMounted) {
+            setAssistantProfile(asst);
           }
         }
       } catch (err) {
-        console.warn('[Diblo Auth] Session verification notice:', err);
-        if (isMounted) {
-          setCurrentUser(null);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        console.warn('[Diblo Profile] Sync notice:', err);
       }
     }
-
-    // Subscribe to Firebase Auth listener when configured to keep sessions alive across reloads
-    try {
-      if (auth) {
-        unsubscribeFirebase = onAuthStateChanged(auth, async (firebaseUser) => {
-          if (!isMounted) return;
-          if (firebaseUser) {
-            const activeRole = tokenStorage.getActiveRole() || 'CUSTOMER';
-            const savedUser = tokenStorage.getUser();
-            const idToken = await firebaseUser.getIdToken().catch(() => '');
-
-            const syncRes = await api.syncFirebaseAuth({
-              firebaseUid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              name: firebaseUser.displayName || undefined,
-              role: activeRole,
-              firebaseToken: idToken
-            }).catch(() => null);
-
-            if (isMounted) {
-              const resolvedUser: User = (syncRes && syncRes.user) || savedUser || {
-                id: firebaseUser.uid,
-                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Diblo User',
-                phone: firebaseUser.phoneNumber || '',
-                email: firebaseUser.email || '',
-                role: activeRole,
-                walletBalance: 350,
-                isVerified: true
-              };
-
-              tokenStorage.setUser(resolvedUser);
-              setCurrentUser(resolvedUser);
-              setCurrentRole(activeRole);
-
-              if (activeRole === 'CUSTOMER') {
-                if (syncRes?.profile) setCustomerProfile(syncRes.profile);
-                else {
-                  const cust = await api.getCustomer(resolvedUser.phone || 'cust-1').catch(() => null);
-                  if (cust && isMounted) setCustomerProfile(cust);
-                }
-              } else if (activeRole === 'ASSISTANT') {
-                if (syncRes?.profile) setAssistantProfile(syncRes.profile);
-                else {
-                  const asst = await api.getAssistant(resolvedUser.phone || 'asst-1').catch(() => null);
-                  if (asst && isMounted) setAssistantProfile(asst);
-                }
-              }
-
-              setIsLoading(false);
-            }
-          } else {
-            if (!tokenStorage.get() && !tokenStorage.getUser()) {
-              setCurrentUser(null);
-            }
-            setIsLoading(false);
-          }
-        });
-      }
-    } catch (err) {
-      console.warn('[Diblo Auth] Firebase listener init:', err);
-    }
-
-    verifyAndLoadSession();
-
+    loadActiveProfile();
     return () => {
       isMounted = false;
-      if (unsubscribeFirebase) {
-        unsubscribeFirebase();
-      }
     };
-  }, []);
+  }, [currentRole, currentUser.phone]);
 
   const switchRole = async (newRole: UserRole) => {
     setCurrentRole(newRole);
     tokenStorage.setActiveRole(newRole);
+    const userForRole = DEFAULT_USERS[newRole] || DEFAULT_USERS.CUSTOMER;
+    setCurrentUser(userForRole);
 
     try {
-      if (newRole === 'CUSTOMER' && currentUser) {
-        let cust = await api.getCustomer(currentUser.phone).catch(() => null);
-        if (!cust) {
-          cust = await api.createCustomerProfile({
-            userId: currentUser.id,
-            name: currentUser.name,
-            phone: currentUser.phone,
-            addresses: [
-              {
-                id: `addr-${Date.now()}`,
-                title: 'Home',
-                address: 'Mumbai, Maharashtra',
-                area: 'Bandra West',
-                lat: 19.0596,
-                lng: 72.8295,
-                isDefault: true
-              }
-            ],
-            emergencyContact: {
-              name: 'Emergency Contact',
-              phone: '9820000000',
-              relationship: 'Family'
-            },
-            referralCode: `DIBLO-${currentUser.phone.slice(-4)}`
-          });
-        }
-        setCustomerProfile(cust);
-      } else if (newRole === 'ASSISTANT' && currentUser) {
-        let asst = await api.getAssistant(currentUser.phone).catch(() => null);
-        if (!asst) {
-          asst = await api.createAssistantProfile({
-            userId: currentUser.id,
-            name: currentUser.name,
-            phone: currentUser.phone,
-            hourlyRate: 199,
-            serviceCategories: ['COMPANIONSHIP', 'LOCAL_MUMBAI_ERRANDS'],
-            skills: ['Hindi & English Speaker', 'Mumbai Navigator', 'Senior Care']
-          });
-        }
-        setAssistantProfile(asst);
+      if (newRole === 'CUSTOMER') {
+        const cust = await api.getCustomer(userForRole.phone).catch(() => null);
+        if (cust) setCustomerProfile(cust);
+      } else if (newRole === 'ASSISTANT') {
+        const asst = await api.getAssistant(userForRole.phone).catch(() => null);
+        if (asst) setAssistantProfile(asst);
       }
     } catch {
       // Role switch fallback
-    }
-  };
-
-  const loginWithPhoneOtp = async (
-    phone: string,
-    otp: string,
-    role: UserRole = 'CUSTOMER',
-    name?: string
-  ): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const res = await api.verifyOtp(phone, otp, role, name);
-      if (res.success && res.user) {
-        tokenStorage.setUser(res.user);
-        setCurrentUser(res.user);
-        setCurrentRole(role);
-
-        if (role === 'CUSTOMER') {
-          if (res.profile) setCustomerProfile(res.profile);
-          else {
-            const cust = await api.getCustomer(phone).catch(() => null);
-            if (cust) setCustomerProfile(cust);
-          }
-        } else if (role === 'ASSISTANT') {
-          if (res.profile) setAssistantProfile(res.profile);
-          else {
-            const asst = await api.getAssistant(phone).catch(() => null);
-            if (asst) setAssistantProfile(asst);
-          }
-        }
-
-        // Navigate to Home upon successful login
-        if (typeof window !== 'undefined') {
-          window.history.pushState({}, '', '/');
-          window.dispatchEvent(new PopStateEvent('popstate'));
-        }
-
-        return { success: true };
-      }
-      return { success: false, error: res.error || 'Verification failed. Please check the OTP.' };
-    } catch (e: any) {
-      console.error('OTP login failed', e);
-      return { success: false, error: e.message || 'Failed to complete OTP verification' };
-    }
-  };
-
-  const loginWithEmailPassword = async (
-    email: string,
-    pass: string,
-    role: UserRole = 'CUSTOMER',
-    name?: string,
-    isSignUp = false
-  ): Promise<{ success: boolean; userCredential?: UserCredential; error?: string; code?: string }> => {
-    // Persist role selection immediately
-    tokenStorage.setActiveRole(role);
-    setCurrentRole(role);
-
-    // 1. Live Firebase Authentication flow when configured
-    if (isFirebaseConfigured() && auth) {
-      try {
-        let userCred: UserCredential;
-        if (isSignUp) {
-          userCred = await firebaseSignUpWithEmail(email, pass, name);
-        } else {
-          userCred = await firebaseSignInWithEmail(email, pass);
-        }
-
-        const firebaseUser = userCred.user;
-        const idToken = await firebaseUser.getIdToken();
-
-        // Synchronize authenticated Firebase user with Diblo backend profile
-        const syncRes = await api.syncFirebaseAuth({
-          firebaseUid: firebaseUser.uid,
-          email: firebaseUser.email || email,
-          name: name || firebaseUser.displayName || undefined,
-          role,
-          firebaseToken: idToken
-        });
-
-        const resolvedUser: User = (syncRes && syncRes.user) ? syncRes.user : {
-          id: firebaseUser.uid,
-          name: name || firebaseUser.displayName || email.split('@')[0],
-          phone: firebaseUser.phoneNumber || '',
-          email: firebaseUser.email || email,
-          role,
-          walletBalance: 350,
-          isVerified: true
-        };
-
-        tokenStorage.setUser(resolvedUser);
-        setCurrentUser(resolvedUser);
-        setCurrentRole(role);
-
-        if (role === 'CUSTOMER') {
-          if (syncRes?.profile) {
-            setCustomerProfile(syncRes.profile);
-          } else {
-            setCustomerProfile({
-              id: `cust-${resolvedUser.id}`,
-              userId: resolvedUser.id,
-              name: resolvedUser.name,
-              phone: resolvedUser.phone,
-              savedAddresses: [],
-              walletBalance: 350
-            });
-          }
-        } else if (role === 'ASSISTANT') {
-          if (syncRes?.profile) {
-            setAssistantProfile(syncRes.profile);
-          } else {
-            setAssistantProfile({
-              id: `asst-${resolvedUser.id}`,
-              userId: resolvedUser.id,
-              name: resolvedUser.name,
-              phone: resolvedUser.phone,
-              isAvailable: true,
-              rating: 5.0,
-              totalTasksCompleted: 0,
-              badge: 'TRAINED',
-              skills: ['SHOPPING', 'QUEUE', 'OFFICE', 'ELDERLY_ASSISTANCE']
-            });
-          }
-        }
-
-        // Navigate to appropriate Dashboard upon confirmed Firebase authentication
-        if (typeof window !== 'undefined') {
-          window.history.pushState({}, '', '/');
-          window.dispatchEvent(new PopStateEvent('popstate'));
-        }
-
-        return { success: true, userCredential: userCred };
-      } catch (fbErr: any) {
-        console.error('[Firebase Authentication Error]', fbErr);
-        const { code, message } = getFirebaseErrorMessage(fbErr);
-        return {
-          success: false,
-          code,
-          error: message
-        };
-      }
-    }
-
-    // 2. Development / Local flow when Firebase API key is not yet provided
-    try {
-      const res = await api.loginWithEmail(email, pass, role, name, isSignUp);
-      const isSuccess = Boolean(res.success || res.authenticated || res.ok || res.user);
-
-      if (isSuccess && res.user) {
-        tokenStorage.setUser(res.user);
-        setCurrentUser(res.user);
-        setCurrentRole(role);
-
-        if (role === 'CUSTOMER' && res.profile) {
-          setCustomerProfile(res.profile);
-        } else if (role === 'ASSISTANT' && res.profile) {
-          setAssistantProfile(res.profile);
-        }
-
-        // Navigate to Dashboard upon successful login
-        if (typeof window !== 'undefined') {
-          window.history.pushState({}, '', '/');
-          window.dispatchEvent(new PopStateEvent('popstate'));
-        }
-
-        return { success: true };
-      }
-
-      return {
-        success: false,
-        error: res.error || 'Authentication failed. Please verify your credentials.',
-        code: res.code
-      };
-    } catch (e: any) {
-      return { success: false, error: e.message || 'Please check your internet connection' };
-    }
-  };
-
-  const loginDemoUser = async (role: UserRole): Promise<{ success: boolean; error?: string }> => {
-    let demoPhone = '9820123456';
-    let demoName = 'Aarav Mehta';
-    if (role === 'ASSISTANT') {
-      demoPhone = '9820554433';
-      demoName = 'Rajesh Sharma';
-    } else if (role === 'ADMIN') {
-      demoPhone = '9820001122';
-      demoName = 'Kabir Varma';
-    }
-    return loginWithPhoneOtp(demoPhone, '1234', role, demoName);
-  };
-
-  const logout = async () => {
-    try {
-      await firebaseSignOut(auth).catch(() => {});
-    } catch (e) {
-      console.warn('Firebase signout note:', e);
-    }
-    tokenStorage.clear();
-    setCurrentUser(null);
-    setCustomerProfile(null);
-    setAssistantProfile(null);
-    setCurrentRole('CUSTOMER');
-
-    // Redirect immediately to Login screen
-    if (typeof window !== 'undefined') {
-      window.history.replaceState({}, '', '/login');
-      window.dispatchEvent(new PopStateEvent('popstate'));
     }
   };
 
@@ -456,6 +174,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Staff Login using Mobile Number and Password verified against Google Sheet
+  const loginStaff = async (mobileNumber: string, password: string) => {
+    const res = await api.loginStaff(mobileNumber, password);
+    if (res.success && res.role) {
+      const session: StaffSession = {
+        authenticated: true,
+        eplId: res.eplId || 'EPL001',
+        name: res.name || (res.role === 'Admin' ? 'Admin' : 'Assistant'),
+        number: res.number || mobileNumber,
+        email: res.email || '',
+        role: res.role
+      };
+      setStaffUser(session);
+      staffSessionStorage.setSession(session);
+
+      // Align active user & role
+      if (res.role === 'Admin') {
+        setCurrentRole('ADMIN');
+        setCurrentUser({
+          ...DEFAULT_USERS.ADMIN,
+          name: session.name,
+          phone: session.number || DEFAULT_USERS.ADMIN.phone
+        });
+      } else {
+        setCurrentRole('ASSISTANT');
+        setCurrentUser({
+          ...DEFAULT_USERS.ASSISTANT,
+          name: session.name,
+          phone: session.number || DEFAULT_USERS.ASSISTANT.phone
+        });
+      }
+    }
+    return res;
+  };
+
+  // Staff Logout: clears session and redirects to / (Access Selection screen)
+  const logoutStaff = async () => {
+    await api.logoutStaff();
+    setStaffUser(null);
+    staffSessionStorage.clear();
+    setCurrentRole('CUSTOMER');
+    setCurrentUser(DEFAULT_USERS.CUSTOMER);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  };
+
+  const logout = async () => {
+    await logoutStaff();
+  };
+
+  const loginWithPhoneOtp = async () => ({ success: true });
+  const loginWithEmailPassword = async () => ({ success: true });
+  const loginDemoUser = async () => ({ success: true });
+
   return (
     <AuthContext.Provider
       value={{
@@ -463,16 +237,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentRole,
         customerProfile,
         assistantProfile,
-        isAuthenticated: !!currentUser,
-        isLoading,
-        isFirebaseLive,
+        staffUser,
+        isAuthenticated: true,
+        isLoading: false,
+        isFirebaseLive: false,
         switchRole,
+        updateCustomerProfile,
+        updateAssistantProfile,
+        loginStaff,
+        logoutStaff,
+        logout,
         loginWithPhoneOtp,
         loginWithEmailPassword,
-        loginDemoUser,
-        logout,
-        updateCustomerProfile,
-        updateAssistantProfile
+        loginDemoUser
       }}
     >
       {children}

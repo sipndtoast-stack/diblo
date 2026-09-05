@@ -17,7 +17,8 @@ import {
   UserCheck,
   Lock,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
@@ -25,7 +26,7 @@ import { api } from '../../lib/api';
 import { MapView } from '../common/MapView';
 
 export const AssistantPanel: React.FC = () => {
-  const { assistantProfile, updateAssistantProfile } = useAuth();
+  const { assistantProfile, updateAssistantProfile, logoutStaff, staffUser } = useAuth();
   const { bookings, refreshBookings, verifyStartOtp, completeBooking } = useBooking();
 
   const [isOnline, setIsOnline] = useState<boolean>(assistantProfile?.isOnline ?? true);
@@ -125,18 +126,27 @@ export const AssistantPanel: React.FC = () => {
             </div>
           </div>
 
-          {/* Online / Offline Switch */}
+          {/* Online / Offline Switch & Logout */}
           <div className="flex items-center gap-2">
             <button
               onClick={handleToggleOnline}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition-all shadow-sm ${
+              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-full font-bold text-xs transition-all shadow-sm ${
                 isOnline
                   ? 'bg-emerald-500 text-white hover:bg-emerald-600'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
             >
               <Power className="w-3.5 h-3.5" />
-              <span>{isOnline ? 'ONLINE (Ready for Tasks)' : 'OFFLINE'}</span>
+              <span>{isOnline ? 'ONLINE' : 'OFFLINE'}</span>
+            </button>
+
+            <button
+              onClick={() => logoutStaff()}
+              className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-2 rounded-full text-xs font-bold transition-all shadow-xs"
+              title="Log out of Staff Portal"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </div>

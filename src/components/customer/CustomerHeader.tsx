@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown, Menu, X, Clock, HelpCircle, Sparkles, LogOut } from 'lucide-react';
+import { MapPin, Shield, Phone, Bell, User, AlertTriangle, ChevronDown, Menu, X, Clock, HelpCircle, Sparkles } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { PWAInstallButton } from '../common/PWAInstallButton';
@@ -11,7 +11,7 @@ interface CustomerHeaderProps {
 }
 
 export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, onSelectTab, activeTab }) => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser } = useAuth();
   const { activeBooking } = useBooking();
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
@@ -257,12 +257,15 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
-                logout();
+                if (typeof window !== 'undefined') {
+                  window.history.pushState({}, '', '/staff-login');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }
               }}
-              className="w-full py-2.5 rounded-2xl bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs flex items-center justify-center gap-2 min-h-[44px] transition-colors border border-red-100"
+              className="w-full py-2.5 rounded-2xl bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 font-semibold text-xs flex items-center justify-center gap-2 min-h-[40px] transition-colors"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Log Out</span>
+              <Shield className="w-3.5 h-3.5 text-[#14213D]" />
+              <span>Staff / Employee Portal (/staff-login)</span>
             </button>
           </div>
         </div>
