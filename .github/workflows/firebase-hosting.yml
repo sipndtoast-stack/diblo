@@ -1,4 +1,4 @@
-name: Deploy to Firebase Hosting on Push
+name: Deploy to Firebase Hosting
 
 on:
   push:
@@ -7,46 +7,48 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: read
+  checks: write
+  deployments: write
+
 jobs:
   build_and_deploy:
+    name: Build & Deploy to Firebase Hosting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Install dependencies reliably
+        run: npm ci
 
-      - name: Install dependencies with Bun
-        run: bun install --frozen-lockfile || bun install
-
-      - name: Build frontend
-        run: bun run build
+      - name: Build Vite application
+        run: npm run build
 
       - name: Verify build output
         run: |
           if [ ! -d "dist" ]; then
-            echo "Error: dist directory does not exist after build."
+            echo "::error::Build directory 'dist' was not found!"
             exit 1
           fi
           if [ ! -f "dist/index.html" ]; then
-            echo "Error: dist/index.html does not exist after build."
+            echo "::error::'dist/index.html' is missing!"
             exit 1
           fi
-          echo "Build verified successfully. Contents of dist:"
+          echo "Build verified successfully. Contents of dist/:"
           ls -la dist/
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_DIBLO_3944A || secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
           channelId: live
           projectId: diblo-3944a

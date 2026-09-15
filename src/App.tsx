@@ -14,12 +14,17 @@ import { CustomerSupport } from './components/customer/CustomerSupport';
 import { BookingFlowModal } from './components/customer/BookingFlowModal';
 import { LegalModal } from './components/customer/LegalModal';
 import { PWAInstallModal } from './components/common/PWAInstallModal';
-import { AssistantPanel } from './components/assistant/AssistantPanel';
-import { AdminPanel } from './components/admin/AdminPanel';
 import { StaffLogin } from './components/auth/StaffLogin';
 import { AccessSelection } from './components/auth/AccessSelection';
 import { ServiceItem, Booking } from './types';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, X, Loader2 } from 'lucide-react';
+
+const AssistantPanel = React.lazy(() =>
+  import('./components/assistant/AssistantPanel').then((m) => ({ default: m.AssistantPanel }))
+);
+const AdminPanel = React.lazy(() =>
+  import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
 
 const MainAppContent: React.FC = () => {
   const { staffUser, switchRole } = useAuth();
@@ -186,7 +191,15 @@ const MainAppContent: React.FC = () => {
             </div>
           </div>
         )}
-        <AssistantPanel />
+        <React.Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center p-12 text-gray-500">
+              <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
+            </div>
+          }
+        >
+          <AssistantPanel />
+        </React.Suspense>
         <NotificationToast />
       </div>
     );
@@ -200,7 +213,15 @@ const MainAppContent: React.FC = () => {
     return (
       <div className="min-h-screen bg-[#fcfcfc] flex flex-col font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
         <RoleSwitcher />
-        <AdminPanel />
+        <React.Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center p-12 text-gray-500">
+              <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
+            </div>
+          }
+        >
+          <AdminPanel />
+        </React.Suspense>
         <NotificationToast />
       </div>
     );

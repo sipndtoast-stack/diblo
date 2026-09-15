@@ -1,5 +1,5 @@
 // Diblo Progressive Web App Service Worker
-const CACHE_NAME = 'diblo-cache-v1';
+const CACHE_NAME = 'diblo-cache-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -39,8 +39,18 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests and exclude server-side /api/* calls
-  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
+  const url = new URL(event.request.url);
+
+  // Exclude non-GET, API routes, Vite dev server endpoints, and script modules
+  if (
+    event.request.method !== 'GET' ||
+    url.pathname.startsWith('/api') ||
+    url.pathname.startsWith('/node_modules') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/src') ||
+    url.searchParams.has('v') ||
+    url.searchParams.has('t')
+  ) {
     return;
   }
 
