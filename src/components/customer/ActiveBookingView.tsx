@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Phone,
@@ -42,12 +42,31 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('Change of schedule');
   const [isExtending, setIsExtending] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<string[]>([
     'Hello! I am on my way to your location in Bandra.',
     'I have arrived at the society gate. Standing near Tower B.'
   ]);
   const [newMsg, setNewMsg] = useState('');
+
+  // Auto-open feedback modal when active booking is marked as Completed
+  useEffect(() => {
+    if (activeBooking && activeBooking.status === 'COMPLETED' && !activeBooking.rating) {
+      setShowRatingModal(true);
+    }
+  }, [activeBooking?.status, activeBooking?.id, activeBooking?.rating]);
+
+  const handleCompleteTask = async () => {
+    if (!activeBooking) return;
+    setIsCompleting(true);
+    try {
+      await completeBooking(activeBooking.id);
+      setShowRatingModal(true);
+    } finally {
+      setIsCompleting(false);
+    }
+  };
 
   if (!activeBooking) {
     return (
@@ -282,6 +301,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {activeBooking.invoiceNumber && (
             <button
+              id="active-view-tax-invoice-btn"
               onClick={() => setShowInvoiceModal(true)}
               className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[44px]"
             >
@@ -290,19 +310,45 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
             </button>
           )}
 
+          {activeBooking.status === 'IN_PROGRESS' && (
+            <button
+              id="active-view-complete-task-btn"
+              onClick={handleCompleteTask}
+              disabled={isCompleting}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{isCompleting ? 'Completing...' : 'Mark as Completed & Rate'}</span>
+            </button>
+          )}
+
           {activeBooking.status === 'COMPLETED' && !activeBooking.rating && (
             <button
+              id="active-view-rate-tip-btn"
               onClick={() => setShowRatingModal(true)}
               className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
             >
               <Star className="w-4 h-4 fill-gray-900" />
-              <span>Rate Assistant</span>
+              <span>Rate Assistant & Leave Tip</span>
             </button>
+          )}
+
+          {activeBooking.rating && (
+            <div className="px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200/80 text-xs font-bold text-amber-800 flex items-center gap-1.5">
+              <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
+              <span>Rated {activeBooking.rating.stars}★</span>
+              {activeBooking.tipAmount && activeBooking.tipAmount > 0 ? (
+                <span className="text-emerald-700 font-bold ml-1">
+                  • ₹{activeBooking.tipAmount} Tip Given
+                </span>
+              ) : null}
+            </div>
           )}
         </div>
 
         {activeBooking.status !== 'COMPLETED' && activeBooking.status !== 'CANCELLED' && (
           <button
+            id="active-view-cancel-booking-btn"
             onClick={() => setShowCancelModal(true)}
             className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors py-2 px-1 min-h-[44px] flex items-center"
           >
@@ -358,6 +404,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
       <RatingModal
         isOpen={showRatingModal}
         onClose={() => setShowRatingModal(false)}
+        booking={activeBooking}
         bookingId={activeBooking.id}
         assistantName={activeBooking.assistantName || 'Rajesh Sharma'}
       />

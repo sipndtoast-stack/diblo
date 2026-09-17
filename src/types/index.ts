@@ -195,10 +195,13 @@ export interface Booking {
   startedAt?: string;
   completedAt?: string;
   timerElapsedSeconds?: number;
+  tipAmount?: number;
+  tipPaymentMethod?: string;
   rating?: {
     stars: number;
     comment?: string;
     customerFeedbackTags?: string[];
+    tipAmount?: number;
     createdAt: string;
   };
   assistantRatingForCustomer?: {

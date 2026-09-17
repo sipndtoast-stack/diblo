@@ -1,11 +1,26 @@
 import { initializeApp, getApps, cert, App } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getAuth, Auth } from 'firebase-admin/auth';
+import path from 'path';
+import fs from 'fs';
 
 let isFirebaseInitialized = false;
 let adminDb: Firestore | null = null;
 let adminAuth: Auth | null = null;
 let adminApp: App | null = null;
+
+// Read config to get firestoreDatabaseId if provisioned
+function getAppletConfig(): any {
+  try {
+    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+  } catch {
+    // Ignore read errors
+  }
+  return null;
+}
 
 export function initializeFirebaseAdmin(): {
   isInitialized: boolean;
@@ -19,40 +34,61 @@ export function initializeFirebaseAdmin(): {
 
   const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 
-  if (!rawServiceAccount || rawServiceAccount.trim() === '') {
-    console.warn(
-      '[FIREBASE ADMIN] FIREBASE_SERVICE_ACCOUNT environment variable is not set. Operating in local memory fallback mode.'
+  // Check for missing, empty, or obvious placeholder values (like "2", "undefined", "false")
+  if (
+    !rawServiceAccount ||
+    typeof rawServiceAccount !== 'string' ||
+    rawServiceAccount.trim() === '' ||
+    rawServiceAccount.trim().length < 20 ||
+    !rawServiceAccount.includes('{')
+  ) {
+    console.info(
+      '[FIREBASE ADMIN] No service account key supplied. Running backend repository in memory-backed mode.'
     );
     return {
       isInitialized: false,
       db: null,
       auth: null,
-      error: 'FIREBASE_SERVICE_ACCOUNT is not configured'
     };
   }
 
   try {
-    let serviceAccount: any;
+    let serviceAccount: any = null;
 
-    if (typeof rawServiceAccount === 'string') {
+    try {
+      serviceAccount = JSON.parse(rawServiceAccount);
+    } catch {
+      // Try base64 decode if applicable
       try {
-        serviceAccount = JSON.parse(rawServiceAccount);
-      } catch (parseError) {
-        // Try base64 decode if applicable
         const decoded = Buffer.from(rawServiceAccount, 'base64').toString('utf8');
-        serviceAccount = JSON.parse(decoded);
+        if (decoded.includes('{')) {
+          serviceAccount = JSON.parse(decoded);
+        }
+      } catch {
+        // Not base64 json
       }
-    } else {
-      serviceAccount = rawServiceAccount;
+    }
+
+    if (
+      !serviceAccount ||
+      typeof serviceAccount !== 'object' ||
+      !serviceAccount.project_id ||
+      !serviceAccount.client_email ||
+      !serviceAccount.private_key
+    ) {
+      console.info(
+        '[FIREBASE ADMIN] FIREBASE_SERVICE_ACCOUNT is not a valid service account JSON. Running backend repository in memory-backed mode.'
+      );
+      return {
+        isInitialized: false,
+        db: null,
+        auth: null,
+      };
     }
 
     // Normalize escaped newlines in private key
-    if (serviceAccount.private_key) {
+    if (typeof serviceAccount.private_key === 'string') {
       serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-    }
-
-    if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
-      throw new Error('Service account is missing required fields: project_id, client_email, or private_key');
     }
 
     const apps = getApps();
@@ -65,15 +101,23 @@ export function initializeFirebaseAdmin(): {
       adminApp = apps[0];
     }
 
-    adminDb = getFirestore(adminApp);
+    const appletConfig = getAppletConfig();
+    const databaseId = appletConfig?.firestoreDatabaseId;
+
+    if (databaseId) {
+      adminDb = getFirestore(adminApp, databaseId);
+    } else {
+      adminDb = getFirestore(adminApp);
+    }
+
     adminAuth = getAuth(adminApp);
     isFirebaseInitialized = true;
 
-    console.log(`[FIREBASE ADMIN] Successfully connected to Firebase project: ${serviceAccount.project_id}`);
+    console.log(`[FIREBASE ADMIN] Connected to Firebase project: ${serviceAccount.project_id}`);
     return { isInitialized: true, db: adminDb, auth: adminAuth };
   } catch (err: any) {
     const safeErrorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[FIREBASE ADMIN] Initialization failed: ${safeErrorMsg}`);
+    console.warn(`[FIREBASE ADMIN] Service account initialization notice: ${safeErrorMsg}`);
     return {
       isInitialized: false,
       db: null,
@@ -84,3 +128,4 @@ export function initializeFirebaseAdmin(): {
 }
 
 export { adminDb, adminAuth, isFirebaseInitialized };
+

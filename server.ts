@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import { initializeFirebaseAdmin } from './server/lib/firebaseAdmin';
@@ -50,13 +51,22 @@ async function startServer() {
   // SYSTEM & HEALTH
   // ==========================================
   app.get('/api/config/firebase', (req, res) => {
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        return res.json(config);
+      }
+    } catch {
+      // Fallback below
+    }
     res.json({
-      apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || '',
-      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-3944a.firebaseapp.com',
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-3944a',
-      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-3944a.appspot.com',
-      messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '439493514637',
-      appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:439493514637:web:diblo3944a',
+      apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyBZgAbbS7_cTo7ml3EkUf5yKxPiADy5k1U',
+      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-39440.firebaseapp.com',
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-39440',
+      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-39440.firebasestorage.app',
+      messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '650321096736',
+      appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:650321096736:web:218a11d36b1ca9e38c0c45',
     });
   });
 
@@ -1295,10 +1305,10 @@ async function startServer() {
     }
   });
 
-  // Rate Booking
+  // Rate Booking & Tip Assistant
   app.post('/api/bookings/:id/rate', async (req, res) => {
     try {
-      const { stars, comment, feedbackTags, isAssistantRating = false } = req.body;
+      const { stars, comment, feedbackTags, tipAmount = 0, tipPaymentMethod = 'UPI', isAssistantRating = false } = req.body;
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
@@ -1309,20 +1319,43 @@ async function startServer() {
           createdAt: new Date().toISOString()
         };
       } else {
+        const parsedTip = Math.max(0, Number(tipAmount) || 0);
         booking.rating = {
           stars: Number(stars),
           comment,
           customerFeedbackTags: feedbackTags || [],
+          tipAmount: parsedTip,
           createdAt: new Date().toISOString()
         };
 
-        // Update assistant overall rating
+        if (parsedTip > 0) {
+          booking.tipAmount = (booking.tipAmount || 0) + parsedTip;
+          booking.tipPaymentMethod = tipPaymentMethod;
+        }
+
+        // Update assistant overall rating and tip earnings
         if (booking.assistantId) {
           const assistant = await dbRepository.getAssistant(booking.assistantId);
           if (assistant) {
             const total = assistant.totalRatings * assistant.rating + Number(stars);
             assistant.totalRatings += 1;
             assistant.rating = Number((total / assistant.totalRatings).toFixed(2));
+
+            if (parsedTip > 0) {
+              assistant.earnings = assistant.earnings || {
+                today: 0,
+                week: 0,
+                month: 0,
+                total: 0,
+                pendingPayout: 0
+              };
+              assistant.earnings.today = (assistant.earnings.today || 0) + parsedTip;
+              assistant.earnings.week = (assistant.earnings.week || 0) + parsedTip;
+              assistant.earnings.month = (assistant.earnings.month || 0) + parsedTip;
+              assistant.earnings.total = (assistant.earnings.total || 0) + parsedTip;
+              assistant.earnings.pendingPayout = (assistant.earnings.pendingPayout || 0) + parsedTip;
+            }
+
             await dbRepository.saveAssistant(assistant);
           }
         }

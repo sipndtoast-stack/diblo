@@ -19,7 +19,17 @@ interface BookingContextType {
   extendBooking: (bookingId: string, extraHours: number) => Promise<void>;
   completeBooking: (bookingId: string) => Promise<void>;
   cancelBooking: (bookingId: string, reason: string) => Promise<void>;
-  rateBooking: (bookingId: string, stars: number, comment?: string, tags?: string[]) => Promise<void>;
+  rateBooking: (
+    bookingId: string,
+    stars: number,
+    comment?: string,
+    tags?: string[],
+    tipAmount?: number,
+    tipPaymentMethod?: string
+  ) => Promise<void>;
+  completedFeedbackBooking: Booking | null;
+  setCompletedFeedbackBooking: (booking: Booking | null) => void;
+  dismissFeedbackModal: (bookingId: string) => void;
   setActiveBooking: (booking: Booking | null) => void;
   markNotificationRead: (id: string) => void;
   addNotification: (title: string, message: string, type?: InAppNotification['type'], bookingId?: string) => void;
@@ -54,6 +64,15 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     lng: 72.8310
   });
 
+  // Post-booking feedback modal state
+  const [completedFeedbackBooking, setCompletedFeedbackBooking] = useState<Booking | null>(null);
+  const dismissedBookingFeedbackIds = useRef<Set<string>>(new Set());
+
+  const dismissFeedbackModal = (bookingId: string) => {
+    dismissedBookingFeedbackIds.current.add(bookingId);
+    setCompletedFeedbackBooking((prev) => (prev?.id === bookingId ? null : prev));
+  };
+
   const refreshBookings = async () => {
     try {
       const data = await api.getBookings();
@@ -64,11 +83,30 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           b.status !== 'CANCELLED' &&
           (currentRole === 'ADMIN' ||
             currentRole === 'OPERATIONS' ||
-            (currentRole === 'CUSTOMER' && b.customerId === 'cust-1') ||
+            (currentRole === 'CUSTOMER' && (b.customerId === 'cust-1' || !b.customerId)) ||
             (currentRole === 'ASSISTANT' && b.assistantId === 'asst-1'))
       );
       if (active && (!activeBooking || activeBooking.id === active.id)) {
         setActiveBooking(active);
+      } else if (!active && activeBooking && activeBooking.status !== 'COMPLETED') {
+        const prevNowCompleted = data.find((b) => b.id === activeBooking.id && b.status === 'COMPLETED');
+        if (prevNowCompleted) {
+          setActiveBooking(prevNowCompleted);
+        }
+      }
+
+      // Automatically trigger feedback modal when any customer booking is COMPLETED and unrated
+      if (currentRole === 'CUSTOMER') {
+        const justCompleted = data.find(
+          (b) =>
+            b.status === 'COMPLETED' &&
+            !b.rating &&
+            (b.customerId === 'cust-1' || !b.customerId) &&
+            !dismissedBookingFeedbackIds.current.has(b.id)
+        );
+        if (justCompleted && !completedFeedbackBooking) {
+          setCompletedFeedbackBooking(justCompleted);
+        }
       }
     } catch (e) {
       console.error('Failed to fetch bookings', e);
@@ -224,8 +262,16 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const completeBooking = async (bookingId: string) => {
     await api.completeBooking(bookingId);
-    await refreshBookings();
-    addNotification('Task Completed', 'Your task has been completed successfully. Please rate your assistant!', 'BOOKING', bookingId);
+    const updatedBookings = await api.getBookings();
+    setBookings(updatedBookings);
+    const completed = updatedBookings.find((b) => b.id === bookingId);
+    if (completed) {
+      setActiveBooking(completed);
+      if (!completed.rating && !dismissedBookingFeedbackIds.current.has(completed.id)) {
+        setCompletedFeedbackBooking(completed);
+      }
+    }
+    addNotification('Task Completed', 'Your task has been completed successfully. Please rate your assistant and leave a tip!', 'BOOKING', bookingId);
   };
 
   const cancelBooking = async (bookingId: string, reason: string) => {
@@ -234,10 +280,32 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     addNotification('Booking Cancelled', `Booking was cancelled: ${reason}`, 'BOOKING', bookingId);
   };
 
-  const rateBooking = async (bookingId: string, stars: number, comment?: string, tags?: string[]) => {
-    await api.rateBooking(bookingId, { stars, comment, feedbackTags: tags });
+  const rateBooking = async (
+    bookingId: string,
+    stars: number,
+    comment?: string,
+    tags?: string[],
+    tipAmount?: number,
+    tipPaymentMethod?: string
+  ) => {
+    await api.rateBooking(bookingId, {
+      stars,
+      comment,
+      feedbackTags: tags,
+      tipAmount: tipAmount || 0,
+      tipPaymentMethod
+    });
+    dismissedBookingFeedbackIds.current.add(bookingId);
+    setCompletedFeedbackBooking(null);
     await refreshBookings();
-    addNotification('Rating Submitted', 'Thank you for your feedback! It helps maintain quality at Diblo.', 'SUPPORT', bookingId);
+    addNotification(
+      'Rating & Tip Submitted',
+      tipAmount && tipAmount > 0
+        ? `Thank you! Your ${stars}★ rating and ₹${tipAmount} tip have been delivered to your assistant.`
+        : 'Thank you for your rating! It helps maintain quality at Diblo.',
+      'SUPPORT',
+      bookingId
+    );
   };
 
   return (
@@ -251,6 +319,9 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         liveEtaMinutes,
         liveDistanceKm,
         liveAssistantCoords,
+        completedFeedbackBooking,
+        setCompletedFeedbackBooking,
+        dismissFeedbackModal,
         refreshBookings,
         createBooking,
         acceptBooking,

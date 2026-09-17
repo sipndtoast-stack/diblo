@@ -566,7 +566,7 @@ export const api = {
     }
   },
 
-  async rateBooking(id: string, ratingData: { stars: number; comment?: string; feedbackTags?: string[]; isAssistantRating?: boolean }) {
+  async rateBooking(id: string, ratingData: { stars: number; comment?: string; feedbackTags?: string[]; tipAmount?: number; tipPaymentMethod?: string; isAssistantRating?: boolean }) {
     try {
       const res = await authFetch(`/api/bookings/${id}/rate`, {
         method: 'POST',

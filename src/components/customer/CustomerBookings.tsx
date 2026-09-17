@@ -133,18 +133,24 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
 
                     {b.status === 'COMPLETED' && !b.rating && (
                       <button
+                        id={`bookings-list-rate-tip-btn-${b.id}`}
                         onClick={() => setRatingBooking(b)}
                         className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-800 flex items-center gap-1.5 border border-amber-200 transition-colors min-h-[40px]"
                       >
                         <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                        <span>Rate Assistant</span>
+                        <span>Rate & Tip Assistant</span>
                       </button>
                     )}
 
                     {b.rating && (
-                      <div className="flex items-center gap-1 text-xs font-bold text-amber-600">
-                        <Star className="w-3.5 h-3.5 fill-amber-400" />
-                        <span>You rated {b.rating.stars}★</span>
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/60">
+                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                        <span>Rated {b.rating.stars}★</span>
+                        {b.tipAmount && b.tipAmount > 0 ? (
+                          <span className="text-emerald-700 font-bold ml-1">
+                            • ₹{b.tipAmount} Tip
+                          </span>
+                        ) : null}
                       </div>
                     )}
                   </div>
@@ -175,6 +181,7 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
         <RatingModal
           isOpen={!!ratingBooking}
           onClose={() => setRatingBooking(null)}
+          booking={ratingBooking}
           bookingId={ratingBooking.id}
           assistantName={ratingBooking.assistantName || 'Rajesh Sharma'}
         />

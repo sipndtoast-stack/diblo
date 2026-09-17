@@ -18,6 +18,7 @@ import { StaffLogin } from './components/auth/StaffLogin';
 import { AccessSelection } from './components/auth/AccessSelection';
 import { ServiceItem, Booking } from './types';
 import { AlertCircle, X, Loader2 } from 'lucide-react';
+import { PostBookingFeedbackModal } from './components/customer/PostBookingFeedbackModal';
 
 const AssistantPanel = React.lazy(() =>
   import('./components/assistant/AssistantPanel').then((m) => ({ default: m.AssistantPanel }))
@@ -28,7 +29,7 @@ const AdminPanel = React.lazy(() =>
 
 const MainAppContent: React.FC = () => {
   const { staffUser, switchRole } = useAuth();
-  const { setActiveBooking, bookings } = useBooking();
+  const { setActiveBooking, bookings, completedFeedbackBooking, dismissFeedbackModal } = useBooking();
 
   // Current URL Path state
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -303,6 +304,15 @@ const MainAppContent: React.FC = () => {
 
       {/* Global PWA Install Popup */}
       <PWAInstallModal />
+
+      {/* Post-Booking Feedback & Tipping Modal (Appears when booking is marked Completed) */}
+      {completedFeedbackBooking && (
+        <PostBookingFeedbackModal
+          isOpen={!!completedFeedbackBooking}
+          onClose={() => dismissFeedbackModal(completedFeedbackBooking.id)}
+          booking={completedFeedbackBooking}
+        />
+      )}
     </div>
   );
 };
