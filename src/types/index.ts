@@ -321,3 +321,65 @@ export interface PlatformAnalytics {
   dailyTrends: { date: string; bookings: number; revenue: number }[];
   areaBreakdown: { area: string; bookings: number; assistants: number }[];
 }
+
+export type ApplicationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+
+export interface AssistantApplication {
+  id: string;
+  applicationNumber: string;
+  // Step 1: Personal Info
+  fullName: string;
+  mobileNumber: string;
+  alternateMobile?: string;
+  email: string;
+  dateOfBirth: string;
+  gender: 'MALE' | 'FEMALE' | 'OTHER';
+  currentAddress: string;
+  permanentAddress: string;
+  mumbaiArea: string;
+  pinCode: string;
+  // Step 2: KYC & Verification
+  aadhaarNumber: string;
+  aadhaarFrontDoc?: string;
+  aadhaarBackDoc?: string;
+  panNumber: string;
+  panDoc?: string;
+  policeClearanceCert?: string;
+  addressProofDoc?: string;
+  // Step 3: Skills & Services
+  languagesSpoken: string[];
+  selectedServices: string[];
+  yearsOfExperience: number;
+  specialSkills?: string;
+  // Step 4: Availability & Operating Zones
+  preferredOperatingZones: string[];
+  availabilityType: 'FULL_TIME' | 'PART_TIME' | 'WEEKENDS_ONLY';
+  preferredTimeSlots: string[];
+  hasTwoWheeler: boolean;
+  drivingLicenseNumber?: string;
+  // Step 5: Background & References
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
+  referenceName?: string;
+  referencePhone?: string;
+  hasCriminalRecord: boolean;
+  // Step 6: Bank Details
+  bankAccountNumber: string;
+  bankIfscCode: string;
+  bankName: string;
+  accountHolderName: string;
+  bankPassbookDoc?: string;
+  // Step 7: Documents
+  profilePhoto?: string;
+  // Step 8: Agreement
+  termsAccepted: boolean;
+  codeOfConductAccepted: boolean;
+  // Status & Admin
+  status: ApplicationStatus;
+  adminNotes?: string;
+  appliedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+}
+

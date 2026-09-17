@@ -70,9 +70,9 @@ export const AccessSelection: React.FC<AccessSelectionProps> = ({
                 <div className="w-13 h-13 rounded-2xl bg-[#FFF0F5] text-[#F42F73] flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
                   <User className="w-7 h-7" />
                 </div>
-                <span className="bg-emerald-50 text-emerald-700 text-[11px] font-bold px-2.5 py-1 rounded-full border border-emerald-100 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  <span>No Login Required</span>
+                <span className="bg-[#FFF0F5] text-[#F42F73] text-[11px] font-bold px-2.5 py-1 rounded-full border border-[#F42F73]/20 flex items-center gap-1">
+                  <Phone className="w-3 h-3 text-[#F42F73]" />
+                  <span>Mobile OTP Login</span>
                 </span>
               </div>
 
@@ -81,7 +81,7 @@ export const AccessSelection: React.FC<AccessSelectionProps> = ({
                   Customer
                 </h2>
                 <p className="text-xs sm:text-sm text-gray-500 mt-1.5 leading-relaxed">
-                  Book verified on-demand hourly assistants for companionship, medical accompaniment, Mumbai errands, and event queues.
+                  Fast login with mobile number & OTP. Book verified on-demand hourly assistants across Mumbai.
                 </p>
               </div>
 

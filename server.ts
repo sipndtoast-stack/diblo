@@ -29,7 +29,8 @@ import {
   SupportTicket,
   PlatformAnalytics,
   UserRole,
-  User
+  User,
+  AssistantApplication
 } from './src/types';
 
 async function startServer() {
@@ -883,6 +884,186 @@ async function startServer() {
   // Staff logout
   app.post('/api/staff/logout', (req, res) => {
     return res.json({ success: true, message: 'Logged out successfully' });
+  });
+
+  // ==========================================
+  // ASSISTANT ONBOARDING PIPELINE & APPLICATIONS
+  // ==========================================
+  // Public endpoint: Submit 8-step application
+  app.post('/api/assistant/apply', async (req, res) => {
+    try {
+      const body = req.body;
+      const cleanPhone = String(body.mobileNumber || '').replace(/\D/g, '').slice(-10);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ success: false, error: 'Valid 10-digit mobile number is required' });
+      }
+      if (!body.fullName || !body.aadhaarNumber || !body.panNumber) {
+        return res.status(400).json({ success: false, error: 'Name, Aadhaar, and PAN are mandatory fields' });
+      }
+
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      const applicationNumber = `DIBLO-APP-${randomSuffix}`;
+      const newApp: AssistantApplication = {
+        id: `app-${Date.now()}`,
+        applicationNumber,
+        fullName: String(body.fullName).trim(),
+        mobileNumber: cleanPhone,
+        alternateMobile: body.alternateMobile ? String(body.alternateMobile).replace(/\D/g, '').slice(-10) : undefined,
+        email: body.email ? String(body.email).trim() : `${cleanPhone}@applicant.diblo.in`,
+        dateOfBirth: body.dateOfBirth || '1995-01-01',
+        gender: body.gender || 'MALE',
+        currentAddress: body.currentAddress || '',
+        permanentAddress: body.permanentAddress || body.currentAddress || '',
+        mumbaiArea: body.mumbaiArea || 'Bandra West',
+        pinCode: body.pinCode || '400050',
+        aadhaarNumber: String(body.aadhaarNumber).replace(/\D/g, ''),
+        aadhaarFrontDoc: body.aadhaarFrontDoc || undefined,
+        aadhaarBackDoc: body.aadhaarBackDoc || undefined,
+        panNumber: String(body.panNumber).toUpperCase().trim(),
+        panDoc: body.panDoc || undefined,
+        policeClearanceCert: body.policeClearanceCert || undefined,
+        addressProofDoc: body.addressProofDoc || undefined,
+        languagesSpoken: Array.isArray(body.languagesSpoken) && body.languagesSpoken.length > 0 ? body.languagesSpoken : ['Hindi', 'English'],
+        selectedServices: Array.isArray(body.selectedServices) && body.selectedServices.length > 0 ? body.selectedServices : ['Senior Citizen Assistance', 'Shopping & Market Escort'],
+        yearsOfExperience: Number(body.yearsOfExperience) || 1,
+        specialSkills: body.specialSkills || '',
+        preferredOperatingZones: Array.isArray(body.preferredOperatingZones) && body.preferredOperatingZones.length > 0 ? body.preferredOperatingZones : ['Bandra West', 'Andheri West'],
+        availabilityType: body.availabilityType || 'FULL_TIME',
+        preferredTimeSlots: Array.isArray(body.preferredTimeSlots) && body.preferredTimeSlots.length > 0 ? body.preferredTimeSlots : ['Morning (08:00 AM - 02:00 PM)'],
+        hasTwoWheeler: Boolean(body.hasTwoWheeler),
+        drivingLicenseNumber: body.drivingLicenseNumber || '',
+        emergencyContactName: body.emergencyContactName || 'Family Member',
+        emergencyContactPhone: body.emergencyContactPhone || '9820000000',
+        emergencyContactRelation: body.emergencyContactRelation || 'Parent',
+        referenceName: body.referenceName || '',
+        referencePhone: body.referencePhone || '',
+        hasCriminalRecord: Boolean(body.hasCriminalRecord),
+        bankAccountNumber: String(body.bankAccountNumber || 'XXXXXXXX0000').trim(),
+        bankIfscCode: String(body.bankIfscCode || 'HDFC0000123').trim().toUpperCase(),
+        bankName: body.bankName || 'HDFC Bank',
+        accountHolderName: body.accountHolderName || body.fullName,
+        bankPassbookDoc: body.bankPassbookDoc || undefined,
+        profilePhoto: body.profilePhoto || undefined,
+        termsAccepted: Boolean(body.termsAccepted),
+        codeOfConductAccepted: Boolean(body.codeOfConductAccepted),
+        status: 'PENDING_REVIEW',
+        appliedAt: new Date().toISOString()
+      };
+
+      const saved = await dbRepository.saveApplication(newApp);
+
+      return res.json({
+        success: true,
+        message: 'Your assistant application has been submitted successfully! Diblo Operations will review your documents within 24-48 hours.',
+        applicationNumber: saved.applicationNumber,
+        applicationId: saved.id
+      });
+    } catch (err: any) {
+      console.error('[Apply Assistant Error]', err);
+      return res.status(500).json({ success: false, error: err.message || 'Failed to submit application' });
+    }
+  });
+
+  // Admin endpoint: List all applications
+  app.get('/api/admin/applications', requireAuth, requireRole('ADMIN', 'OPERATIONS'), async (req, res) => {
+    try {
+      const apps = await dbRepository.getApplications();
+      return res.json({ success: true, applications: apps });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Admin endpoint: Review application (Approve / Reject)
+  app.post('/api/admin/applications/:id/review', requireAuth, requireRole('ADMIN', 'OPERATIONS'), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { action, adminNotes } = req.body; // action: 'APPROVE' | 'REJECT'
+      const appRecord = await dbRepository.getApplicationById(id);
+
+      if (!appRecord) {
+        return res.status(404).json({ success: false, error: 'Application not found' });
+      }
+
+      if (action === 'APPROVE') {
+        appRecord.status = 'APPROVED';
+        appRecord.adminNotes = adminNotes || 'Approved by Diblo Operations after KYC verification.';
+        appRecord.reviewedAt = new Date().toISOString();
+        appRecord.reviewedBy = req.user?.name || 'Admin';
+
+        // Auto-create or activate Assistant profile
+        let asst = await dbRepository.getAssistant(appRecord.mobileNumber);
+        if (!asst) {
+          const asstId = `asst-${Date.now()}`;
+          const newAsst: AssistantProfile = {
+            id: asstId,
+            userId: `user-asst-${Date.now()}`,
+            name: appRecord.fullName,
+            phone: appRecord.mobileNumber,
+            email: appRecord.email,
+            photo: appRecord.profilePhoto || 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+            rating: 5.0,
+            totalRatings: 0,
+            verificationStatus: 'VERIFIED',
+            policeVerified: true,
+            languages: appRecord.languagesSpoken,
+            serviceCapabilities: appRecord.selectedServices,
+            serviceArea: appRecord.preferredOperatingZones,
+            isOnline: true,
+            currentLocation: {
+              lat: 19.0596,
+              lng: 72.8295,
+              address: `${appRecord.mumbaiArea}, Mumbai`,
+              area: appRecord.mumbaiArea,
+              lastUpdated: 'Just now'
+            },
+            earnings: { today: 0, week: 0, month: 0, total: 0, pendingPayout: 0 },
+            documents: [],
+            bankDetails: {
+              accountNumber: appRecord.bankAccountNumber,
+              ifsc: appRecord.bankIfscCode,
+              bankName: appRecord.bankName,
+              accountHolder: appRecord.accountHolderName
+            },
+            emergencyContact: {
+              name: appRecord.emergencyContactName,
+              phone: appRecord.emergencyContactPhone,
+              relationship: appRecord.emergencyContactRelation
+            },
+            completedTasksCount: 0,
+            acceptanceRate: 100,
+            joinedDate: new Date().toISOString()
+          };
+          await dbRepository.saveAssistant(newAsst);
+        } else {
+          asst.verificationStatus = 'VERIFIED';
+          asst.policeVerified = true;
+          await dbRepository.saveAssistant(asst);
+        }
+
+        await dbRepository.saveApplication(appRecord);
+        return res.json({
+          success: true,
+          message: `Application ${appRecord.applicationNumber} approved and assistant activated!`,
+          application: appRecord
+        });
+      } else if (action === 'REJECT') {
+        appRecord.status = 'REJECTED';
+        appRecord.adminNotes = adminNotes || 'Documents did not meet compliance criteria.';
+        appRecord.reviewedAt = new Date().toISOString();
+        appRecord.reviewedBy = req.user?.name || 'Admin';
+        await dbRepository.saveApplication(appRecord);
+        return res.json({
+          success: true,
+          message: `Application ${appRecord.applicationNumber} marked as rejected.`,
+          application: appRecord
+        });
+      }
+
+      return res.status(400).json({ success: false, error: 'Invalid review action' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // ==========================================

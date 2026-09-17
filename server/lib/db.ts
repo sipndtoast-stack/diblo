@@ -19,7 +19,8 @@ import {
   PricingConfig,
   SupportTicket,
   ServiceItem,
-  User
+  User,
+  AssistantApplication
 } from '../../src/types';
 
 // In-Memory fallback store
@@ -31,6 +32,43 @@ let memorySocieties: Society[] = [...MOCK_SOCIETIES];
 let memoryCoupons: Coupon[] = [...MOCK_COUPONS];
 let memorySupportTickets: SupportTicket[] = [...MOCK_SUPPORT_TICKETS];
 let memoryServices: ServiceItem[] = [...SERVICES];
+let memoryApplications: AssistantApplication[] = [
+  {
+    id: 'app-1',
+    applicationNumber: 'DIBLO-APP-1001',
+    fullName: 'Sunil Jadhav',
+    mobileNumber: '9819283746',
+    email: 'sunil.jadhav@gmail.com',
+    dateOfBirth: '1995-04-12',
+    gender: 'MALE',
+    currentAddress: 'Room 14, Chawl No 3, Khar Danda, Khar West, Mumbai',
+    permanentAddress: 'Room 14, Chawl No 3, Khar Danda, Khar West, Mumbai',
+    mumbaiArea: 'Bandra West',
+    pinCode: '400052',
+    aadhaarNumber: '482910394821',
+    panNumber: 'ABCDE1234F',
+    languagesSpoken: ['Hindi', 'Marathi', 'English'],
+    selectedServices: ['Senior Citizen Assistance', 'Shopping & Market Escort', 'Hospital Visit OPD Queue'],
+    yearsOfExperience: 3,
+    preferredOperatingZones: ['Bandra West', 'Khar West', 'Santacruz West'],
+    availabilityType: 'FULL_TIME',
+    preferredTimeSlots: ['Morning (08:00 AM - 02:00 PM)', 'Evening (02:00 PM - 08:00 PM)'],
+    hasTwoWheeler: true,
+    drivingLicenseNumber: 'MH02-20160029381',
+    emergencyContactName: 'Kavita Jadhav',
+    emergencyContactPhone: '9819283740',
+    emergencyContactRelation: 'Spouse',
+    hasCriminalRecord: false,
+    bankAccountNumber: '50100234891023',
+    bankIfscCode: 'HDFC0000123',
+    bankName: 'HDFC Bank',
+    accountHolderName: 'Sunil Jadhav',
+    termsAccepted: true,
+    codeOfConductAccepted: true,
+    status: 'PENDING_REVIEW',
+    appliedAt: '2026-09-15T11:30:00Z'
+  }
+];
 let memoryUsers: User[] = [
   {
     id: 'user-c-1',
@@ -538,6 +576,58 @@ export const dbRepository = {
         console.error('[DB] Error recording payment in Firestore:', err);
       }
     }
+  },
+
+  // ----------------------------------------------------
+  // ASSISTANT APPLICATIONS (ONBOARDING PIPELINE)
+  // ----------------------------------------------------
+  async getApplications(): Promise<AssistantApplication[]> {
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        const snapshot = await db.collection('assistantApplications').orderBy('appliedAt', 'desc').get();
+        if (!snapshot.empty) {
+          return snapshot.docs.map((d) => d.data() as AssistantApplication);
+        }
+      } catch (err) {
+        console.error('[DB] Error fetching assistant applications from Firestore:', err);
+      }
+    }
+    return memoryApplications;
+  },
+
+  async getApplicationById(id: string): Promise<AssistantApplication | null> {
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        const doc = await db.collection('assistantApplications').doc(id).get();
+        if (doc.exists) {
+          return doc.data() as AssistantApplication;
+        }
+      } catch (err) {
+        console.error('[DB] Error fetching application from Firestore:', err);
+      }
+    }
+    return memoryApplications.find((a) => a.id === id || a.applicationNumber === id) || null;
+  },
+
+  async saveApplication(appData: AssistantApplication): Promise<AssistantApplication> {
+    const idx = memoryApplications.findIndex((a) => a.id === appData.id);
+    if (idx >= 0) {
+      memoryApplications[idx] = { ...memoryApplications[idx], ...appData };
+    } else {
+      memoryApplications.unshift(appData);
+    }
+
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        await db.collection('assistantApplications').doc(appData.id).set(appData, { merge: true });
+      } catch (err) {
+        console.error('[DB] Error saving assistant application in Firestore:', err);
+      }
+    }
+    return appData;
   },
 
   // ----------------------------------------------------

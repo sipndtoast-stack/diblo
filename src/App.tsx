@@ -16,6 +16,8 @@ import { LegalModal } from './components/customer/LegalModal';
 import { PWAInstallModal } from './components/common/PWAInstallModal';
 import { StaffLogin } from './components/auth/StaffLogin';
 import { AccessSelection } from './components/auth/AccessSelection';
+import { CustomerLogin } from './components/auth/CustomerLogin';
+import { AssistantOnboarding } from './components/assistant/AssistantOnboarding';
 import { ServiceItem, Booking } from './types';
 import { AlertCircle, X, Loader2 } from 'lucide-react';
 import { PostBookingFeedbackModal } from './components/customer/PostBookingFeedbackModal';
@@ -146,8 +148,36 @@ const MainAppContent: React.FC = () => {
   if (currentPath === '/') {
     return (
       <AccessSelection
-        onSelectCustomer={() => navigateTo('/customer')}
+        onSelectCustomer={() => navigateTo('/customer-login')}
         onSelectStaff={() => navigateTo('/staff-login')}
+      />
+    );
+  }
+
+  // VIEW 1.5: CUSTOMER OTP LOGIN (/customer-login)
+  if (currentPath === '/customer-login') {
+    return (
+      <CustomerLogin
+        onSuccess={() => {
+          navigateTo('/customer');
+        }}
+        onBackToSelection={() => {
+          navigateTo('/');
+        }}
+      />
+    );
+  }
+
+  // VIEW 1.8: NEW ASSISTANT MULTI-STEP ONBOARDING (/apply-assistant)
+  if (currentPath === '/apply-assistant') {
+    return (
+      <AssistantOnboarding
+        onSuccess={() => {
+          navigateTo('/staff-login');
+        }}
+        onBackToSelection={() => {
+          navigateTo('/staff-login');
+        }}
       />
     );
   }
@@ -165,6 +195,9 @@ const MainAppContent: React.FC = () => {
         }}
         onBackToSelection={() => {
           navigateTo('/');
+        }}
+        onApplyAssistant={() => {
+          navigateTo('/apply-assistant');
         }}
       />
     );

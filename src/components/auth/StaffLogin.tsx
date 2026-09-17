@@ -5,12 +5,14 @@ import { useAuth } from '../../context/AuthContext';
 interface StaffLoginProps {
   onSuccess: (role: 'Assistant' | 'Admin') => void;
   onBackToSelection: () => void;
+  onApplyAssistant?: () => void;
   initialMessage?: string;
 }
 
 export const StaffLogin: React.FC<StaffLoginProps> = ({
   onSuccess,
   onBackToSelection,
+  onApplyAssistant,
   initialMessage
 }) => {
   const { loginStaff, staffUser } = useAuth();
@@ -240,6 +242,27 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
                 <div className="text-[10px] text-gray-500 font-mono mt-0.5">Pass: 123456</div>
               </button>
             </div>
+          </div>
+
+          {/* New Assistant Join Callout */}
+          <div className="mt-6 pt-6 border-t border-gray-100 text-center">
+            <p className="text-xs text-gray-500 mb-2">Want to become a verified Diblo Assistant in Mumbai?</p>
+            <button
+              type="button"
+              onClick={() => {
+                if (onApplyAssistant) {
+                  onApplyAssistant();
+                } else if (typeof window !== 'undefined') {
+                  window.history.pushState({}, '', '/apply-assistant');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }
+              }}
+              className="w-full py-3 px-4 rounded-2xl border-2 border-dashed border-[#F42F73] text-[#F42F73] hover:bg-[#FFF0F5] font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+              id="btn-apply-assistant"
+            >
+              <span>Apply as New Assistant (8-Step Onboarding)</span>
+              <span>→</span>
+            </button>
           </div>
         </div>
       </div>

@@ -253,20 +253,6 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
               <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
               <span>24x7 Mumbai Helpline (8291919829)</span>
             </a>
-
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                if (typeof window !== 'undefined') {
-                  window.history.pushState({}, '', '/staff-login');
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }
-              }}
-              className="w-full py-2.5 rounded-2xl bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 font-semibold text-xs flex items-center justify-center gap-2 min-h-[40px] transition-colors"
-            >
-              <Shield className="w-3.5 h-3.5 text-[#14213D]" />
-              <span>Staff / Employee Portal (/staff-login)</span>
-            </button>
           </div>
         </div>
       )}

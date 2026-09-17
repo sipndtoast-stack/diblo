@@ -11,6 +11,11 @@ export const RoleSwitcher: React.FC = () => {
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
 
+  // If in Customer Panel, never render Assistant/Admin role switches or staff login buttons
+  if (currentRole === 'CUSTOMER') {
+    return null;
+  }
+
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined') {
       window.history.pushState({}, '', path);

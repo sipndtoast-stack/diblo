@@ -9,7 +9,8 @@ import {
   ServiceItem,
   PlatformAnalytics,
   UserRole,
-  User
+  User,
+  AssistantApplication
 } from '../types';
 
 const AUTH_TOKEN_KEY = 'diblo_auth_token';
@@ -924,5 +925,41 @@ export const api = {
       } catch {}
     }
     staffSessionStorage.clear();
+  },
+
+  // Assistant Application & Onboarding
+  async applyAssistant(applicationData: Partial<AssistantApplication>): Promise<{ success: boolean; message?: string; applicationNumber?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/assistant/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(applicationData)
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error submitting application' };
+    }
+  },
+
+  async getAssistantApplications(): Promise<{ success: boolean; applications: AssistantApplication[] }> {
+    try {
+      const res = await authFetch('/api/admin/applications');
+      return await safeJson(res, { success: true, applications: [] });
+    } catch {
+      return { success: false, applications: [] };
+    }
+  },
+
+  async reviewAssistantApplication(id: string, action: 'APPROVE' | 'REJECT', adminNotes?: string): Promise<{ success: boolean; message?: string; error?: string; application?: AssistantApplication }> {
+    try {
+      const res = await authFetch(`/api/admin/applications/${id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, adminNotes })
+      });
+      return await safeJson(res, { success: false, error: 'Failed to review application' });
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   }
 };

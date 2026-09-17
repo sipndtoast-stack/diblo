@@ -9,7 +9,7 @@ import {
   Building,
   Headphones,
   CheckCircle2,
-  AlertTriangle,
+  AlertCircle,
   Clock,
   Settings,
   Plus,
@@ -17,7 +17,9 @@ import {
   FileCheck,
   Search,
   ArrowUpRight,
-  LogOut
+  LogOut,
+  UserCheck,
+  XCircle
 } from 'lucide-react';
 import {
   LineChart,
@@ -45,17 +47,21 @@ import {
   PricingConfig,
   SupportTicket,
   PlatformAnalytics,
-  Booking
+  Booking,
+  AssistantApplication
 } from '../../types';
 
 export const AdminPanel: React.FC = () => {
   const { logoutStaff, staffUser } = useAuth();
   const { bookings, refreshBookings } = useBooking();
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'APPLICATIONS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT'>('OVERVIEW');
 
   // State entities
   const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
   const [assistants, setAssistants] = useState<AssistantProfile[]>([]);
+  const [applications, setApplications] = useState<AssistantApplication[]>([]);
+  const [reviewingApp, setReviewingApp] = useState<AssistantApplication | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
   const [societies, setSocieties] = useState<Society[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [pricing, setPricing] = useState<PricingConfig | null>(null);
@@ -85,13 +91,14 @@ export const AdminPanel: React.FC = () => {
   // Load all admin data
   const loadAdminData = async () => {
     try {
-      const [analyticsData, asstsData, socsData, coupData, priceData, tktData] = await Promise.all([
+      const [analyticsData, asstsData, socsData, coupData, priceData, tktData, appsData] = await Promise.all([
         api.getAnalytics(),
         api.getAssistants(),
         api.getSocieties(),
         api.getCoupons(),
         api.getPricing(),
-        api.getSupportTickets()
+        api.getSupportTickets(),
+        api.getAssistantApplications().catch(() => ({ success: false, applications: [] }))
       ]);
       setAnalytics(analyticsData);
       setAssistants(asstsData);
@@ -99,12 +106,25 @@ export const AdminPanel: React.FC = () => {
       setCoupons(coupData);
       setPricing(priceData);
       setTickets(tktData);
+      setApplications(appsData && 'applications' in appsData ? appsData.applications : []);
       if (priceData) {
         setBaseHourlyRate(priceData.baseHourlyPrice);
         setMinimumHours(priceData.minimumBookingHours);
       }
     } catch (e) {
       console.error('Failed to load admin dataset', e);
+    }
+  };
+
+  const handleReviewApplication = async (applicationId: string, status: 'APPROVED' | 'REJECTED') => {
+    try {
+      const action = status === 'APPROVED' ? 'APPROVE' : 'REJECT';
+      await api.reviewAssistantApplication(applicationId, action, reviewNotes || undefined);
+      setReviewingApp(null);
+      setReviewNotes('');
+      await loadAdminData();
+    } catch (e) {
+      console.error('Failed to review assistant application', e);
     }
   };
 
@@ -248,6 +268,7 @@ export const AdminPanel: React.FC = () => {
             { id: 'LIVEMAP', label: 'Mumbai Radar Map', icon: MapPin },
             { id: 'BOOKINGS', label: `All Bookings (${bookings.length})`, icon: Clock },
             { id: 'ASSISTANTS', label: `Assistants & KYC (${assistants.length})`, icon: Users },
+            { id: 'APPLICATIONS', label: `New Applications (${applications.filter(a => a.status === 'PENDING').length})`, icon: UserCheck },
             { id: 'SOCIETIES', label: `Societies (${societies.length})`, icon: Building },
             { id: 'PRICING', label: 'Pricing & Coupons', icon: DollarSign },
             { id: 'SUPPORT', label: `Support Tickets (${tickets.length})`, icon: Headphones }
@@ -513,6 +534,216 @@ export const AdminPanel: React.FC = () => {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB 4.5: ASSISTANT ONBOARDING APPLICATIONS */}
+        {/* ========================================================= */}
+        {activeTab === 'APPLICATIONS' && (
+          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-[#14213D]">
+                  Assistant Onboarding Pipeline ({applications.length})
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Review 8-step applications submitted by prospective Mumbai assistants. Approving creates an active assistant account with an EPL badge ID.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1 rounded-full font-bold">
+                  {applications.filter((a) => a.status === 'PENDING').length} Pending Review
+                </span>
+                <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full font-bold">
+                  {applications.filter((a) => a.status === 'APPROVED').length} Approved
+                </span>
+              </div>
+            </div>
+
+            {applications.length === 0 ? (
+              <div className="text-center py-12 text-gray-400 text-xs">
+                No assistant applications submitted yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {applications.map((app) => (
+                  <div
+                    key={app.id}
+                    className="p-5 rounded-2xl border border-gray-200 hover:border-gray-300 transition-all bg-gray-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm text-[#14213D]">{app.fullName}</h4>
+                        <span
+                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase ${
+                            app.status === 'APPROVED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : app.status === 'REJECTED'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {app.status}
+                        </span>
+                        <span className="text-[11px] text-gray-400">ID: {app.id}</span>
+                      </div>
+
+                      <div className="text-xs text-gray-600 flex flex-wrap gap-x-3 gap-y-1">
+                        <span>📞 +91 {app.mobileNumber}</span>
+                        <span>✉️ {app.email}</span>
+                        <span>📍 {app.mumbaiArea} ({app.pinCode})</span>
+                      </div>
+
+                      <div className="text-[11px] text-gray-500 flex flex-wrap gap-x-3 gap-y-1 pt-1">
+                        <span>Aadhaar: <strong className="font-mono text-gray-700">XXXX-XXXX-{app.aadhaarNumber?.slice(-4) || 'XXXX'}</strong></span>
+                        <span>PAN: <strong className="font-mono text-gray-700">{app.panNumber || 'N/A'}</strong></span>
+                        <span>Zones: {app.preferredOperatingZones?.join(', ') || 'Any'}</span>
+                        <span>Applied: {new Date(app.appliedAt).toLocaleDateString()}</span>
+                      </div>
+
+                      {app.adminNotes && (
+                        <div className="text-[11px] bg-white p-2 rounded-xl border border-gray-200 text-gray-600 mt-1">
+                          <strong>Admin Note:</strong> {app.adminNotes}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start md:self-center">
+                      <button
+                        onClick={() => {
+                          setReviewingApp(app);
+                          setReviewNotes(app.adminNotes || '');
+                        }}
+                        className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:border-gray-400 text-xs font-bold text-[#14213D] transition-colors"
+                      >
+                        View Full 8-Step Profile
+                      </button>
+
+                      {app.status === 'PENDING' && (
+                        <>
+                          <button
+                            onClick={() => handleReviewApplication(app.id, 'APPROVED')}
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors flex items-center gap-1 shadow-xs"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Approve & Create Assistant</span>
+                          </button>
+                          <button
+                            onClick={() => handleReviewApplication(app.id, 'REJECTED')}
+                            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-colors flex items-center gap-1"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Reject</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Application Detail / Review Modal */}
+            {reviewingApp && (
+              <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[88vh] overflow-y-auto p-6 sm:p-8 space-y-5 border border-gray-100 shadow-2xl">
+                  <div className="flex items-start justify-between border-b border-gray-100 pb-4">
+                    <div>
+                      <span className="text-[10px] font-bold text-[#F42F73] uppercase tracking-wider">
+                        Diblo Partner Application
+                      </span>
+                      <h3 className="text-xl font-black text-[#14213D]">{reviewingApp.fullName}</h3>
+                      <p className="text-xs text-gray-500">
+                        Submitted: {new Date(reviewingApp.appliedAt).toLocaleString()} • Status: <strong className="text-black">{reviewingApp.status}</strong>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setReviewingApp(null)}
+                      className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 1: Contact & Personal</div>
+                      <div><strong>Phone:</strong> +91 {reviewingApp.mobileNumber}</div>
+                      <div><strong>Email:</strong> {reviewingApp.email}</div>
+                      <div><strong>Address:</strong> {reviewingApp.currentAddress}</div>
+                      <div><strong>Area:</strong> {reviewingApp.mumbaiArea}, PIN {reviewingApp.pinCode}</div>
+                    </div>
+
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 2: KYC & Identification</div>
+                      <div><strong>Aadhaar:</strong> {reviewingApp.aadhaarNumber}</div>
+                      <div><strong>PAN:</strong> {reviewingApp.panNumber}</div>
+                      <div><strong>Police Clearance:</strong> {reviewingApp.policeClearanceCert}</div>
+                    </div>
+
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 3: Skills & Services</div>
+                      <div><strong>Languages:</strong> {reviewingApp.languagesSpoken?.join(', ')}</div>
+                      <div><strong>Services:</strong> {reviewingApp.selectedServices?.join(', ')}</div>
+                      <div><strong>Experience:</strong> {reviewingApp.yearsOfExperience} years</div>
+                    </div>
+
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 4: Availability & Vehicle</div>
+                      <div><strong>Zones:</strong> {reviewingApp.preferredOperatingZones?.join(', ')}</div>
+                      <div><strong>Availability:</strong> {reviewingApp.availabilityType}</div>
+                      <div><strong>Two-Wheeler:</strong> {reviewingApp.hasTwoWheeler ? `Yes (DL: ${reviewingApp.drivingLicenseNumber || 'Available'})` : 'No (Public Transit)'}</div>
+                    </div>
+
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 5: Emergency & References</div>
+                      <div><strong>Contact:</strong> {reviewingApp.emergencyContactName} ({reviewingApp.emergencyContactRelation})</div>
+                      <div><strong>Emergency Phone:</strong> +91 {reviewingApp.emergencyContactPhone}</div>
+                      <div><strong>Clean Criminal Record:</strong> {!reviewingApp.hasCriminalRecord ? 'Declared Clean' : 'Flagged'}</div>
+                    </div>
+
+                    <div className="space-y-1 bg-gray-50 p-3 rounded-2xl">
+                      <div className="font-bold text-gray-400 uppercase text-[10px]">Step 6: Payout Bank Account</div>
+                      <div><strong>Account Holder:</strong> {reviewingApp.accountHolderName}</div>
+                      <div><strong>Bank:</strong> {reviewingApp.bankName}</div>
+                      <div><strong>IFSC:</strong> {reviewingApp.bankIfscCode}</div>
+                      <div><strong>Account No:</strong> {reviewingApp.bankAccountNumber}</div>
+                    </div>
+                  </div>
+
+                  {/* Review Action Controls */}
+                  <div className="pt-2 border-t border-gray-100 space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Admin Internal Notes</label>
+                      <input
+                        type="text"
+                        value={reviewNotes}
+                        onChange={(e) => setReviewNotes(e.target.value)}
+                        placeholder="e.g. Verified Aadhaar & Police token in Bandra desk"
+                        className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={() => handleReviewApplication(reviewingApp.id, 'REJECTED')}
+                        className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-colors"
+                      >
+                        Reject Application
+                      </button>
+                      <button
+                        onClick={() => handleReviewApplication(reviewingApp.id, 'APPROVED')}
+                        className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition-colors flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Approve & Generate Assistant EPL Badge</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
