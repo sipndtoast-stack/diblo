@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check } from 'lucide-react';
+import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check, LogOut } from 'lucide-react';
 
 export const CustomerProfile: React.FC = () => {
-  const { currentUser, customerProfile, updateCustomerProfile } = useAuth();
+  const { currentUser, customerProfile, updateCustomerProfile, logoutCustomer } = useAuth();
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [newTitle, setNewTitle] = useState('Office');
   const [newAddress, setNewAddress] = useState('Godrej One, Vikhroli East, Mumbai');
   const [newArea, setNewArea] = useState('Vikhroli');
   const [copySuccess, setCopySuccess] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logoutCustomer();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const handleAddAddress = () => {
     if (!newAddress.trim()) return;
@@ -196,7 +206,7 @@ export const CustomerProfile: React.FC = () => {
         </div>
       </div>
 
-      {/* Account Information */}
+      {/* Account Information & Logout */}
       <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h4 className="text-sm font-bold text-[#14213D]">Account Information</h4>
@@ -204,9 +214,21 @@ export const CustomerProfile: React.FC = () => {
             {currentUser?.name} • +91 {currentUser?.phone} • {currentUser?.email}
           </p>
         </div>
-        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full w-fit">
-          Verified Diblo Member
-        </span>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full w-fit">
+            Verified Diblo Member
+          </span>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+            id="btn-customer-logout"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>{isLoggingOut ? 'Logging out...' : 'Log Out'}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
 import { MOCK_CUSTOMERS, MOCK_ASSISTANTS } from '../data/mockData';
+import { auth, isFirebaseConfigured } from '../lib/firebase';
 
 const DEFAULT_USERS: Record<UserRole, User> = {
   CUSTOMER: {
@@ -52,6 +54,9 @@ export interface AuthContextType {
   assistantProfile: AssistantProfile | null;
   staffUser: StaffSession | null;
   isAuthenticated: boolean;
+  isCustomerAuthenticated: boolean;
+  isAuthLoading: boolean;
+  firebaseCustomer: FirebaseUser | null;
   isLoading: boolean;
   isFirebaseLive: boolean;
   switchRole: (role: UserRole) => Promise<void>;
@@ -59,7 +64,9 @@ export interface AuthContextType {
   updateAssistantProfile: (profile: Partial<AssistantProfile>) => void;
   loginStaff: (mobileNumber: string, password: string) => Promise<{ success: boolean; role?: 'Assistant' | 'Admin'; message?: string; eplId?: string; name?: string; number?: string; email?: string }>;
   logoutStaff: () => Promise<void>;
+  logoutCustomer: () => Promise<void>;
   logout?: () => Promise<void>;
+  syncFirebaseCustomer: (user: FirebaseUser) => Promise<void>;
   loginWithPhoneOtp?: (phone: string, otp: string, role?: UserRole, name?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmailPassword?: (
     email: string,
@@ -82,6 +89,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(DEFAULT_CUSTOMER_PROFILE);
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(DEFAULT_ASSISTANT_PROFILE);
   const [isLoading] = useState<boolean>(false);
+  const [firebaseCustomer, setFirebaseCustomer] = useState<FirebaseUser | null>(() => auth.currentUser);
+  const [isCustomerAuthenticated, setIsCustomerAuthenticated] = useState<boolean>(() => Boolean(auth.currentUser));
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  // Restore Firebase Authentication for Customer automatically on load
+  useEffect(() => {
+    let isMounted = true;
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (!isMounted) return;
+      if (fbUser) {
+        setFirebaseCustomer(fbUser);
+        setIsCustomerAuthenticated(true);
+        const rawPhone = fbUser.phoneNumber || '';
+        const cleanPhone = rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10);
+
+        let cust: CustomerProfile | null = null;
+        if (cleanPhone) {
+          cust = await api.getCustomer(cleanPhone).catch(() => null);
+          if (!cust) {
+            cust = await api.createCustomerProfile({
+              id: `cust-${cleanPhone}`,
+              userId: fbUser.uid,
+              name: fbUser.displayName || 'Customer',
+              phone: cleanPhone,
+              email: fbUser.email || `${cleanPhone}@diblo.in`,
+              walletBalance: 100
+            }).catch(() => null);
+          }
+        }
+
+        if (isMounted) {
+          if (cust) {
+            setCustomerProfile(cust);
+          }
+          if (currentRole === 'CUSTOMER') {
+            setCurrentUser({
+              id: fbUser.uid,
+              name: cust?.name || fbUser.displayName || 'Customer',
+              phone: cleanPhone || '9820000000',
+              email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : 'customer@diblo.in'),
+              role: 'CUSTOMER',
+              avatar: fbUser.photoURL || cust?.avatar || DEFAULT_USERS.CUSTOMER.avatar,
+              createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
+            });
+          }
+          setIsAuthLoading(false);
+        }
+      } else {
+        setFirebaseCustomer(null);
+        setIsCustomerAuthenticated(false);
+        setIsAuthLoading(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [currentRole]);
 
   // Validate active staff session on mount
   useEffect(() => {
@@ -222,8 +288,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Customer Logout: clears Firebase session and customer state, redirects to /customer-login
+  const logoutCustomer = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn('[Diblo Auth] Firebase signOut notice:', err);
+    }
+    setFirebaseCustomer(null);
+    setIsCustomerAuthenticated(false);
+    setCustomerProfile(null);
+    setCurrentUser(DEFAULT_USERS.CUSTOMER);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/customer-login');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  };
+
+  // Sync Firebase authenticated Customer with local profile
+  const syncFirebaseCustomer = async (fbUser: FirebaseUser) => {
+    setFirebaseCustomer(fbUser);
+    setIsCustomerAuthenticated(true);
+    const rawPhone = fbUser.phoneNumber || '';
+    const cleanPhone = rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10);
+
+    let cust: CustomerProfile | null = null;
+    if (cleanPhone) {
+      cust = await api.getCustomer(cleanPhone).catch(() => null);
+      if (!cust) {
+        cust = await api.createCustomerProfile({
+          id: `cust-${cleanPhone}`,
+          userId: fbUser.uid,
+          name: fbUser.displayName || 'Customer',
+          phone: cleanPhone,
+          email: fbUser.email || `${cleanPhone}@diblo.in`,
+          walletBalance: 100
+        }).catch(() => null);
+      }
+    }
+
+    if (cust) {
+      setCustomerProfile(cust);
+    }
+    setCurrentRole('CUSTOMER');
+    setCurrentUser({
+      id: fbUser.uid,
+      name: cust?.name || fbUser.displayName || 'Customer',
+      phone: cleanPhone || '9820000000',
+      email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : 'customer@diblo.in'),
+      role: 'CUSTOMER',
+      avatar: fbUser.photoURL || cust?.avatar || DEFAULT_USERS.CUSTOMER.avatar,
+      createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
+    });
+  };
+
   const logout = async () => {
-    await logoutStaff();
+    if (currentRole === 'CUSTOMER') {
+      await logoutCustomer();
+    } else {
+      await logoutStaff();
+    }
   };
 
   const loginWithPhoneOtp = async () => ({ success: true });
@@ -238,15 +362,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         customerProfile,
         assistantProfile,
         staffUser,
-        isAuthenticated: true,
+        isAuthenticated: isCustomerAuthenticated || Boolean(staffUser?.authenticated),
+        isCustomerAuthenticated,
+        isAuthLoading,
+        firebaseCustomer,
         isLoading: false,
-        isFirebaseLive: false,
+        isFirebaseLive: isFirebaseConfigured(),
         switchRole,
         updateCustomerProfile,
         updateAssistantProfile,
         loginStaff,
         logoutStaff,
+        logoutCustomer,
         logout,
+        syncFirebaseCustomer,
         loginWithPhoneOtp,
         loginWithEmailPassword,
         loginDemoUser

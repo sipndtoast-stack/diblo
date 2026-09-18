@@ -17,6 +17,7 @@ import { PWAInstallModal } from './components/common/PWAInstallModal';
 import { StaffLogin } from './components/auth/StaffLogin';
 import { AccessSelection } from './components/auth/AccessSelection';
 import { CustomerLogin } from './components/auth/CustomerLogin';
+import { UnifiedLogin } from './components/auth/UnifiedLogin';
 import { AssistantOnboarding } from './components/assistant/AssistantOnboarding';
 import { ServiceItem, Booking } from './types';
 import { AlertCircle, X, Loader2 } from 'lucide-react';
@@ -30,7 +31,7 @@ const AdminPanel = React.lazy(() =>
 );
 
 const MainAppContent: React.FC = () => {
-  const { staffUser, switchRole } = useAuth();
+  const { staffUser, switchRole, isCustomerAuthenticated, isAuthLoading } = useAuth();
   const { setActiveBooking, bookings, completedFeedbackBooking, dismissFeedbackModal } = useBooking();
 
   // Current URL Path state
@@ -107,8 +108,6 @@ const MainAppContent: React.FC = () => {
     }
 
     // 2. /admin: Protected. Allowed Role: Admin only.
-    // If not logged in -> /staff-login
-    // If logged in as Assistant -> Deny access, redirect to /assistant, show error
     if (currentPath === '/admin') {
       if (!staffUser || !staffUser.authenticated) {
         navigateTo('/staff-login');
@@ -120,11 +119,26 @@ const MainAppContent: React.FC = () => {
       }
     }
 
-    // 3. /customer: Public Customer Route
+    // 3. /customer: Protected Customer Route
+    // If authenticated: switch role to CUSTOMER
+    // If not authenticated (and auth is loaded): redirect to /customer-login
     if (currentPath === '/customer') {
-      switchRole('CUSTOMER');
+      if (!isAuthLoading) {
+        if (!isCustomerAuthenticated) {
+          navigateTo('/customer-login');
+        } else {
+          switchRole('CUSTOMER');
+        }
+      }
     }
-  }, [currentPath, staffUser]);
+
+    // 4. If already authenticated with Firebase, restore session and open Customer Panel
+    if (!isAuthLoading && isCustomerAuthenticated) {
+      if (currentPath === '/' || currentPath === '/customer-login') {
+        navigateTo('/customer');
+      }
+    }
+  }, [currentPath, staffUser, isCustomerAuthenticated, isAuthLoading]);
 
   const handleOpenBookingWithService = (service: ServiceItem) => {
     setPreSelectedService(service);
@@ -144,25 +158,59 @@ const MainAppContent: React.FC = () => {
     setCustomerTab('ACTIVITY');
   };
 
-  // VIEW 1: FIRST SCREEN — ACCESS SELECTION (/)
+  // VIEW 1: FIRST SCREEN — UNIFIED LOGIN (/)
   if (currentPath === '/') {
+    if (isAuthLoading) {
+      return (
+        <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-gray-400">
+          <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
+        </div>
+      );
+    }
     return (
-      <AccessSelection
-        onSelectCustomer={() => navigateTo('/customer-login')}
-        onSelectStaff={() => navigateTo('/staff-login')}
+      <UnifiedLogin
+        initialMode="CUSTOMER"
+        onCustomerSuccess={() => {
+          navigateTo('/customer');
+        }}
+        onStaffSuccess={(role) => {
+          if (role === 'Admin') {
+            navigateTo('/admin');
+          } else {
+            navigateTo('/assistant');
+          }
+        }}
+        onApplyAssistant={() => {
+          navigateTo('/apply-assistant');
+        }}
       />
     );
   }
 
   // VIEW 1.5: CUSTOMER OTP LOGIN (/customer-login)
   if (currentPath === '/customer-login') {
+    if (isAuthLoading) {
+      return (
+        <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-gray-400">
+          <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
+        </div>
+      );
+    }
     return (
-      <CustomerLogin
-        onSuccess={() => {
+      <UnifiedLogin
+        initialMode="CUSTOMER"
+        onCustomerSuccess={() => {
           navigateTo('/customer');
         }}
-        onBackToSelection={() => {
-          navigateTo('/');
+        onStaffSuccess={(role) => {
+          if (role === 'Admin') {
+            navigateTo('/admin');
+          } else {
+            navigateTo('/assistant');
+          }
+        }}
+        onApplyAssistant={() => {
+          navigateTo('/apply-assistant');
         }}
       />
     );
@@ -185,16 +233,17 @@ const MainAppContent: React.FC = () => {
   // VIEW 2: STAFF LOGIN PAGE (/staff-login)
   if (currentPath === '/staff-login') {
     return (
-      <StaffLogin
-        onSuccess={(role) => {
+      <UnifiedLogin
+        initialMode="STAFF"
+        onCustomerSuccess={() => {
+          navigateTo('/customer');
+        }}
+        onStaffSuccess={(role) => {
           if (role === 'Admin') {
             navigateTo('/admin');
           } else {
             navigateTo('/assistant');
           }
-        }}
-        onBackToSelection={() => {
-          navigateTo('/');
         }}
         onApplyAssistant={() => {
           navigateTo('/apply-assistant');
@@ -261,13 +310,31 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // VIEW 4: CUSTOMER PANEL (DEFAULT /)
-  // Public access: No login required, opens directly!
+  // VIEW 4: CUSTOMER PANEL (/customer)
+  // Protected Customer Route: Authenticated with Firebase Phone Auth
+  if (!isAuthLoading && !isCustomerAuthenticated) {
+    return (
+      <UnifiedLogin
+        initialMode="CUSTOMER"
+        onCustomerSuccess={() => {
+          navigateTo('/customer');
+        }}
+        onStaffSuccess={(role) => {
+          if (role === 'Admin') {
+            navigateTo('/admin');
+          } else {
+            navigateTo('/assistant');
+          }
+        }}
+        onApplyAssistant={() => {
+          navigateTo('/apply-assistant');
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#fcfcfc] flex flex-col font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
-      {/* Top Portal Switcher */}
-      <RoleSwitcher />
-
       {/* Customer Header */}
       <CustomerHeader
         onOpenBooking={() => setIsBookingModalOpen(true)}
