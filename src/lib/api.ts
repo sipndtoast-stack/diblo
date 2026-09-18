@@ -929,14 +929,44 @@ export const api = {
 
   // Assistant Application & Onboarding
   async applyAssistant(applicationData: Partial<AssistantApplication>): Promise<{ success: boolean; message?: string; applicationNumber?: string; error?: string }> {
+    const url = '/api/assistant/apply';
     try {
-      const res = await fetch('/api/assistant/apply', {
+      const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify(applicationData)
       });
-      return await res.json();
+
+      const contentType = res.headers.get('content-type') || '';
+
+      // Guard against HTML / non-JSON responses (prevents "Unexpected token '<'")
+      if (!contentType.includes('application/json')) {
+        const responseText = await res.text().catch(() => '');
+        console.error(`[applyAssistant] Received non-JSON response from ${url}:`, {
+          status: res.status,
+          contentType,
+          snippet: responseText.slice(0, 200)
+        });
+        return {
+          success: false,
+          error: `API returned non-JSON format (${contentType || 'empty'}) with HTTP ${res.status}. Please check backend server status.`
+        };
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          success: false,
+          error: data?.error || data?.message || `Server error (${res.status}) submitting application`
+        };
+      }
+
+      return data;
     } catch (err: any) {
+      console.error('[applyAssistant Network/Parse Error]:', err);
       return { success: false, error: err.message || 'Network error submitting application' };
     }
   },

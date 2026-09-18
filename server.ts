@@ -20,6 +20,7 @@ import {
   verifyRazorpaySignature,
   getRazorpayClient
 } from './server/lib/razorpay';
+import { appendOnboardingToSheet } from './server/lib/googleSheetsAdmin';
 import {
   Booking,
   AssistantProfile,
@@ -890,7 +891,7 @@ async function startServer() {
   // ASSISTANT ONBOARDING PIPELINE & APPLICATIONS
   // ==========================================
   // Public endpoint: Submit 8-step application
-  app.post('/api/assistant/apply', async (req, res) => {
+  app.post(['/api/assistant/apply', '/api/assistant/apply/'], async (req, res) => {
     try {
       const body = req.body;
       const cleanPhone = String(body.mobileNumber || '').replace(/\D/g, '').slice(-10);
@@ -950,13 +951,23 @@ async function startServer() {
         appliedAt: new Date().toISOString()
       };
 
+      // 1. Persist application in backend repository (Firestore or Memory DB)
       const saved = await dbRepository.saveApplication(newApp);
 
-      return res.json({
+      // 2. Synchronize to Google Sheets tab 'New Staff Onbording' (Spreadsheet: 19GO22yFFHR7fLbC8v4R8xifkI6f2fgdQbfQlvxfMHC0)
+      let sheetsSyncResult: { success: boolean; method: string } = { success: false, method: 'none' };
+      try {
+        sheetsSyncResult = await appendOnboardingToSheet(saved);
+      } catch (sheetErr: any) {
+        console.warn('[Apply Assistant Google Sheet Sync Warning]', sheetErr?.message || sheetErr);
+      }
+
+      return res.status(200).json({
         success: true,
         message: 'Your assistant application has been submitted successfully! Diblo Operations will review your documents within 24-48 hours.',
         applicationNumber: saved.applicationNumber,
-        applicationId: saved.id
+        applicationId: saved.id,
+        sheetsSynced: sheetsSyncResult.success
       });
     } catch (err: any) {
       console.error('[Apply Assistant Error]', err);
@@ -2131,8 +2142,21 @@ async function startServer() {
   // ==========================================
   // 404 FOR UNHANDLED API ROUTES
   // ==========================================
-  app.use('/api', (req, res) => {
-    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
+  app.all(['/api', '/api/*'], (req, res) => {
+    res.status(404).json({ success: false, error: `API route not found: ${req.method} ${req.originalUrl}` });
+  });
+
+  // Centralized Error Handling for API routes - ALWAYS returns JSON, never HTML
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (req.originalUrl && req.originalUrl.startsWith('/api')) {
+      console.error('[API SERVER ERROR]', req.method, req.originalUrl, err);
+      if (res.headersSent) return next(err);
+      return res.status(err.status || 500).json({
+        success: false,
+        error: err.message || 'Internal Server Error'
+      });
+    }
+    next(err);
   });
 
   // ==========================================
@@ -2152,7 +2176,7 @@ async function startServer() {
     });
   }
 
-  // Centralized Error Handling Middleware
+  // Centralized Error Handling Middleware for non-API routes
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     console.error('[UNCAUGHT SERVER ERROR]', err);
     if (res.headersSent) {

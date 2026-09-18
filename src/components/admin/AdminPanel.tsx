@@ -19,7 +19,8 @@ import {
   ArrowUpRight,
   LogOut,
   UserCheck,
-  XCircle
+  XCircle,
+  FileSpreadsheet
 } from 'lucide-react';
 import {
   LineChart,
@@ -39,6 +40,7 @@ import { api } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { MapView } from '../common/MapView';
+import { GoogleSheetsHub } from './GoogleSheetsHub';
 import {
   AssistantProfile,
   CustomerProfile,
@@ -54,7 +56,7 @@ import {
 export const AdminPanel: React.FC = () => {
   const { logoutStaff, staffUser } = useAuth();
   const { bookings, refreshBookings } = useBooking();
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'APPLICATIONS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'APPLICATIONS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT' | 'SHEETS'>('OVERVIEW');
 
   // State entities
   const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
@@ -271,7 +273,8 @@ export const AdminPanel: React.FC = () => {
             { id: 'APPLICATIONS', label: `New Applications (${applications.filter(a => a.status === 'PENDING').length})`, icon: UserCheck },
             { id: 'SOCIETIES', label: `Societies (${societies.length})`, icon: Building },
             { id: 'PRICING', label: 'Pricing & Coupons', icon: DollarSign },
-            { id: 'SUPPORT', label: `Support Tickets (${tickets.length})`, icon: Headphones }
+            { id: 'SUPPORT', label: `Support Tickets (${tickets.length})`, icon: Headphones },
+            { id: 'SHEETS', label: 'Google Sheets & Sync', icon: FileSpreadsheet }
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1046,6 +1049,19 @@ export const AdminPanel: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB 9: GOOGLE SHEETS & WORKSPACE INTEGRATION */}
+        {/* ========================================================= */}
+        {activeTab === 'SHEETS' && (
+          <GoogleSheetsHub
+            bookings={bookings}
+            assistants={assistants}
+            applications={applications}
+            analytics={analytics}
+            onRefreshData={loadAdminData}
+          />
         )}
       </main>
     </div>

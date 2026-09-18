@@ -20,7 +20,7 @@ export const firebaseConfig: FirebaseClientConfig = {
   storageBucket: firebaseConfigData.storageBucket || (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || 'diblo-39440.firebasestorage.app',
   messagingSenderId: firebaseConfigData.messagingSenderId || (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || '650321096736',
   appId: firebaseConfigData.appId || (import.meta.env.VITE_FIREBASE_APP_ID as string) || '1:650321096736:web:218a11d36b1ca9e38c0c45',
-  firestoreDatabaseId: firebaseConfigData.firestoreDatabaseId
+  firestoreDatabaseId: (firebaseConfigData as any).firestoreDatabaseId
 };
 
 // Check if Firebase is fully configured with an API key
@@ -37,7 +37,9 @@ if (getApps().length > 0) {
 }
 
 export const firebaseApp: FirebaseApp = appInstance;
-export const db: Firestore = getFirestore(appInstance, firebaseConfigData.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+export const db: Firestore = (firebaseConfigData as any).firestoreDatabaseId
+  ? getFirestore(appInstance, (firebaseConfigData as any).firestoreDatabaseId)
+  : getFirestore(appInstance); /* CRITICAL: The app will break without this line */
 export const auth: Auth = getAuth(appInstance);
 
 // Firestore Error Handling Definition
