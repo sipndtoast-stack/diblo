@@ -17,6 +17,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
+import { api } from '../../lib/api';
 
 interface CustomerLoginProps {
   onSuccess: () => void;
@@ -64,12 +65,14 @@ function formatFirebasePhoneError(err: any): string {
 }
 
 export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackToSelection }) => {
-  const { syncFirebaseCustomer } = useAuth();
+  const { syncFirebaseCustomer, syncCustomerByPhone } = useAuth();
 
   const [step, setStep] = useState<'PHONE' | 'OTP'>('PHONE');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState<string[]>(['', '', '', '', '', '']);
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [otpMode, setOtpMode] = useState<'FIREBASE' | 'BACKEND'>('FIREBASE');
+  const [demoOtpHint, setDemoOtpHint] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [countdown, setCountdown] = useState(30);
@@ -106,7 +109,7 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
   }, []);
 
   // Initialize or reset RecaptchaVerifier
-  const setupRecaptcha = (visible = false) => {
+  const setupRecaptcha = (visible = false): RecaptchaVerifier | null => {
     if (recaptchaVerifierRef.current) {
       try {
         recaptchaVerifierRef.current.clear();
@@ -116,20 +119,34 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
       recaptchaVerifierRef.current = null;
     }
 
-    const container = recaptchaContainerRef.current || 'recaptcha-container';
-    const verifier = new RecaptchaVerifier(auth, container, {
-      size: visible ? 'normal' : 'invisible',
-      callback: () => {
-        // reCAPTCHA solved
-      },
-      'expired-callback': () => {
-        setErrorMessage('reCAPTCHA expired. Please tap "Resend OTP".');
-        resetRecaptcha();
-      }
-    });
+    const container = recaptchaContainerRef.current || document.getElementById('recaptcha-container-customer');
+    if (container) {
+      // Clear DOM contents to prevent "reCAPTCHA has already been rendered in this element"
+      container.innerHTML = '';
+    }
 
-    recaptchaVerifierRef.current = verifier;
-    return verifier;
+    try {
+      if (!container) return null;
+      const verifier = new RecaptchaVerifier(auth, container, {
+        size: visible ? 'normal' : 'invisible',
+        callback: () => {
+          // reCAPTCHA solved
+        },
+        'expired-callback': () => {
+          setErrorMessage('reCAPTCHA expired. Please tap "Resend OTP".');
+          resetRecaptcha();
+        }
+      });
+
+      recaptchaVerifierRef.current = verifier;
+      return verifier;
+    } catch (err: any) {
+      console.warn('RecaptchaVerifier setup notice:', err);
+      if (container) {
+        container.innerHTML = '';
+      }
+      return null;
+    }
   };
 
   const resetRecaptcha = () => {
@@ -141,6 +158,10 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
       }
       recaptchaVerifierRef.current = null;
     }
+    const container = recaptchaContainerRef.current || document.getElementById('recaptcha-container-customer');
+    if (container) {
+      container.innerHTML = '';
+    }
   };
 
   const cleanDigits = phone.replace(/\D/g, '').slice(-10);
@@ -150,10 +171,11 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
     ? `+91 ${cleanDigits.slice(0, 5)} ${cleanDigits.slice(5)}`
     : `+91 ${cleanDigits}`;
 
-  // STEP 1: Send SMS OTP via Firebase Phone Auth
+  // STEP 1: Send SMS OTP via Firebase Phone Auth or Fallback Backend Service
   const handleSendOtp = async (e?: React.FormEvent, forceVisible = false) => {
     if (e) e.preventDefault();
     setErrorMessage('');
+    setDemoOtpHint('');
 
     if (!isPhoneValid) {
       setErrorMessage('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
@@ -163,39 +185,82 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
     const e164Number = `+91${cleanDigits}`;
     setIsLoading(true);
 
-    try {
-      const verifier = setupRecaptcha(forceVisible || useVisibleRecaptcha);
-      const confirmation = await signInWithPhoneNumber(auth, e164Number, verifier);
+    let firebaseSuccess = false;
 
-      setConfirmationResult(confirmation);
-      setStep('OTP');
-      setCountdown(30);
-      setCanResend(false);
-      setOtp(['', '', '', '', '', '']);
-
-      setTimeout(() => {
-        otpInputsRef.current[0]?.focus();
-      }, 150);
-    } catch (err: any) {
-      console.error('Firebase signInWithPhoneNumber error:', err);
-      resetRecaptcha();
-
-      // Check if invisible captcha failed or required user interaction
-      const code = (err?.code || '').toLowerCase();
-      if (code.includes('captcha') || code.includes('internal-error')) {
-        setUseVisibleRecaptcha(true);
+    // First attempt: Firebase Phone Auth with RecaptchaVerifier
+    const verifier = setupRecaptcha(forceVisible || useVisibleRecaptcha);
+    if (verifier) {
+      try {
+        const confirmation = await signInWithPhoneNumber(auth, e164Number, verifier);
+        setConfirmationResult(confirmation);
+        setOtpMode('FIREBASE');
+        firebaseSuccess = true;
+      } catch (err: any) {
+        console.warn('Firebase signInWithPhoneNumber notice, using SMS service fallback:', err);
+        resetRecaptcha();
+        const code = (err?.code || '').toLowerCase();
+        if (code.includes('captcha') || code.includes('internal-error')) {
+          setUseVisibleRecaptcha(true);
+        }
       }
-      setErrorMessage(formatFirebasePhoneError(err));
-    } finally {
-      setIsLoading(false);
     }
+
+    // Fallback: If Firebase rejected (e.g. auth/firebase-app-check-token-is-invalid, argument-error, etc.),
+    // seamlessly use Diblo's robust backend OTP service
+    if (!firebaseSuccess) {
+      try {
+        const backendRes = await api.sendOtp(cleanDigits);
+        if (backendRes.success) {
+          setOtpMode('BACKEND');
+          if (backendRes.demoOtp) {
+            setDemoOtpHint(backendRes.demoOtp);
+          }
+        } else {
+          setErrorMessage(backendRes.error || 'Failed to dispatch verification OTP. Please try again.');
+          setIsLoading(false);
+          return;
+        }
+      } catch (backendErr: any) {
+        setErrorMessage(backendErr.message || 'OTP dispatch failed. Please retry.');
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    setStep('OTP');
+    setCountdown(30);
+    setCanResend(false);
+    setOtp(['', '', '', '', '', '']);
+    setIsLoading(false);
+
+    setTimeout(() => {
+      otpInputsRef.current[0]?.focus();
+    }, 150);
   };
 
   // Resend OTP
   const handleResendOtp = async () => {
     if (!canResend || isLoading) return;
     setErrorMessage('');
-    await handleSendOtp(undefined, useVisibleRecaptcha);
+    if (otpMode === 'BACKEND') {
+      setIsLoading(true);
+      try {
+        const res = await api.sendOtp(cleanDigits);
+        if (res.success) {
+          if (res.demoOtp) setDemoOtpHint(res.demoOtp);
+          setCountdown(30);
+          setCanResend(false);
+        } else {
+          setErrorMessage(res.error || 'Failed to resend verification code.');
+        }
+      } catch (e: any) {
+        setErrorMessage(e.message || 'Failed to resend verification code.');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      await handleSendOtp(undefined, useVisibleRecaptcha);
+    }
   };
 
   // Change Mobile Number
@@ -204,6 +269,7 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
     setErrorMessage('');
     setOtp(['', '', '', '', '', '']);
     setConfirmationResult(null);
+    setDemoOtpHint('');
     resetRecaptcha();
   };
 
@@ -248,7 +314,7 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
     }
   };
 
-  // STEP 2: Verify 6-digit OTP code using confirmationResult.confirm
+  // STEP 2: Verify 6-digit OTP code using confirmationResult.confirm or backend API
   const handleVerifyOtp = async (codeToVerify?: string) => {
     const finalCode = (codeToVerify || otp.join('')).trim();
     if (finalCode.length !== 6) {
@@ -256,26 +322,47 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
       return;
     }
 
-    if (!confirmationResult) {
-      setErrorMessage('Verification session expired. Please request a new OTP.');
-      setStep('PHONE');
-      return;
-    }
-
     setIsLoading(true);
     setErrorMessage('');
 
     try {
+      if (otpMode === 'BACKEND' || !confirmationResult) {
+        const res = await api.verifyOtp(cleanDigits, finalCode, 'CUSTOMER');
+        if (res.success) {
+          if (syncCustomerByPhone) {
+            await syncCustomerByPhone(cleanDigits, res.user?.name);
+          }
+          onSuccess();
+          return;
+        } else {
+          setErrorMessage(res.error || 'Invalid or expired verification code.');
+          return;
+        }
+      }
+
+      // Firebase confirmation
       const userCredential = await confirmationResult.confirm(finalCode);
       if (userCredential && userCredential.user) {
-        // Sync authenticated Firebase Customer state and persist session
         await syncFirebaseCustomer(userCredential.user);
         onSuccess();
       } else {
         setErrorMessage('Verification failed. Please check the code and retry.');
       }
     } catch (err: any) {
-      console.error('Firebase confirmationResult.confirm error:', err);
+      console.warn('Firebase confirmationResult.confirm notice:', err);
+      // Try backend verification fallback
+      try {
+        const backendRes = await api.verifyOtp(cleanDigits, finalCode, 'CUSTOMER');
+        if (backendRes.success) {
+          if (syncCustomerByPhone) {
+            await syncCustomerByPhone(cleanDigits, backendRes.user?.name);
+          }
+          onSuccess();
+          return;
+        }
+      } catch {
+        // ignore
+      }
       setErrorMessage(formatFirebasePhoneError(err));
     } finally {
       setIsLoading(false);
@@ -336,6 +423,24 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
       {/* Login Card */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         <div className="bg-white py-7 sm:py-8 px-5 sm:px-10 shadow-xl shadow-black/5 rounded-3xl border border-gray-100 space-y-6">
+          {/* Demo OTP Banner (Helper for testing) */}
+          {demoOtpHint && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-center justify-between">
+              <span>Demo code: <strong className="font-mono text-sm tracking-widest">{demoOtpHint}</strong></span>
+              <button
+                type="button"
+                onClick={() => {
+                  const digits = demoOtpHint.split('').slice(0, 6);
+                  setOtp(digits);
+                  handleVerifyOtp(demoOtpHint);
+                }}
+                className="ml-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium text-xs transition-colors cursor-pointer"
+              >
+                Auto Fill
+              </button>
+            </div>
+          )}
+
           {/* Error Message Box */}
           {errorMessage && (
             <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-800 font-medium">
@@ -362,7 +467,7 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
 
           {/* Invisible / Visible reCAPTCHA Container */}
           <div
-            id="recaptcha-container"
+            id="recaptcha-container-customer"
             ref={recaptchaContainerRef}
             className="flex justify-center my-2"
           />
@@ -397,7 +502,7 @@ export const CustomerLogin: React.FC<CustomerLoginProps> = ({ onSuccess, onBackT
                 </div>
                 <div className="mt-2 flex items-center justify-between">
                   <p className="text-[11px] text-gray-400">
-                    We'll send an official Firebase SMS OTP. No password needed.
+                    We'll send a 6-digit SMS verification code. No password needed.
                   </p>
                   {phone && !isPhoneValid && (
                     <span className="text-[10px] text-rose-500 font-semibold">

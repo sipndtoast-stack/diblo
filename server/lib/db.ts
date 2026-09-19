@@ -7,6 +7,7 @@ import {
   MOCK_BOOKINGS,
   MOCK_SOCIETIES,
   MOCK_COUPONS,
+  MOCK_REFERRALS,
   MOCK_SUPPORT_TICKETS,
   INITIAL_PRICING
 } from '../../src/data/mockData';
@@ -16,11 +17,13 @@ import {
   CustomerProfile,
   Society,
   Coupon,
+  Referral,
   PricingConfig,
   SupportTicket,
   ServiceItem,
   User,
-  AssistantApplication
+  AssistantApplication,
+  EmergencyAlert
 } from '../../src/types';
 
 // In-Memory fallback store
@@ -30,7 +33,27 @@ let memoryAssistants: AssistantProfile[] = [...MOCK_ASSISTANTS];
 let memoryCustomers: CustomerProfile[] = [...MOCK_CUSTOMERS];
 let memorySocieties: Society[] = [...MOCK_SOCIETIES];
 let memoryCoupons: Coupon[] = [...MOCK_COUPONS];
+let memoryReferrals: Referral[] = [...MOCK_REFERRALS];
 let memorySupportTickets: SupportTicket[] = [...MOCK_SUPPORT_TICKETS];
+let memoryEmergencyAlerts: EmergencyAlert[] = [
+  {
+    id: 'sos-init-1',
+    alertNumber: 'SOS-2026-911',
+    userId: 'user-c-1',
+    userName: 'Aarav Mehta',
+    userPhone: '9820123456',
+    userRole: 'CUSTOMER',
+    bookingId: 'bk-101',
+    serviceName: 'Senior Citizen Assistance',
+    status: 'ACTIVE',
+    lat: 19.0596,
+    lng: 72.8295,
+    address: 'Carter Road, Bandra West, Mumbai',
+    accuracy: 12,
+    triggerSource: 'CUSTOMER_HEADER_SOS',
+    timestamp: new Date(Date.now() - 15 * 60000).toISOString()
+  }
+];
 let memoryServices: ServiceItem[] = [...SERVICES];
 let memoryApplications: AssistantApplication[] = [
   {
@@ -551,6 +574,54 @@ export const dbRepository = {
       }
     }
     return ticket;
+  },
+
+  // ----------------------------------------------------
+  // EMERGENCY SOS ALERTS
+  // ----------------------------------------------------
+  async getEmergencyAlerts(): Promise<EmergencyAlert[]> {
+    let list = [...memoryEmergencyAlerts];
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        const snapshot = await db.collection('emergencyAlerts').get();
+        if (!snapshot.empty) {
+          list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        }
+      } catch (err) {
+        console.error('[DB] Error fetching emergency alerts from Firestore:', err);
+      }
+    }
+    // Return newest first, prioritizing ACTIVE
+    return list.sort((a, b) => {
+      if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+      if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    });
+  },
+
+  async saveEmergencyAlert(alert: EmergencyAlert): Promise<EmergencyAlert> {
+    const idx = memoryEmergencyAlerts.findIndex((a) => a.id === alert.id);
+    if (idx >= 0) {
+      memoryEmergencyAlerts[idx] = { ...memoryEmergencyAlerts[idx], ...alert };
+    } else {
+      memoryEmergencyAlerts.unshift(alert);
+    }
+
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        await db.collection('emergencyAlerts').doc(alert.id).set(alert, { merge: true });
+      } catch (err) {
+        console.error('[DB] Error saving emergency alert to Firestore:', err);
+      }
+    }
+    return alert;
+  },
+
+  async getEmergencyAlertById(id: string): Promise<EmergencyAlert | null> {
+    const alerts = await this.getEmergencyAlerts();
+    return alerts.find((a) => a.id === id) || null;
   },
 
   // ----------------------------------------------------

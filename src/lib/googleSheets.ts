@@ -5,7 +5,7 @@ import {
   onAuthStateChanged,
   User as FirebaseUser
 } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, oAuthClientId } from './firebase';
 import { Booking, AssistantProfile, AssistantApplication, PlatformAnalytics } from '../types';
 
 export const WORKSPACE_SCOPES = [
@@ -21,6 +21,91 @@ let cachedAccessToken: string | null = null;
 let googleUserEmail: string | null = null;
 let googleUserName: string | null = null;
 let googleUserPhoto: string | null = null;
+
+// Dynamically load Google Identity Services client script if needed
+async function loadGsiScript(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if ((window as any).google?.accounts?.oauth2) return true;
+
+  return new Promise((resolve) => {
+    const existing = document.getElementById('google-gsi-client');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true));
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'google-gsi-client';
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+}
+
+// Request access token via Google Identity Services (GSI) Token Client
+async function requestGsiToken(clientId: string): Promise<{
+  success: boolean;
+  accessToken?: string;
+  email?: string;
+  name?: string;
+  photo?: string;
+  error?: string;
+}> {
+  return new Promise(async (resolve) => {
+    try {
+      const loaded = await loadGsiScript();
+      if (!loaded || !(window as any).google?.accounts?.oauth2) {
+        resolve({ success: false, error: 'Google Identity Services library failed to load.' });
+        return;
+      }
+
+      const client = (window as any).google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: WORKSPACE_SCOPES.join(' '),
+        callback: async (response: any) => {
+          if (response.error) {
+            resolve({ success: false, error: response.error_description || response.error });
+            return;
+          }
+          const accessToken = response.access_token;
+          if (!accessToken) {
+            resolve({ success: false, error: 'No access token received from Google.' });
+            return;
+          }
+
+          let profileInfo: any = {};
+          try {
+            const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (userInfoRes.ok) {
+              profileInfo = await userInfoRes.json();
+            }
+          } catch {
+            // non-fatal
+          }
+
+          resolve({
+            success: true,
+            accessToken,
+            email: profileInfo.email,
+            name: profileInfo.name,
+            photo: profileInfo.picture
+          });
+        },
+        error_callback: (err: any) => {
+          resolve({ success: false, error: err?.message || 'Google authorization was closed or denied.' });
+        }
+      });
+
+      client.requestAccessToken({ prompt: 'consent' });
+    } catch (e: any) {
+      resolve({ success: false, error: e?.message || 'Failed to initialize Google token client.' });
+    }
+  });
+}
 
 // Clear cached token automatically when user signs out
 onAuthStateChanged(auth, (user) => {
@@ -62,14 +147,15 @@ export async function connectGoogleWorkspace(): Promise<{
   user?: FirebaseUser;
   error?: string;
 }> {
+  // First, attempt standard Firebase signInWithPopup (without access_type: 'offline')
   try {
     const provider = new GoogleAuthProvider();
     for (const scope of WORKSPACE_SCOPES) {
       provider.addScope(scope);
     }
+    // Only pass prompt: 'consent'; access_type: 'offline' causes auth/internal-error in client popups
     provider.setCustomParameters({
-      prompt: 'consent',
-      access_type: 'offline'
+      prompt: 'consent'
     });
 
     const result = await signInWithPopup(auth, provider);
@@ -82,16 +168,65 @@ export async function connectGoogleWorkspace(): Promise<{
       googleUserName = result.user.displayName;
       googleUserPhoto = result.user.photoURL;
       return { success: true, accessToken: token, user: result.user };
-    } else {
-      return { success: false, error: 'Google sign-in succeeded but did not return an access token for Sheets.' };
     }
   } catch (err: any) {
+    console.warn('[Google Workspace] Firebase signInWithPopup notice:', err);
+
+    // If Firebase Auth encounters internal-error (common in cross-origin iframes),
+    // immediately attempt Google Identity Services (GSI) Token Client fallback
+    if (oAuthClientId && typeof window !== 'undefined') {
+      try {
+        const gsiResult = await requestGsiToken(oAuthClientId);
+        if (gsiResult.success && gsiResult.accessToken) {
+          cachedAccessToken = gsiResult.accessToken;
+          googleUserEmail = gsiResult.email || null;
+          googleUserName = gsiResult.name || null;
+          googleUserPhoto = gsiResult.photo || null;
+
+          const mockOrRealUser = auth.currentUser || ({
+            uid: `google-${Date.now()}`,
+            email: gsiResult.email,
+            displayName: gsiResult.name,
+            photoURL: gsiResult.photo,
+            emailVerified: true
+          } as unknown as FirebaseUser);
+
+          return {
+            success: true,
+            accessToken: gsiResult.accessToken,
+            user: mockOrRealUser
+          };
+        } else if (gsiResult.error && !gsiResult.error.includes('closed or denied')) {
+          console.warn('[Google Workspace] GSI fallback notice:', gsiResult.error);
+        }
+      } catch (gsiErr) {
+        console.warn('[Google Workspace] GSI fallback exception:', gsiErr);
+      }
+    }
+
     console.error('Failed to connect Google Workspace:', err);
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+    const errCode = (err?.code || '').toLowerCase();
+    const errMsg = (err?.message || '').toLowerCase();
+
+    let friendlyError = 'Authentication failed or popup was closed.';
+    if (errCode.includes('internal-error') || errMsg.includes('internal-error')) {
+      friendlyError = isIframe
+        ? 'Google sign-in popup was restricted by browser iframe security. Please allow popups or open the app in a new tab.'
+        : 'Google Authentication encountered an internal error. Please check third-party cookie permissions or retry.';
+    } else if (errCode.includes('popup-closed-by-user') || errMsg.includes('popup-closed')) {
+      friendlyError = 'Sign-in popup was closed before completing authorization.';
+    } else if (err?.message) {
+      friendlyError = err.message;
+    }
+
     return {
       success: false,
-      error: err?.message || 'Authentication failed or popup was closed.'
+      error: friendlyError
     };
   }
+
+  return { success: false, error: 'Google sign-in did not return an access token.' };
 }
 
 /**

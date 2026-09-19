@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, signOut, signInAnonymously, User as FirebaseUser } from 'firebase/auth';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
 import { MOCK_CUSTOMERS, MOCK_ASSISTANTS } from '../data/mockData';
@@ -67,6 +67,7 @@ export interface AuthContextType {
   logoutCustomer: () => Promise<void>;
   logout?: () => Promise<void>;
   syncFirebaseCustomer: (user: FirebaseUser) => Promise<void>;
+  syncCustomerByPhone?: (phone: string, name?: string) => Promise<void>;
   loginWithPhoneOtp?: (phone: string, otp: string, role?: UserRole, name?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmailPassword?: (
     email: string,
@@ -342,6 +343,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  // Sync Customer by verified phone (handles direct backend OTP verification and preserves Firebase auth state)
+  const syncCustomerByPhone = async (phone: string, name?: string) => {
+    const cleanPhone = phone.replace('+91', '').replace(/\D/g, '').slice(-10);
+
+    // Ensure Firebase has an active authenticated session (anonymous if not already signed in)
+    // so that Firestore security rules (request.auth != null) continue to permit operations
+    let currentFbUser = auth.currentUser;
+    if (!currentFbUser && isFirebaseConfigured()) {
+      try {
+        const anonCred = await signInAnonymously(auth);
+        currentFbUser = anonCred.user;
+        setFirebaseCustomer(currentFbUser);
+      } catch (err) {
+        console.warn('[Diblo Auth] Anonymous Firebase sign-in notice:', err);
+      }
+    }
+
+    setIsCustomerAuthenticated(true);
+    let cust: CustomerProfile | null = null;
+    if (cleanPhone) {
+      cust = await api.getCustomer(cleanPhone).catch(() => null);
+      if (!cust) {
+        cust = await api.createCustomerProfile({
+          id: `cust-${cleanPhone}`,
+          userId: currentFbUser?.uid || `user-c-${cleanPhone}`,
+          name: name || `Customer ${cleanPhone.slice(-4)}`,
+          phone: cleanPhone,
+          email: `${cleanPhone}@diblo.in`,
+          walletBalance: 100
+        }).catch(() => null);
+      }
+    }
+
+    if (cust) {
+      setCustomerProfile(cust);
+    }
+    setCurrentRole('CUSTOMER');
+    setCurrentUser({
+      id: currentFbUser?.uid || `user-c-${cleanPhone}`,
+      name: cust?.name || name || `Customer ${cleanPhone.slice(-4)}`,
+      phone: cleanPhone || '9820000000',
+      email: cust?.email || `${cleanPhone}@diblo.in`,
+      role: 'CUSTOMER',
+      avatar: DEFAULT_USERS.CUSTOMER.avatar,
+      createdAt: new Date().toISOString()
+    });
+  };
+
   const logout = async () => {
     if (currentRole === 'CUSTOMER') {
       await logoutCustomer();
@@ -350,7 +399,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const loginWithPhoneOtp = async () => ({ success: true });
+  const loginWithPhoneOtp = async (phone: string, otp: string, role: UserRole = 'CUSTOMER', name?: string) => {
+    try {
+      const res = await api.verifyOtp(phone, otp, role, name);
+      if (res.success) {
+        await syncCustomerByPhone(phone, name || res.user?.name);
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'Invalid or expired verification code' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Verification failed. Please try again.' };
+    }
+  };
   const loginWithEmailPassword = async () => ({ success: true });
   const loginDemoUser = async () => ({ success: true });
 
@@ -376,6 +436,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logoutCustomer,
         logout,
         syncFirebaseCustomer,
+        syncCustomerByPhone,
         loginWithPhoneOtp,
         loginWithEmailPassword,
         loginDemoUser

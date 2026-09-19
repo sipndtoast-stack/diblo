@@ -2,6 +2,15 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { Booking, InAppNotification, PricingConfig } from '../types';
 import { api } from '../lib/api';
 import { useAuth } from './AuthContext';
+import {
+  getPushPermission,
+  requestPushPermission,
+  sendOneHourPushReminder,
+  checkAndDispatchUpcomingReminders,
+  isOneHourReminderSent,
+  resetOneHourReminder,
+  PushPermissionStatus
+} from '../lib/pushNotificationService';
 
 interface BookingContextType {
   bookings: Booking[];
@@ -12,6 +21,10 @@ interface BookingContextType {
   liveEtaMinutes: number;
   liveDistanceKm: number;
   liveAssistantCoords: { lat: number; lng: number };
+  pushPermission: PushPermissionStatus;
+  requestPushNotificationPermission: () => Promise<PushPermissionStatus>;
+  triggerOneHourReminderTest: (bookingId?: string) => Promise<{ success: boolean; pushSent: boolean; message: string }>;
+  isReminderSentForBooking: (bookingId: string) => boolean;
   refreshBookings: () => Promise<void>;
   createBooking: (bookingData: Partial<Booking>) => Promise<Booking>;
   acceptBooking: (bookingId: string, assistantId?: string) => Promise<void>;
@@ -55,6 +68,107 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       createdAt: new Date().toISOString()
     }
   ]);
+
+  // Automated Push Notification Reminders state
+  const [pushPermission, setPushPermission] = useState<PushPermissionStatus>(() => getPushPermission());
+
+  const requestPushNotificationPermission = async (): Promise<PushPermissionStatus> => {
+    const status = await requestPushPermission();
+    setPushPermission(status);
+    return status;
+  };
+
+  const isReminderSentForBooking = (bookingId: string): boolean => {
+    return isOneHourReminderSent(bookingId);
+  };
+
+  const triggerOneHourReminderTest = async (
+    bookingId?: string
+  ): Promise<{ success: boolean; pushSent: boolean; message: string }> => {
+    // Find matching booking or select/fallback to first customer booking
+    let targetBooking = bookings.find((b) => b.id === bookingId);
+    if (!targetBooking) {
+      targetBooking = bookings.find(
+        (b) => b.status !== 'COMPLETED' && b.status !== 'CANCELLED'
+      ) || bookings[0];
+    }
+
+    if (!targetBooking) {
+      targetBooking = {
+        id: 'bk-test-reminder',
+        bookingNumber: 'DBL-2026-TEST',
+        customerId: currentUser?.id || 'cust-1',
+        customerName: currentUser?.name || 'Customer',
+        customerPhone: '9820123456',
+        serviceId: 'senior-citizen-assistance',
+        serviceName: 'Senior Citizen Assistance',
+        serviceIcon: 'HeartHandshake',
+        location: {
+          address: 'Carter Road, Bandra West, Mumbai',
+          area: 'Bandra West',
+          lat: 19.0607,
+          lng: 72.8258
+        },
+        dateType: 'TODAY',
+        scheduledDate: new Date().toISOString().split('T')[0],
+        startTime: '11:00 AM',
+        bookedHours: 2,
+        additionalHours: 0,
+        totalHours: 2,
+        hourlyRate: 149,
+        baseAmount: 298,
+        discountAmount: 0,
+        taxAmount: 15,
+        totalAmount: 313,
+        genderPreference: 'ANY',
+        status: 'ASSIGNED',
+        assistantId: 'asst-1',
+        assistantName: 'Rajesh Sharma',
+        assistantPhone: '9820554433',
+        startOtp: '4821',
+        paymentStatus: 'PAID',
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    // Reset so the test reminder triggers cleanly
+    resetOneHourReminder(targetBooking.id);
+
+    // Send push reminder
+    const result = await sendOneHourPushReminder(targetBooking, true);
+
+    // Add In-App Notification Toast
+    addNotification(
+      `⏰ 1-Hour Reminder: ${targetBooking.serviceName}`,
+      `Your assistance session starts in 1 hour at ${targetBooking.startTime} in ${targetBooking.location.area || 'Mumbai'}. ${targetBooking.assistantName || 'Your assistant'} is preparing for dispatch.`,
+      'BOOKING',
+      targetBooking.id
+    );
+
+    return result;
+  };
+
+  // Automated periodic check for 1-hour session reminders (runs every 30s)
+  useEffect(() => {
+    if (bookings.length === 0) return;
+
+    const runAutomatedReminders = async () => {
+      try {
+        await checkAndDispatchUpcomingReminders(bookings, (title, message, bookingId) => {
+          addNotification(title, message, 'BOOKING', bookingId);
+        });
+      } catch (err) {
+        console.debug('[Push Reminders] Periodic reminder check error:', err);
+      }
+    };
+
+    // Initial check on mount/bookings change
+    runAutomatedReminders();
+
+    // 30-second interval check
+    const reminderInterval = setInterval(runAutomatedReminders, 30000);
+    return () => clearInterval(reminderInterval);
+  }, [bookings]);
 
   // Live tracking simulation states
   const [liveEtaMinutes, setLiveEtaMinutes] = useState<number>(7);
@@ -319,6 +433,10 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         liveEtaMinutes,
         liveDistanceKm,
         liveAssistantCoords,
+        pushPermission,
+        requestPushNotificationPermission,
+        triggerOneHourReminderTest,
+        isReminderSentForBooking,
         completedFeedbackBooking,
         setCompletedFeedbackBooking,
         dismissFeedbackModal,

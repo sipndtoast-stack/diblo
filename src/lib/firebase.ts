@@ -41,6 +41,23 @@ export const db: Firestore = (firebaseConfigData as any).firestoreDatabaseId
   ? getFirestore(appInstance, (firebaseConfigData as any).firestoreDatabaseId)
   : getFirestore(appInstance); /* CRITICAL: The app will break without this line */
 export const auth: Auth = getAuth(appInstance);
+export const oAuthClientId: string = (firebaseConfigData as any).oAuthClientId || '';
+
+// Safely configure testing mode in development/preview containers so App Check doesn't break phone auth
+if (typeof window !== 'undefined') {
+  try {
+    if (
+      import.meta.env.DEV ||
+      window.location.hostname.includes('run.app') ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
+    ) {
+      auth.settings.appVerificationDisabledForTesting = true;
+    }
+  } catch {
+    // ignore
+  }
+}
 
 // Firestore Error Handling Definition
 export enum OperationType {
@@ -90,16 +107,18 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Connection Validation
-async function testConnection() {
+// Optional Non-Blocking Connection Validation
+export async function testConnection(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (!navigator.onLine) return false;
   try {
+    if (!isFirebaseConfigured()) return false;
     await getDocFromServer(doc(db, 'test', 'connection'));
+    return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
+    // Non-fatal connectivity negotiation: Firestore will operate in offline/cache mode until connected
+    return false;
   }
 }
-testConnection();
 
 

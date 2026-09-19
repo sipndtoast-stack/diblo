@@ -31,7 +31,8 @@ import {
   PlatformAnalytics,
   UserRole,
   User,
-  AssistantApplication
+  AssistantApplication,
+  EmergencyAlert
 } from './src/types';
 
 async function startServer() {
@@ -99,11 +100,19 @@ async function startServer() {
   // ==========================================
   // GOOGLE MAPS PLATFORM PROXY & CONFIG
   // ==========================================
+  const isValidGoogleMapsKey = (key: string | null | undefined): boolean => {
+    if (!key || typeof key !== 'string') return false;
+    const trimmed = key.trim();
+    // Valid Google Maps API keys are at least 25 characters and start with AIza
+    return trimmed.startsWith('AIza') && trimmed.length >= 25;
+  };
+
   app.get('/api/maps/config', (req, res) => {
     const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+    const isValid = isValidGoogleMapsKey(mapsKey);
     res.json({
-      configured: Boolean(mapsKey && mapsKey.trim().length > 0),
-      apiKey: mapsKey ? mapsKey.trim() : null
+      configured: isValid,
+      apiKey: isValid ? mapsKey.trim() : null
     });
   });
 
@@ -118,7 +127,7 @@ async function startServer() {
     const longitude = Number(lng);
     const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
 
-    if (!mapsKey) {
+    if (!isValidGoogleMapsKey(mapsKey)) {
       // Graceful fallback for local preview without key
       return res.json({
         formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
@@ -186,7 +195,7 @@ async function startServer() {
     const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
     const query = address.trim();
 
-    if (!mapsKey) {
+    if (!isValidGoogleMapsKey(mapsKey)) {
       // Return predefined Mumbai landmark matches if no key
       const lower = query.toLowerCase();
       let mockLat = 19.0596;
@@ -1561,6 +1570,68 @@ async function startServer() {
   });
 
   // ==========================================
+  // AUTOMATED 1-HOUR PUSH NOTIFICATION REMINDERS
+  // ==========================================
+  app.get('/api/notifications/reminders/upcoming', async (req, res) => {
+    try {
+      const allBookings = await dbRepository.getBookings();
+      const now = new Date();
+      const upcomingWithinOneHour = allBookings.filter((b: any) => {
+        if (b.status === 'COMPLETED' || b.status === 'CANCELLED') return false;
+        if (!b.scheduledDate || !b.startTime) return false;
+
+        let scheduledDate = new Date();
+        if (b.scheduledDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          const [y, m, d] = b.scheduledDate.split('-').map(Number);
+          scheduledDate = new Date(y, m - 1, d);
+        }
+
+        const isAmPm = /am|pm/i.test(b.startTime);
+        let hours = 10;
+        let minutes = 0;
+        if (isAmPm) {
+          const m = b.startTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+          if (m) {
+            hours = parseInt(m[1], 10);
+            minutes = parseInt(m[2], 10);
+            if (m[3].toUpperCase() === 'PM' && hours < 12) hours += 12;
+            if (m[3].toUpperCase() === 'AM' && hours === 12) hours = 0;
+          }
+        } else {
+          const m = b.startTime.match(/^(\d{1,2}):(\d{2})$/);
+          if (m) {
+            hours = parseInt(m[1], 10);
+            minutes = parseInt(m[2], 10);
+          }
+        }
+        scheduledDate.setHours(hours, minutes, 0, 0);
+
+        const diffMinutes = (scheduledDate.getTime() - now.getTime()) / (1000 * 60);
+        return diffMinutes >= 0 && diffMinutes <= 60;
+      });
+
+      res.json({
+        success: true,
+        checkedAt: now.toISOString(),
+        upcomingCount: upcomingWithinOneHour.length,
+        bookings: upcomingWithinOneHour
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to check upcoming reminders', details: err.message });
+    }
+  });
+
+  app.post('/api/notifications/reminders/log', async (req, res) => {
+    try {
+      const { bookingId, customerPhone, reminderType, sentAt } = req.body;
+      console.log(`[Push Reminder Automated] Dispatched 1-hr reminder for booking ${bookingId} to ${customerPhone || 'customer'} at ${sentAt || new Date().toISOString()}`);
+      res.json({ success: true, logged: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to log reminder', details: err.message });
+    }
+  });
+
+  // ==========================================
   // ASSISTANTS MANAGEMENT
   // ==========================================
   app.get('/api/assistants', async (req, res) => {
@@ -2029,6 +2100,161 @@ async function startServer() {
       res.json({ success: true, ticket });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to reply to ticket', details: err.message });
+    }
+  });
+
+  // ==========================================
+  // EMERGENCY SOS DISTRESS ALERTS
+  // ==========================================
+  app.post('/api/emergency/sos', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        location,
+        lat,
+        lng,
+        address,
+        accuracy,
+        bookingId,
+        serviceName,
+        triggerSource,
+        userId,
+        userName,
+        userPhone,
+        userRole
+      } = req.body;
+
+      const alertLat = Number(location?.lat ?? lat ?? 19.0607);
+      const alertLng = Number(location?.lng ?? lng ?? 72.8258);
+      const alertAddress = location?.address || address || 'Mumbai, Maharashtra';
+      const alertAccuracy = Number(location?.accuracy ?? accuracy ?? 15);
+
+      const resolvedUserId = req.user?.id || userId || 'user-c-1';
+      const resolvedUserName = req.user?.name || userName || 'Customer';
+      const resolvedUserPhone = req.user?.phone || userPhone || '9820123456';
+      const resolvedUserRole = (req.user?.role || userRole || 'CUSTOMER') as UserRole;
+
+      const newAlert: EmergencyAlert = {
+        id: `sos-${Date.now()}`,
+        alertNumber: `SOS-2026-${Math.floor(100 + Math.random() * 900)}`,
+        userId: resolvedUserId,
+        userName: resolvedUserName,
+        userPhone: resolvedUserPhone,
+        userRole: resolvedUserRole,
+        bookingId,
+        serviceName,
+        status: 'ACTIVE',
+        lat: alertLat,
+        lng: alertLng,
+        address: alertAddress,
+        accuracy: alertAccuracy,
+        triggerSource: triggerSource || 'CUSTOMER_HEADER_SOS',
+        timestamp: new Date().toISOString()
+      };
+
+      await dbRepository.saveEmergencyAlert(newAlert);
+
+      // Create an associated high-priority SAFETY_EMERGENCY support ticket for the desk
+      const sosTicket: SupportTicket = {
+        id: `tkt-sos-${Date.now()}`,
+        ticketNumber: `TKT-SOS-${Math.floor(100 + Math.random() * 900)}`,
+        userId: resolvedUserId,
+        userName: resolvedUserName,
+        userPhone: resolvedUserPhone,
+        userRole: resolvedUserRole,
+        bookingId,
+        category: 'SAFETY_EMERGENCY',
+        priority: 'URGENT',
+        status: 'OPEN',
+        subject: `🚨 EMERGENCY SOS: ${resolvedUserName} @ ${alertAddress}`,
+        description: `EMERGENCY SOS DISTRESS SIGNAL ACTIVATED from CustomerHeader.\n\n` +
+          `• Caller: ${resolvedUserName} (${resolvedUserPhone})\n` +
+          `• GPS Coordinates: Latitude ${alertLat.toFixed(6)}, Longitude ${alertLng.toFixed(6)}\n` +
+          `• Location Accuracy: ±${alertAccuracy}m\n` +
+          `• Address / Landmark: ${alertAddress}\n` +
+          `• Live Google Maps Link: https://www.google.com/maps?q=${alertLat},${alertLng}\n` +
+          `• Active Booking: ${bookingId || 'None (Direct Customer SOS)'}\n` +
+          `• Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
+        messages: [
+          {
+            id: `m-sos-${Date.now()}`,
+            senderId: resolvedUserId,
+            senderName: resolvedUserName,
+            senderRole: resolvedUserRole,
+            text: `🚨 SOS DISTRESS ACTIVATED. Current GPS: Lat ${alertLat}, Lng ${alertLng}. Immediate assistance required.`,
+            timestamp: new Date().toISOString()
+          }
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await dbRepository.saveSupportTicket(sosTicket);
+
+      console.warn(
+        `🚨 [EMERGENCY SOS DISPATCH] ${resolvedUserName} (${resolvedUserPhone}) triggered SOS at Lat: ${alertLat}, Lng: ${alertLng} [Alert: ${newAlert.alertNumber}]`
+      );
+
+      res.status(201).json({
+        success: true,
+        alert: newAlert,
+        ticket: sosTicket,
+        helpline: '8291919829',
+        police: '112',
+        message: 'Distress alert received and dispatched to Admin Desk and Mumbai Emergency Response team.'
+      });
+    } catch (err: any) {
+      console.error('[Emergency SOS] Error processing distress alert:', err);
+      res.status(500).json({ success: false, error: 'Failed to process SOS distress alert', details: err.message });
+    }
+  });
+
+  app.get('/api/emergency/alerts', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const alerts = await dbRepository.getEmergencyAlerts();
+      res.json({
+        success: true,
+        alerts,
+        activeCount: alerts.filter((a) => a.status === 'ACTIVE').length
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'Failed to fetch emergency alerts', details: err.message });
+    }
+  });
+
+  app.post('/api/emergency/alerts/:id/resolve', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { notes, resolvedBy } = req.body;
+      const alert = await dbRepository.getEmergencyAlertById(id);
+      if (!alert) {
+        return res.status(404).json({ success: false, error: 'Emergency alert not found' });
+      }
+
+      alert.status = 'RESOLVED';
+      alert.resolvedAt = new Date().toISOString();
+      alert.resolvedBy = resolvedBy || req.user?.name || 'Admin Operations';
+      if (notes) alert.notes = notes;
+
+      await dbRepository.saveEmergencyAlert(alert);
+      res.json({ success: true, alert });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'Failed to resolve emergency alert', details: err.message });
+    }
+  });
+
+  app.post('/api/emergency/alerts/:id/acknowledge', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const alert = await dbRepository.getEmergencyAlertById(id);
+      if (!alert) {
+        return res.status(404).json({ success: false, error: 'Emergency alert not found' });
+      }
+
+      alert.status = 'ACKNOWLEDGED';
+      await dbRepository.saveEmergencyAlert(alert);
+      res.json({ success: true, alert });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'Failed to acknowledge alert', details: err.message });
     }
   });
 

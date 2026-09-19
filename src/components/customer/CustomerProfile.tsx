@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check, LogOut } from 'lucide-react';
+import { CustomerSpendingAnalytics } from './CustomerSpendingAnalytics';
 
 export const CustomerProfile: React.FC = () => {
   const { currentUser, customerProfile, updateCustomerProfile, logoutCustomer } = useAuth();
@@ -98,6 +99,9 @@ export const CustomerProfile: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* 6-Month Booking History & Spending Pattern Summary Chart */}
+      <CustomerSpendingAnalytics />
 
       {/* Saved Addresses Section */}
       <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">

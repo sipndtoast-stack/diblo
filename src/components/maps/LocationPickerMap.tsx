@@ -8,6 +8,7 @@ import {
   useApiLoadingStatus,
   APILoadingStatus
 } from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   Search,
   MapPin,
@@ -22,6 +23,88 @@ import {
 } from 'lucide-react';
 import { useGoogleMaps } from './GoogleMapsProvider';
 import { api } from '../../lib/api';
+
+// Native interactive Leaflet Map for when Google Maps is not enabled
+const LeafletLocationPickerInner: React.FC<{
+  lat: number;
+  lng: number;
+  onLocationChange: (lat: number, lng: number) => void;
+}> = ({ lat, lng, onLocationChange }) => {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if (!mapInstanceRef.current) {
+      const map = L.map(mapContainerRef.current, {
+        center: [lat, lng],
+        zoom: 15,
+        zoomControl: true,
+        attributionControl: false
+      });
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      const customPin = L.divIcon({
+        className: 'custom-leaflet-picker-pin',
+        html: `
+          <div style="position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;">
+            <div style="width:36px;height:36px;border-radius:50%;background-color:#F42F73;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);">
+              <svg style="width:20px;height:20px;color:white;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21s-8-6.5-8-12a8 8 0 1116 0c0 5.5-8 12-8 12z" />
+                <circle cx="12" cy="9" r="2.5" fill="white" />
+              </svg>
+            </div>
+            <div style="width:10px;height:10px;background:#F42F73;transform:rotate(45deg);margin-top:-5px;"></div>
+          </div>
+        `,
+        iconSize: [36, 42],
+        iconAnchor: [18, 42]
+      });
+
+      const marker = L.marker([lat, lng], {
+        draggable: true,
+        icon: customPin
+      }).addTo(map);
+
+      marker.on('dragend', () => {
+        const position = marker.getLatLng();
+        onLocationChange(position.lat, position.lng);
+      });
+
+      map.on('click', (e: L.LeafletMouseEvent) => {
+        marker.setLatLng(e.latlng);
+        onLocationChange(e.latlng.lat, e.latlng.lng);
+      });
+
+      mapInstanceRef.current = map;
+      markerRef.current = marker;
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (mapInstanceRef.current && markerRef.current) {
+      const currentPos = markerRef.current.getLatLng();
+      if (Math.abs(currentPos.lat - lat) > 0.0001 || Math.abs(currentPos.lng - lng) > 0.0001) {
+        markerRef.current.setLatLng([lat, lng]);
+        mapInstanceRef.current.panTo([lat, lng]);
+      }
+    }
+  }, [lat, lng]);
+
+  return <div ref={mapContainerRef} className="w-full h-full" />;
+};
 
 interface LocationPickerMapProps {
   initialLat?: number;
@@ -384,7 +467,11 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             fallback={fallbackView}
           />
         ) : (
-          fallbackView
+          <LeafletLocationPickerInner
+            lat={selectedLat}
+            lng={selectedLng}
+            onLocationChange={handleLocationUpdate}
+          />
         )}
 
         {/* Floating "Click on map to drop pin" Tip */}

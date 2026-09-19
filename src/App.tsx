@@ -22,13 +22,8 @@ import { AssistantOnboarding } from './components/assistant/AssistantOnboarding'
 import { ServiceItem, Booking } from './types';
 import { AlertCircle, X, Loader2 } from 'lucide-react';
 import { PostBookingFeedbackModal } from './components/customer/PostBookingFeedbackModal';
-
-const AssistantPanel = React.lazy(() =>
-  import('./components/assistant/AssistantPanel').then((m) => ({ default: m.AssistantPanel }))
-);
-const AdminPanel = React.lazy(() =>
-  import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel }))
-);
+import { AssistantPanel } from './components/assistant/AssistantPanel';
+import { AdminPanel } from './components/admin/AdminPanel';
 
 const MainAppContent: React.FC = () => {
   const { staffUser, switchRole, isCustomerAuthenticated, isAuthLoading } = useAuth();

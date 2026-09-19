@@ -157,6 +157,27 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "bookingId", "orderId", "amountPaise", "status", "createdAt"]
+    },
+    "EmergencyAlert": {
+      "title": "EmergencyAlert",
+      "description": "Instant emergency SOS distress alert with GPS location and status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "alertNumber": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "userRole": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "ACKNOWLEDGED", "RESOLVED"] },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "address": { "type": "string" },
+        "accuracy": { "type": "number" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "alertNumber", "userId", "userName", "status", "lat", "lng", "timestamp"]
     }
   },
   "firestore": {
@@ -195,6 +216,10 @@
     "/payments/{paymentRecordId}": {
       "schema": "PaymentRecord",
       "description": "Payment records and Razorpay transaction logs"
+    },
+    "/emergencyAlerts/{alertId}": {
+      "schema": "EmergencyAlert",
+      "description": "Real-time emergency SOS distress alerts with GPS coordinates"
     }
   }
 }

@@ -241,6 +241,23 @@ export interface Society {
   createdAt: string;
 }
 
+export type ReferralStatus = 'INVITED' | 'REGISTERED' | 'COMPLETED';
+
+export interface Referral {
+  id: string;
+  referrerCustomerId: string;
+  referrerName?: string;
+  friendName: string;
+  friendPhone: string;
+  status: ReferralStatus;
+  serviceBooked?: string;
+  rewardCouponCode?: string;
+  rewardAmount: number;
+  isClaimed: boolean;
+  createdAt: string;
+  completedAt?: string;
+}
+
 export interface Coupon {
   id: string;
   code: string;
@@ -300,6 +317,27 @@ export interface InAppNotification {
   bookingId?: string;
   isRead: boolean;
   createdAt: string;
+}
+
+export interface EmergencyAlert {
+  id: string;
+  alertNumber: string;
+  userId: string;
+  userName: string;
+  userPhone: string;
+  userRole: UserRole;
+  bookingId?: string;
+  serviceName?: string;
+  status: 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED';
+  lat: number;
+  lng: number;
+  address?: string;
+  accuracy?: number;
+  triggerSource?: string;
+  timestamp: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  notes?: string;
 }
 
 export interface PlatformAnalytics {

@@ -16,11 +16,13 @@ import {
   ArrowRight,
   FileCheck,
   MapPin,
-  Check
+  Check,
+  Heart
 } from 'lucide-react';
 import { SERVICES, MOCK_ASSISTANTS } from '../../data/mockData';
 import { ServiceItem } from '../../types';
 import { IconHelper } from '../common/IconHelper';
+import { PromotionalCarousel } from './PromotionalCarousel';
 
 interface CustomerHomeProps {
   onSelectService: (service: ServiceItem) => void;
@@ -28,6 +30,8 @@ interface CustomerHomeProps {
   onOpenLegal: (page: string) => void;
   onSelectTab: (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => void;
 }
+
+const FAVORITES_STORAGE_KEY = 'diblo_favorite_services';
 
 export const CustomerHome: React.FC<CustomerHomeProps> = ({
   onSelectService,
@@ -38,8 +42,44 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [faqOpenIndex, setFaqOpenIndex] = useState<number | null>(0);
 
+  // Local storage persistence for user's favorite services
+  const [favoriteServiceIds, setFavoriteServiceIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') {
+      return ['senior-citizen-assistance', 'hospital-visit-assistance'];
+    }
+    try {
+      const stored = localStorage.getItem(FAVORITES_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to load favorite services from localStorage', e);
+    }
+    return ['senior-citizen-assistance', 'hospital-visit-assistance'];
+  });
+
+  const toggleFavorite = (serviceId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setFavoriteServiceIds((prev) => {
+      const next = prev.includes(serviceId)
+        ? prev.filter((id) => id !== serviceId)
+        : [...prev, serviceId];
+      try {
+        localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next));
+      } catch (err) {
+        console.warn('Failed to persist favorite services to localStorage', err);
+      }
+      return next;
+    });
+  };
+
   const categories = [
     { id: 'ALL', label: 'All 13 Services' },
+    { id: 'FAVORITES', label: `★ Favorites (${favoriteServiceIds.length})` },
     { id: 'CARE_COMPANION', label: 'Elder & Care' },
     { id: 'DAILY_CHORES', label: 'Shopping & Errands' },
     { id: 'HEALTH_PHARMACY', label: 'Hospital & Pharma' },
@@ -47,10 +87,19 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     { id: 'SPECIAL', label: 'Queues & Custom' }
   ];
 
-  const filteredServices =
+  // Derive filtered services and prioritize favorites at the top of the list
+  const baseServices =
     selectedCategory === 'ALL'
       ? SERVICES
+      : selectedCategory === 'FAVORITES'
+      ? SERVICES.filter((s) => favoriteServiceIds.includes(s.id))
       : SERVICES.filter((s) => s.category === selectedCategory);
+
+  const filteredServices = [...baseServices].sort((a, b) => {
+    const aFav = favoriteServiceIds.includes(a.id) ? 1 : 0;
+    const bFav = favoriteServiceIds.includes(b.id) ? 1 : 0;
+    return bFav - aFav;
+  });
 
   const faqs = [
     {
@@ -136,6 +185,12 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         </div>
       </section>
 
+      {/* Promotional Carousel: Featured Categories & Ongoing Mumbai Offers */}
+      <PromotionalCarousel
+        onSelectService={onSelectService}
+        onOpenBooking={onOpenBooking}
+      />
+
       {/* Service Categories & Grid Section */}
       <section className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-12">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 sm:mb-6">
@@ -167,63 +222,116 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
         {/* 13 Service Cards Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-4 sm:gap-6 pt-3 sm:pt-4">
-          {filteredServices.map((service) => (
-            <div
-              key={service.id}
-              onClick={() => onSelectService(service)}
-              className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 hover:border-[#F42F73] shadow-xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between group relative overflow-hidden"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-pink-100/70 text-[#F42F73] flex items-center justify-center text-xl mb-1 group-hover:bg-[#F42F73] group-hover:text-white transition-colors shadow-xs shrink-0">
-                    <IconHelper name={service.icon} className="w-6 h-6" />
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Fixed Rate</div>
-                    <div className="text-base font-black text-[#F42F73]">₹{service.baseHourlyRate}/hr</div>
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-base font-bold text-[#14213D] group-hover:text-[#F42F73] transition-colors">
-                      {service.title}
-                    </h3>
-                    {service.popular && (
-                      <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                        POPULAR
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-500 font-medium mt-1 leading-snug line-clamp-2">
-                    {service.tagline}
-                  </p>
-                </div>
-
-                {/* Features chips */}
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {service.features.slice(0, 2).map((feat, idx) => (
-                    <span
-                      key={idx}
-                      className="text-[11px] bg-gray-50 text-gray-600 px-2.5 py-1 rounded-lg border border-gray-100 font-medium flex items-center gap-1"
-                    >
-                      <Check className="w-3 h-3 text-[#F42F73] shrink-0" />
-                      <span>{feat}</span>
-                    </span>
-                  ))}
-                </div>
+          {filteredServices.length === 0 ? (
+            <div className="col-span-full py-12 px-4 text-center bg-white rounded-3xl border border-dashed border-gray-200">
+              <div className="w-12 h-12 rounded-full bg-rose-50 text-[#F42F73] flex items-center justify-center mx-auto mb-3">
+                <Heart className="w-6 h-6" />
               </div>
-
-              {/* Bottom CTA bar */}
-              <div className="mt-5 pt-3 border-t border-gray-100 flex items-center justify-between text-xs font-bold text-[#F42F73]">
-                <span className="text-gray-500 font-medium">Min 2 hrs (₹298)</span>
-                <span className="flex items-center gap-1 group-hover:translate-x-1 transition-transform min-h-[36px]">
-                  <span>Book Now</span>
-                  <ChevronRight className="w-4 h-4" />
-                </span>
-              </div>
+              <h3 className="text-base font-bold text-[#14213D]">No favorite services yet</h3>
+              <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                Tap the heart icon on any urban assistance service to pin it to the top of your list for quick 1-tap booking in Mumbai.
+              </p>
+              <button
+                type="button"
+                onClick={() => setSelectedCategory('ALL')}
+                className="mt-4 px-4 py-2 rounded-xl bg-[#14213D] text-white text-xs font-bold hover:bg-[#F42F73] transition-colors cursor-pointer"
+                id="btn-browse-all-services"
+              >
+                Browse All Services
+              </button>
             </div>
-          ))}
+          ) : (
+            filteredServices.map((service) => {
+              const isFav = favoriteServiceIds.includes(service.id);
+              return (
+                <div
+                  key={service.id}
+                  onClick={() => onSelectService(service)}
+                  className={`bg-white rounded-3xl p-5 sm:p-6 border ${
+                    isFav ? 'border-rose-300 ring-1 ring-rose-200/70 shadow-xs' : 'border-gray-100'
+                  } hover:border-[#F42F73] shadow-xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between group relative overflow-hidden`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-pink-100/70 text-[#F42F73] flex items-center justify-center text-xl mb-1 group-hover:bg-[#F42F73] group-hover:text-white transition-colors shadow-xs shrink-0">
+                        <IconHelper name={service.icon} className="w-6 h-6" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-right">
+                          <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Fixed Rate</div>
+                          <div className="text-base font-black text-[#F42F73]">₹{service.baseHourlyRate}/hr</div>
+                        </div>
+
+                        {/* Favorite Toggle Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => toggleFavorite(service.id, e)}
+                          title={isFav ? 'Remove from favorites' : 'Pin to favorites (quick access)'}
+                          aria-label={isFav ? `Remove ${service.title} from favorites` : `Pin ${service.title} to favorites`}
+                          className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
+                            isFav
+                              ? 'bg-rose-50 text-[#F42F73] hover:bg-rose-100 shadow-xs'
+                              : 'bg-gray-50 text-gray-400 hover:text-[#F42F73] hover:bg-rose-50'
+                          }`}
+                          id={`btn-favorite-${service.id}`}
+                        >
+                          <Heart
+                            className={`w-4 h-4 transition-transform active:scale-125 ${
+                              isFav ? 'fill-[#F42F73] text-[#F42F73]' : ''
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base font-bold text-[#14213D] group-hover:text-[#F42F73] transition-colors">
+                          {service.title}
+                        </h3>
+                        {isFav && (
+                          <span className="bg-rose-100 text-[#F42F73] text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                            <Heart className="w-2.5 h-2.5 fill-[#F42F73]" />
+                            <span>FAVORITE</span>
+                          </span>
+                        )}
+                        {service.popular && !isFav && (
+                          <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
+                            POPULAR
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 font-medium mt-1 leading-snug line-clamp-2">
+                        {service.tagline}
+                      </p>
+                    </div>
+
+                    {/* Features chips */}
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {service.features.slice(0, 2).map((feat, idx) => (
+                        <span
+                          key={idx}
+                          className="text-[11px] bg-gray-50 text-gray-600 px-2.5 py-1 rounded-lg border border-gray-100 font-medium flex items-center gap-1"
+                        >
+                          <Check className="w-3 h-3 text-[#F42F73] shrink-0" />
+                          <span>{feat}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom CTA bar */}
+                  <div className="mt-5 pt-3 border-t border-gray-100 flex items-center justify-between text-xs font-bold text-[#F42F73]">
+                    <span className="text-gray-500 font-medium">Min 2 hrs (₹298)</span>
+                    <span className="flex items-center gap-1 group-hover:translate-x-1 transition-transform min-h-[36px]">
+                      <span>Book Now</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
 

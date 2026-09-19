@@ -10,7 +10,8 @@ import {
   PlatformAnalytics,
   UserRole,
   User,
-  AssistantApplication
+  AssistantApplication,
+  EmergencyAlert
 } from '../types';
 
 const AUTH_TOKEN_KEY = 'diblo_auth_token';
@@ -772,6 +773,62 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(replyData)
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  // Emergency SOS Distress
+  async triggerEmergencySos(data: {
+    location: { lat: number; lng: number; address?: string; accuracy?: number };
+    bookingId?: string;
+    serviceName?: string;
+    triggerSource?: string;
+    userId?: string;
+    userName?: string;
+    userPhone?: string;
+    userRole?: string;
+  }): Promise<{ success: boolean; alert?: EmergencyAlert; ticket?: SupportTicket; helpline?: string; police?: string; error?: string }> {
+    try {
+      const res = await authFetch('/api/emergency/sos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return safeJson(res, { success: false, error: 'Network error sending SOS' });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async getEmergencyAlerts(): Promise<{ success: boolean; alerts: EmergencyAlert[]; activeCount: number }> {
+    try {
+      const res = await authFetch('/api/emergency/alerts');
+      return safeJson(res, { success: true, alerts: [], activeCount: 0 });
+    } catch {
+      return { success: false, alerts: [], activeCount: 0 };
+    }
+  },
+
+  async acknowledgeEmergencyAlert(alertId: string) {
+    try {
+      const res = await authFetch(`/api/emergency/alerts/${alertId}/acknowledge`, {
+        method: 'POST'
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async resolveEmergencyAlert(alertId: string, notes?: string, resolvedBy?: string) {
+    try {
+      const res = await authFetch(`/api/emergency/alerts/${alertId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, resolvedBy })
       });
       return safeJson(res, { success: true });
     } catch (e: any) {

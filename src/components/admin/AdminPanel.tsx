@@ -20,7 +20,12 @@ import {
   LogOut,
   UserCheck,
   XCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  AlertTriangle,
+  Radio,
+  ExternalLink,
+  Navigation,
+  Phone
 } from 'lucide-react';
 import {
   LineChart,
@@ -50,7 +55,8 @@ import {
   SupportTicket,
   PlatformAnalytics,
   Booking,
-  AssistantApplication
+  AssistantApplication,
+  EmergencyAlert
 } from '../../types';
 
 export const AdminPanel: React.FC = () => {
@@ -68,6 +74,7 @@ export const AdminPanel: React.FC = () => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [pricing, setPricing] = useState<PricingConfig | null>(null);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [emergencyAlerts, setEmergencyAlerts] = useState<EmergencyAlert[]>([]);
 
   // Pricing edit form
   const [baseHourlyRate, setBaseHourlyRate] = useState<number>(149);
@@ -90,17 +97,30 @@ export const AdminPanel: React.FC = () => {
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
   const [ticketReplyText, setTicketReplyText] = useState('');
 
+  // Quick poll for emergency SOS alerts
+  const loadEmergencyAlertsOnly = async () => {
+    try {
+      const emgRes = await api.getEmergencyAlerts();
+      if (emgRes && emgRes.alerts) {
+        setEmergencyAlerts(emgRes.alerts);
+      }
+    } catch (e) {
+      console.error('Error polling emergency alerts:', e);
+    }
+  };
+
   // Load all admin data
   const loadAdminData = async () => {
     try {
-      const [analyticsData, asstsData, socsData, coupData, priceData, tktData, appsData] = await Promise.all([
+      const [analyticsData, asstsData, socsData, coupData, priceData, tktData, appsData, emgData] = await Promise.all([
         api.getAnalytics(),
         api.getAssistants(),
         api.getSocieties(),
         api.getCoupons(),
         api.getPricing(),
         api.getSupportTickets(),
-        api.getAssistantApplications().catch(() => ({ success: false, applications: [] }))
+        api.getAssistantApplications().catch(() => ({ success: false, applications: [] })),
+        api.getEmergencyAlerts().catch(() => ({ success: false, alerts: [], activeCount: 0 }))
       ]);
       setAnalytics(analyticsData);
       setAssistants(asstsData);
@@ -109,12 +129,35 @@ export const AdminPanel: React.FC = () => {
       setPricing(priceData);
       setTickets(tktData);
       setApplications(appsData && 'applications' in appsData ? appsData.applications : []);
+      if (emgData && 'alerts' in emgData) {
+        setEmergencyAlerts(emgData.alerts);
+      }
       if (priceData) {
         setBaseHourlyRate(priceData.baseHourlyPrice);
         setMinimumHours(priceData.minimumBookingHours);
       }
     } catch (e) {
       console.error('Failed to load admin dataset', e);
+    }
+  };
+
+  const handleAcknowledgeAlert = async (alertId: string) => {
+    try {
+      await api.acknowledgeEmergencyAlert(alertId);
+      await loadEmergencyAlertsOnly();
+    } catch (e) {
+      console.error('Failed to acknowledge alert:', e);
+    }
+  };
+
+  const handleResolveAlert = async (alertId: string, notes?: string) => {
+    try {
+      await api.resolveEmergencyAlert(alertId, notes || 'Resolved by Admin Operations', staffUser?.name);
+      await loadEmergencyAlertsOnly();
+      const updatedTickets = await api.getSupportTickets();
+      setTickets(updatedTickets);
+    } catch (e) {
+      console.error('Failed to resolve emergency alert:', e);
     }
   };
 
@@ -132,6 +175,11 @@ export const AdminPanel: React.FC = () => {
 
   useEffect(() => {
     loadAdminData();
+    // Poll emergency alerts every 10 seconds to catch new customer SOS dispatches in real time
+    const interval = setInterval(() => {
+      loadEmergencyAlertsOnly();
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSavePricing = async () => {
@@ -273,11 +321,19 @@ export const AdminPanel: React.FC = () => {
             { id: 'APPLICATIONS', label: `New Applications (${applications.filter(a => a.status === 'PENDING').length})`, icon: UserCheck },
             { id: 'SOCIETIES', label: `Societies (${societies.length})`, icon: Building },
             { id: 'PRICING', label: 'Pricing & Coupons', icon: DollarSign },
-            { id: 'SUPPORT', label: `Support Tickets (${tickets.length})`, icon: Headphones },
+            {
+              id: 'SUPPORT',
+              label: emergencyAlerts.some((a) => a.status === 'ACTIVE')
+                ? `🚨 SOS (${emergencyAlerts.filter((a) => a.status === 'ACTIVE').length}) & Support`
+                : `Support & SOS (${tickets.length})`,
+              icon: emergencyAlerts.some((a) => a.status === 'ACTIVE') ? AlertTriangle : Headphones,
+              isEmergency: emergencyAlerts.some((a) => a.status === 'ACTIVE')
+            },
             { id: 'SHEETS', label: 'Google Sheets & Sync', icon: FileSpreadsheet }
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
+            const isEmergency = 'isEmergency' in tab && tab.isEmergency;
             return (
               <button
                 key={tab.id}
@@ -285,6 +341,8 @@ export const AdminPanel: React.FC = () => {
                 className={`px-3.5 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all ${
                   isActive
                     ? 'bg-[#F42F73] text-white shadow-sm'
+                    : isEmergency
+                    ? 'bg-red-600 text-white animate-pulse font-black'
                     : 'text-gray-300 hover:text-white hover:bg-white/10'
                 }`}
               >
@@ -298,6 +356,91 @@ export const AdminPanel: React.FC = () => {
 
       {/* Admin Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* ACTIVE SOS DISTRESS ALERT BANNER */}
+        {emergencyAlerts.some((a) => a.status === 'ACTIVE') && (
+          <div className="bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white p-4 sm:p-5 rounded-3xl shadow-xl border-2 border-red-400 space-y-3 animate-pulse">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white text-red-600 flex items-center justify-center font-black text-xl shrink-0 shadow">
+                  🚨
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-black tracking-wide uppercase">
+                      Active Emergency SOS Distress Alert
+                    </h3>
+                    <span className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                      Live GPS Distress
+                    </span>
+                  </div>
+                  <p className="text-xs text-red-100">
+                    Distress alert transmitted from customer interface. Operator intervention and emergency dispatch requested.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab('SUPPORT')}
+                className="px-4 py-2 rounded-xl bg-white text-red-700 hover:bg-red-50 text-xs font-black shadow transition-all whitespace-nowrap cursor-pointer"
+              >
+                Open SOS Desk ({emergencyAlerts.filter((a) => a.status === 'ACTIVE').length} Active)
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+              {emergencyAlerts
+                .filter((a) => a.status === 'ACTIVE')
+                .map((alert) => (
+                  <div
+                    key={alert.id}
+                    className="bg-black/30 backdrop-blur-sm rounded-2xl p-3.5 border border-white/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] font-bold text-red-200">{alert.alertNumber}</span>
+                        <span className="font-black text-sm text-white">{alert.userName}</span>
+                        <span className="text-red-200 text-xs font-semibold">({alert.userPhone})</span>
+                      </div>
+                      <div className="text-[11px] text-red-100 flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-red-300 shrink-0" />
+                        <span className="font-medium">
+                          {alert.address || 'Mumbai'} (Lat {alert.lat.toFixed(5)}, Lng {alert.lng.toFixed(5)} ±{alert.accuracy || 15}m)
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-red-200">
+                        Triggered: {new Date(alert.timestamp).toLocaleTimeString('en-IN')} IST
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                      <a
+                        href={`https://www.google.com/maps?q=${alert.lat},${alert.lng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-[11px] flex items-center gap-1 transition-colors"
+                        title="Open in Google Maps"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Map</span>
+                      </a>
+                      <button
+                        onClick={() => handleAcknowledgeAlert(alert.id)}
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-gray-900 font-black text-[11px] transition-colors cursor-pointer"
+                      >
+                        Acknowledge
+                      </button>
+                      <button
+                        onClick={() => handleResolveAlert(alert.id)}
+                        className="px-2.5 py-1.5 rounded-xl bg-emerald-400 hover:bg-emerald-300 text-gray-900 font-black text-[11px] transition-colors cursor-pointer"
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
         {/* ========================================================= */}
         {/* TAB 1: OVERVIEW & ANALYTICS */}
         {/* ========================================================= */}
@@ -964,11 +1107,154 @@ export const AdminPanel: React.FC = () => {
         {/* TAB 7: SUPPORT & SOS DESK */}
         {/* ========================================================= */}
         {activeTab === 'SUPPORT' && (
-          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
-            <div>
-              <h3 className="text-base font-bold">Support Desk & Grievance Tickets</h3>
-              <p className="text-xs text-gray-500">Customer feedback and safety incident management</p>
+          <div className="space-y-6">
+            {/* Emergency SOS Incident Console */}
+            <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-[#14213D] flex items-center gap-2">
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                      <span>Live Emergency SOS Incidents & GPS Dispatch</span>
+                    </h3>
+                    <span className="bg-red-100 text-red-700 text-xs font-black px-2.5 py-0.5 rounded-full uppercase">
+                      {emergencyAlerts.filter((a) => a.status === 'ACTIVE').length} Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Real-time distress broadcasts received from Customer & Partner interface with precision coordinates
+                  </p>
+                </div>
+
+                <button
+                  onClick={loadEmergencyAlertsOnly}
+                  className="px-3.5 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold transition-colors cursor-pointer self-start sm:self-auto flex items-center gap-1.5"
+                >
+                  <Radio className="w-3.5 h-3.5 text-red-600 animate-pulse" />
+                  <span>Refresh SOS Feed</span>
+                </button>
+              </div>
+
+              {emergencyAlerts.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl bg-gray-50 border border-dashed border-gray-200 text-gray-400 text-xs">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                  <p className="font-bold text-gray-600">No distress alerts reported.</p>
+                  <p className="mt-0.5">All customer sessions operating within normal safety limits.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {emergencyAlerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+                        alert.status === 'ACTIVE'
+                          ? 'border-red-300 bg-red-50/70 ring-2 ring-red-400/30'
+                          : alert.status === 'ACKNOWLEDGED'
+                          ? 'border-amber-200 bg-amber-50/50'
+                          : 'border-gray-200 bg-gray-50/50'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-mono text-xs font-black text-gray-500">{alert.alertNumber}</span>
+                          <span className="font-bold text-sm text-[#14213D]">{alert.userName}</span>
+                          <span className="text-xs text-gray-500 font-medium">({alert.userPhone})</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-gray-200 text-gray-700 uppercase">
+                            {alert.userRole}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          <span
+                            className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                              alert.status === 'ACTIVE'
+                                ? 'bg-red-600 text-white animate-pulse'
+                                : alert.status === 'ACKNOWLEDGED'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {alert.status}
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            {new Date(alert.timestamp).toLocaleTimeString('en-IN')} IST
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* GPS Details Card */}
+                      <div className="mt-3 p-3 rounded-xl bg-white border border-gray-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                        <div className="flex items-start gap-2 text-gray-700">
+                          <MapPin className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-bold text-[#14213D]">{alert.address || 'Mumbai Grid'}</div>
+                            <div className="text-[11px] text-gray-500 font-mono mt-0.5">
+                              Lat: {alert.lat.toFixed(6)}, Lng: {alert.lng.toFixed(6)} • Accuracy: ±{alert.accuracy || 15}m
+                            </div>
+                            {alert.bookingId && (
+                              <div className="text-[11px] text-gray-500 mt-0.5">
+                                Active Booking: <span className="font-semibold text-gray-800">{alert.serviceName || alert.bookingId}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={`https://www.google.com/maps?q=${alert.lat},${alert.lng}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] font-bold text-xs flex items-center gap-1.5 transition-colors"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-gray-600" />
+                            <span>Open Map</span>
+                          </a>
+
+                          <a
+                            href={`tel:${alert.userPhone}`}
+                            className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] font-bold text-xs flex items-center gap-1.5 transition-colors"
+                          >
+                            <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Call User</span>
+                          </a>
+
+                          {alert.status === 'ACTIVE' && (
+                            <button
+                              onClick={() => handleAcknowledgeAlert(alert.id)}
+                              className="px-3 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 font-black text-xs transition-colors cursor-pointer"
+                            >
+                              Acknowledge
+                            </button>
+                          )}
+
+                          {alert.status !== 'RESOLVED' && (
+                            <button
+                              onClick={() => handleResolveAlert(alert.id)}
+                              className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-colors cursor-pointer"
+                            >
+                              Resolve Incident
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {alert.resolutionNotes && (
+                        <div className="mt-2 text-[11px] text-gray-500 italic pl-1">
+                          Resolution note: {alert.resolutionNotes} (by {alert.resolvedBy || 'Operations'})
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* Support Desk & Grievance Tickets */}
+            <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+              <div>
+                <h3 className="text-base font-bold">Support Desk & Grievance Tickets</h3>
+                <p className="text-xs text-gray-500">Customer feedback and general inquiries</p>
+              </div>
 
             <div className="space-y-3">
               {tickets.map((tkt) => (
@@ -1048,6 +1334,7 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
             )}
+            </div>
           </div>
         )}
 

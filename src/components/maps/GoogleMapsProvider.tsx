@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { APIProvider, APILoadingStatus } from '@vis.gl/react-google-maps';
+import { APIProvider } from '@vis.gl/react-google-maps';
 import { api } from '../../lib/api';
+
+export function isValidGoogleMapsKey(key: string | null | undefined): boolean {
+  if (!key || typeof key !== 'string') return false;
+  const trimmed = key.trim();
+  // Valid Google Maps API keys are at least 25 characters and start with AIza
+  return trimmed.startsWith('AIza') && trimmed.length >= 25;
+}
 
 interface GoogleMapsContextType {
   apiKey: string | null;
@@ -11,7 +18,7 @@ interface GoogleMapsContextType {
 const GoogleMapsContext = createContext<GoogleMapsContextType>({
   apiKey: null,
   isConfigured: false,
-  isLoading: true
+  isLoading: false
 });
 
 export const useGoogleMaps = () => useContext(GoogleMapsContext);
@@ -23,30 +30,36 @@ interface GoogleMapsProviderProps {
 export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children }) => {
   const [apiKey, setApiKey] = useState<string | null>(() => {
     const envKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY;
-    return envKey && typeof envKey === 'string' && envKey.trim().length > 0 ? envKey.trim() : null;
+    return isValidGoogleMapsKey(envKey) ? envKey.trim() : null;
   });
-  const [isLoading, setIsLoading] = useState<boolean>(!apiKey);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
+    // Intercept Google Maps auth failures cleanly so no uncaught errors crash the app
+    (window as any).gm_authFailure = () => {
+      console.warn('[DIBLO MAPS] Google Maps authentication failed or disabled. Operating in native OpenStreetMap / Leaflet mode.');
+      setApiKey(null);
+    };
+
     let isMounted = true;
 
     async function fetchKey() {
-      if (apiKey) {
-        setIsLoading(false);
+      if (apiKey && isValidGoogleMapsKey(apiKey)) {
         return;
       }
 
       try {
         const config = await api.getMapsConfig();
         if (isMounted) {
-          if (config.apiKey && config.apiKey.trim().length > 0) {
-            setApiKey(config.apiKey.trim());
+          if (config.configured && isValidGoogleMapsKey(config.apiKey)) {
+            setApiKey(config.apiKey!.trim());
+          } else {
+            setApiKey(null);
           }
-          setIsLoading(false);
         }
       } catch {
         if (isMounted) {
-          setIsLoading(false);
+          setApiKey(null);
         }
       }
     }
@@ -58,12 +71,12 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
     };
   }, []);
 
-  const isConfigured = Boolean(apiKey && apiKey.length > 0);
+  const isConfigured = Boolean(apiKey && isValidGoogleMapsKey(apiKey));
 
-  // If no API key is available yet, provide context with graceful fallback for components
+  // If no valid API key is available or user opted out, provide context with graceful fallback
   if (!isConfigured) {
     return (
-      <GoogleMapsContext.Provider value={{ apiKey: null, isConfigured: false, isLoading }}>
+      <GoogleMapsContext.Provider value={{ apiKey: null, isConfigured: false, isLoading: false }}>
         {children}
       </GoogleMapsContext.Provider>
     );
@@ -76,11 +89,12 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
       onLoad={() => {
         // Loaded successfully
       }}
-      onError={(err) => {
-        console.warn('[DIBLO MAPS] Maps API Provider notification');
+      onError={() => {
+        console.warn('[DIBLO MAPS] Maps API Provider notification, falling back to Leaflet');
+        setApiKey(null);
       }}
     >
-      <GoogleMapsContext.Provider value={{ apiKey, isConfigured: true, isLoading }}>
+      <GoogleMapsContext.Provider value={{ apiKey, isConfigured: true, isLoading: false }}>
         {children}
       </GoogleMapsContext.Provider>
     </APIProvider>
