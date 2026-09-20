@@ -178,6 +178,26 @@
         "timestamp": { "type": "string" }
       },
       "required": ["id", "alertNumber", "userId", "userName", "status", "lat", "lng", "timestamp"]
+    },
+    "Referral": {
+      "title": "Referral",
+      "description": "Customer referral invite, friend status, and discount coupon reward",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "referrerCustomerId": { "type": "string" },
+        "referrerName": { "type": "string" },
+        "friendName": { "type": "string" },
+        "friendPhone": { "type": "string" },
+        "status": { "type": "string", "enum": ["INVITED", "REGISTERED", "COMPLETED"] },
+        "serviceBooked": { "type": "string" },
+        "rewardCouponCode": { "type": "string" },
+        "rewardAmount": { "type": "number" },
+        "isClaimed": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "referrerCustomerId", "friendName", "friendPhone", "status", "rewardAmount", "createdAt"]
     }
   },
   "firestore": {
@@ -204,6 +224,10 @@
     "/coupons/{couponId}": {
       "schema": "Coupon",
       "description": "Promo codes and discount rules"
+    },
+    "/referrals/{referralId}": {
+      "schema": "Referral",
+      "description": "Customer friend referrals and unlocked reward coupons"
     },
     "/societies/{societyId}": {
       "schema": "Society",

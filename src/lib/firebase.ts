@@ -15,9 +15,9 @@ export interface FirebaseClientConfig {
 
 export const firebaseConfig: FirebaseClientConfig = {
   apiKey: firebaseConfigData.apiKey || (import.meta.env.VITE_FIREBASE_API_KEY as string) || '',
-  authDomain: firebaseConfigData.authDomain || (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || 'diblo-39440.firebaseapp.com',
-  projectId: firebaseConfigData.projectId || (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-39440',
-  storageBucket: firebaseConfigData.storageBucket || (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || 'diblo-39440.firebasestorage.app',
+  authDomain: firebaseConfigData.authDomain || (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || 'diblo-3944a.firebaseapp.com',
+  projectId: firebaseConfigData.projectId || (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-3944a',
+  storageBucket: firebaseConfigData.storageBucket || (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || 'diblo-3944a.firebasestorage.app',
   messagingSenderId: firebaseConfigData.messagingSenderId || (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || '650321096736',
   appId: firebaseConfigData.appId || (import.meta.env.VITE_FIREBASE_APP_ID as string) || '1:650321096736:web:218a11d36b1ca9e38c0c45',
   firestoreDatabaseId: (firebaseConfigData as any).firestoreDatabaseId

@@ -20,13 +20,14 @@ import {
   verifyRazorpaySignature,
   getRazorpayClient
 } from './server/lib/razorpay';
-import { appendOnboardingToSheet } from './server/lib/googleSheetsAdmin';
+import { appendOnboardingToSheet, verifyStaffCredentials } from './server/lib/googleSheetsAdmin';
 import {
   Booking,
   AssistantProfile,
   CustomerProfile,
   Society,
   Coupon,
+  Referral,
   SupportTicket,
   PlatformAnalytics,
   UserRole,
@@ -65,9 +66,9 @@ async function startServer() {
     }
     res.json({
       apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyBZgAbbS7_cTo7ml3EkUf5yKxPiADy5k1U',
-      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-39440.firebaseapp.com',
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-39440',
-      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-39440.firebasestorage.app',
+      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-3944a.firebaseapp.com',
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-3944a',
+      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-3944a.firebasestorage.app',
       messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '650321096736',
       appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:650321096736:web:218a11d36b1ca9e38c0c45',
     });
@@ -711,14 +712,6 @@ async function startServer() {
 
   // Fallback directory matching Google Sheet specifications:
   // Tab: Staff Details
-  // Column A: EPL ID, Column B: Name, Column C: Number, Column D: Email, Column E: Password, Column F: Role
-  const FALLBACK_STAFF_DIRECTORY = [
-    { eplId: 'EPL001', name: 'Rajesh Sharma', phone: '9876543210', email: 'rajesh.sharma@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' },
-    { eplId: 'EPL002', name: 'Kabir Varma', phone: '9876543211', email: 'admin@diblo.in', passwords: ['123456', 'password'], role: 'Admin' },
-    { eplId: 'EPL003', name: 'Pooja Verma', phone: '9820554433', email: 'pooja.verma@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' },
-    { eplId: 'EPL004', name: 'Operations Admin', phone: '9820001122', email: 'ops@diblo.in', passwords: ['123456', 'password'], role: 'Admin' }
-  ];
-
   app.post('/api/staff/login', async (req, res) => {
     try {
       const { mobileNumber, number, phone, eplId, password } = req.body;
@@ -728,135 +721,51 @@ async function startServer() {
       if (!rawMobile || !rawPassword) {
         return res.status(400).json({
           success: false,
+          code: 'INVALID_CREDENTIALS',
           message: 'Invalid mobile number or password.'
         });
       }
 
-      // Normalize phone: extract last 10 digits if applicable
-      const cleanDigits = rawMobile.replace(/\D/g, '');
-      const lookupMobile = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : rawMobile;
+      const result = await verifyStaffCredentials(rawMobile, rawPassword);
 
-      const appsScriptUrl = process.env.STAFF_AUTH_APPS_SCRIPT_URL || process.env.GOOGLE_APPS_SCRIPT_URL;
-
-      if (appsScriptUrl && appsScriptUrl.startsWith('http')) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-          const scriptRes = await fetch(appsScriptUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent': 'Diblo-Staff-Auth/1.0'
-            },
-            body: JSON.stringify({
-              mobileNumber: lookupMobile,
-              number: lookupMobile,
-              phone: lookupMobile,
-              eplId: rawMobile,
-              password: rawPassword
-            }),
-            redirect: 'follow',
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-
-          if (!scriptRes.ok) {
-            console.error('[Staff Auth] Google Apps Script responded with HTTP', scriptRes.status);
-            return res.status(503).json({
-              success: false,
-              message: 'Staff login service is temporarily unavailable. Please try again.'
-            });
-          }
-
-          const scriptData: any = await scriptRes.json().catch(() => null);
-
-          if (!scriptData || typeof scriptData !== 'object') {
-            return res.status(503).json({
-              success: false,
-              message: 'Staff login service is temporarily unavailable. Please try again.'
-            });
-          }
-
-          if (!scriptData.success) {
-            return res.status(401).json({
-              success: false,
-              message: scriptData.message || 'Invalid mobile number or password.'
-            });
-          }
-
-          const rawRole = String(scriptData.role || '').trim().toLowerCase();
-          const normalizedRole: 'Assistant' | 'Admin' = (rawRole === 'admin' || rawRole === 'administrator' || rawRole === 'operations') ? 'Admin' : 'Assistant';
-
-          const token = generateAuthToken({
-            id: `staff-${scriptData.eplId || lookupMobile}`,
-            userId: scriptData.eplId || lookupMobile,
-            phone: scriptData.number || scriptData.phone || lookupMobile,
-            email: scriptData.email || `${scriptData.eplId || 'staff'}@diblo.in`,
-            role: normalizedRole.toUpperCase() as UserRole,
-            name: scriptData.name || (normalizedRole === 'Admin' ? 'Admin' : 'Assistant')
-          });
-
-          return res.json({
-            success: true,
-            role: normalizedRole,
-            eplId: scriptData.eplId || 'EPL001',
-            name: scriptData.name || (normalizedRole === 'Admin' ? 'Admin' : 'Assistant'),
-            number: scriptData.number || scriptData.phone || lookupMobile,
-            email: scriptData.email || '',
-            token
-          });
-        } catch (fetchErr: any) {
-          console.error('[Staff Auth Apps Script Error]:', fetchErr.name === 'AbortError' ? 'Timeout' : fetchErr.message);
-          return res.status(503).json({
-            success: false,
-            message: 'Staff login service is temporarily unavailable. Please try again.'
-          });
-        }
-      }
-
-      // Built-in verification layer matching Google Sheet (Spreadsheet ID: 19GO22yFFHR7fLbC8v4R8xifkI6f2fgdQbfQlvxfMHC0)
-      // Checks Column C (Number) and Column E (Password)
-      const matched = FALLBACK_STAFF_DIRECTORY.find((s) => {
-        const phoneMatch = s.phone.slice(-10) === lookupMobile.slice(-10);
-        const idMatch = s.eplId.toLowerCase() === rawMobile.toLowerCase();
-        const pwdMatch = s.passwords.includes(rawPassword);
-        return (phoneMatch || idMatch) && pwdMatch;
-      });
-
-      if (!matched) {
-        return res.status(401).json({
+      if (!result.success) {
+        const statusCode = result.code === 'STAFF_NOT_FOUND' ? 404 : 401;
+        return res.status(statusCode).json({
           success: false,
-          message: 'Invalid mobile number or password.'
+          code: result.code || 'INVALID_CREDENTIALS',
+          message: result.message || 'Invalid mobile number or password.'
         });
       }
 
-      const rawRole = matched.role.trim().toLowerCase();
-      const normalizedRole: 'Assistant' | 'Admin' = (rawRole === 'admin' || rawRole === 'administrator' || rawRole === 'operations') ? 'Admin' : 'Assistant';
+      const userRole = (result.role === 'Admin' ? 'ADMIN' : 'ASSISTANT') as UserRole;
 
       const token = generateAuthToken({
-        id: `staff-${matched.eplId}`,
-        userId: matched.eplId,
-        phone: matched.phone,
-        email: matched.email,
-        role: normalizedRole.toUpperCase() as UserRole,
-        name: matched.name
+        id: `staff-${result.eplId || rawMobile}`,
+        userId: result.eplId || rawMobile,
+        phone: result.number || rawMobile,
+        email: result.email || `${result.eplId || 'staff'}@diblo.in`,
+        role: userRole,
+        name: result.name || (result.role === 'Admin' ? 'Diblo Admin' : 'Field Assistant')
       });
+
+      console.log(`[Staff Login Success] ${result.name} (${result.role}) via ${result.source}`);
 
       return res.json({
         success: true,
-        role: normalizedRole,
-        eplId: matched.eplId,
-        name: matched.name,
-        number: matched.phone,
-        email: matched.email,
+        role: result.role,
+        eplId: result.eplId,
+        name: result.name,
+        number: result.number,
+        email: result.email,
         token
       });
 
-    } catch (err) {
-      return res.status(503).json({
+    } catch (err: any) {
+      console.error('[Staff Login Error]:', err.message);
+      return res.status(500).json({
         success: false,
-        message: 'Staff login service is temporarily unavailable. Please try again.'
+        code: 'SERVER_CONFIG_ERROR',
+        message: 'Staff login service is temporarily unavailable.'
       });
     }
   });
@@ -1198,6 +1107,96 @@ async function startServer() {
       res.json({ success: true, coupon: newCoupon });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to create coupon', details: err.message });
+    }
+  });
+
+  // ==========================================
+  // REFERRAL SYSTEM & REWARD COUPONS
+  // ==========================================
+  app.get('/api/referrals', async (req: AuthenticatedRequest, res) => {
+    try {
+      const customerId = (req.query.customerId as string) || req.user?.customerId;
+      const referrals = await dbRepository.getReferrals(customerId);
+      res.json(referrals);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to fetch referrals', details: err.message });
+    }
+  });
+
+  app.post('/api/referrals', async (req: AuthenticatedRequest, res) => {
+    try {
+      const { friendName, friendPhone, customerId, referrerName } = req.body;
+      if (!friendName || !friendPhone) {
+        return res.status(400).json({ error: 'Friend name and phone number are required' });
+      }
+
+      const activeCustomerId = customerId || req.user?.customerId || 'cust-1';
+      const cleanPhone = String(friendPhone).replace(/\D/g, '').slice(-10);
+
+      const newReferral: Referral = {
+        id: `ref-${Date.now()}`,
+        referrerCustomerId: activeCustomerId,
+        referrerName: referrerName || req.user?.name || 'Valued Customer',
+        friendName: friendName.trim(),
+        friendPhone: cleanPhone,
+        status: 'INVITED',
+        rewardAmount: 100,
+        isClaimed: false,
+        createdAt: new Date().toISOString()
+      };
+
+      await dbRepository.saveReferral(newReferral);
+      res.json({ success: true, referral: newReferral });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create referral invite', details: err.message });
+    }
+  });
+
+  app.post('/api/referrals/:id/complete', async (req: AuthenticatedRequest, res) => {
+    try {
+      const referrals = await dbRepository.getReferrals();
+      const referral = referrals.find((r) => r.id === req.params.id);
+      if (!referral) {
+        return res.status(404).json({ error: 'Referral record not found' });
+      }
+
+      // Generate a unique reward coupon for the referrer
+      const cleanName = referral.friendName.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 8) || 'FRIEND';
+      const randomSuffix = Math.floor(100 + Math.random() * 900);
+      const couponCode = `REF-${cleanName}${randomSuffix}`;
+
+      const rewardCoupon: Coupon = {
+        id: `cp-ref-${Date.now()}`,
+        code: couponCode,
+        flatDiscount: 100,
+        maxDiscount: 100,
+        minBookingHours: 2,
+        expiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        usageLimit: 1,
+        usedCount: 0,
+        isActive: true,
+        description: `Referral Reward: ₹100 OFF on your next booking from inviting ${referral.friendName}`
+      };
+
+      // Save the coupon into the coupons repository so it's immediately valid for bookings
+      await dbRepository.saveCoupon(rewardCoupon);
+
+      // Update the referral state to COMPLETED
+      referral.status = 'COMPLETED';
+      referral.rewardCouponCode = couponCode;
+      referral.serviceBooked = req.body.serviceBooked || 'Senior Citizen & Hospital Assistance';
+      referral.completedAt = new Date().toISOString();
+
+      await dbRepository.saveReferral(referral);
+
+      res.json({
+        success: true,
+        referral,
+        rewardCoupon,
+        message: `Referral completed! ₹100 reward coupon ${couponCode} issued successfully.`
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to complete referral', details: err.message });
     }
   });
 

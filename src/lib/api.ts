@@ -4,6 +4,7 @@ import {
   CustomerProfile,
   Society,
   Coupon,
+  Referral,
   PricingConfig,
   SupportTicket,
   ServiceItem,
@@ -467,6 +468,43 @@ export const api = {
     }
   },
 
+  // Referrals & Reward Coupons
+  async getReferrals(customerId?: string): Promise<Referral[]> {
+    try {
+      const query = customerId ? `?customerId=${encodeURIComponent(customerId)}` : '';
+      const res = await authFetch(`/api/referrals${query}`);
+      return safeJson<Referral[]>(res, []);
+    } catch {
+      return [];
+    }
+  },
+
+  async createReferral(data: { friendName: string; friendPhone: string; customerId?: string; referrerName?: string }): Promise<{ success: boolean; referral?: Referral; error?: string }> {
+    try {
+      const res = await authFetch('/api/referrals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return safeJson(res, { success: false, error: 'Failed to create referral' });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async completeReferral(referralId: string, serviceBooked?: string): Promise<{ success: boolean; referral?: Referral; rewardCoupon?: Coupon; message?: string; error?: string }> {
+    try {
+      const res = await authFetch(`/api/referrals/${referralId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceBooked })
+      });
+      return safeJson(res, { success: false, error: 'Failed to complete referral' });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
   // Bookings
   async getBookings(params?: { customerId?: string; assistantId?: string; status?: string }): Promise<Booking[]> {
     try {
@@ -918,33 +956,180 @@ export const api = {
     number?: string;
     email?: string;
     token?: string;
+    code?: 'NETWORK_ERROR' | 'INVALID_CREDENTIALS' | 'STAFF_NOT_FOUND' | 'APP_CHECK_ERROR' | 'SERVER_CONFIG_ERROR' | 'FIRESTORE_PERMISSION_ERROR';
     message?: string;
   }> {
-    try {
-      const res = await fetch('/api/staff/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobileNumber, password })
-      });
-      const data = await res.json().catch(() => null);
-      if (!data) {
-        return { success: false, message: 'Staff login service is temporarily unavailable. Please try again.' };
-      }
-      if (data.success && data.token) {
-        staffSessionStorage.setToken(data.token);
-        staffSessionStorage.setSession({
-          authenticated: true,
-          eplId: data.eplId || '',
-          name: data.name || '',
-          number: data.number || mobileNumber,
-          email: data.email || '',
-          role: data.role
-        });
-      }
-      return data;
-    } catch (err) {
-      return { success: false, message: 'Staff login service is temporarily unavailable. Please try again.' };
+    const cleanMobile = String(mobileNumber || '').trim();
+    const cleanPassword = String(password || '').trim();
+
+    if (!cleanMobile || !cleanPassword) {
+      return {
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        message: 'Invalid mobile number or password.'
+      };
     }
+
+    const projectId = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-3944a';
+    const hasAppCheckToken = typeof window !== 'undefined' && Boolean((window as any).__FIREBASE_APPCHECK_TOKEN__ || (window as any).appCheckToken);
+    const hasEnvConfig = Boolean(import.meta.env.VITE_FIREBASE_PROJECT_ID);
+
+    // List of endpoint URLs to attempt in order:
+    // 1. Relative route (handled by Vite Express dev server or Firebase Hosting rewrite to Cloud Function)
+    // 2. Direct Cloud Function endpoints if Firebase Hosting rewrite serves static HTML fallback
+    const customApiBase = (import.meta.env.VITE_API_URL as string)?.replace(/\/+$/, '');
+    const candidateUrls = [
+      ...(customApiBase ? [`${customApiBase}/api/staff/login`] : []),
+      '/api/staff/login',
+      `https://us-central1-${projectId}.cloudfunctions.net/api/api/staff/login`,
+      `https://us-central1-${projectId}.cloudfunctions.net/staffLogin`,
+      `https://asia-south1-${projectId}.cloudfunctions.net/api/api/staff/login`
+    ];
+
+    let lastErrorDetails: {
+      status: number;
+      code: 'NETWORK_ERROR' | 'INVALID_CREDENTIALS' | 'STAFF_NOT_FOUND' | 'APP_CHECK_ERROR' | 'SERVER_CONFIG_ERROR' | 'FIRESTORE_PERMISSION_ERROR';
+      message: string;
+    } = {
+      status: 0,
+      code: 'NETWORK_ERROR',
+      message: 'Unable to connect to the staff login service.'
+    };
+
+    for (const targetUrl of candidateUrls) {
+      try {
+        // Diagnostic log: Safe fields only (never log passwords or secret tokens)
+        console.log('[Staff Auth Diagnostic] Attempting login', {
+          targetUrl,
+          hasAppCheckToken,
+          hasEnvConfig,
+          projectId
+        });
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        const res = await fetch(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ mobileNumber: cleanMobile, password: cleanPassword }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        const contentType = res.headers.get('content-type') || '';
+
+        console.log('[Staff Auth Diagnostic] Response received', {
+          targetUrl,
+          httpStatus: res.status,
+          contentType: contentType.split(';')[0],
+          ok: res.ok
+        });
+
+        // If the server returns HTML (e.g., Firebase Hosting SPA fallback because Cloud Function is not bound yet)
+        if (contentType.includes('text/html')) {
+          console.warn(`[Staff Auth Diagnostic] ${targetUrl} returned HTML (SPA fallback). Trying next candidate endpoint...`);
+          lastErrorDetails = {
+            status: res.status,
+            code: 'SERVER_CONFIG_ERROR',
+            message: 'Staff login service is temporarily unavailable. Please try again.'
+          };
+          continue;
+        }
+
+        const data = await res.json().catch(() => null);
+
+        if (!data || typeof data !== 'object') {
+          console.warn(`[Staff Auth Diagnostic] Invalid JSON from ${targetUrl}`);
+          lastErrorDetails = {
+            status: res.status,
+            code: 'SERVER_CONFIG_ERROR',
+            message: 'Staff login service is temporarily unavailable.'
+          };
+          continue;
+        }
+
+        console.log('[Staff Auth Diagnostic] Parsed response data', {
+          targetUrl,
+          success: data.success,
+          code: data.code,
+          role: data.role,
+          hasToken: Boolean(data.token)
+        });
+
+        if (data.success && data.token) {
+          staffSessionStorage.setToken(data.token);
+          staffSessionStorage.setSession({
+            authenticated: true,
+            eplId: data.eplId || '',
+            name: data.name || '',
+            number: data.number || cleanMobile,
+            email: data.email || '',
+            role: data.role
+          });
+          return data;
+        }
+
+        // Handle error responses from backend
+        let errCode = data.code;
+        if (!errCode) {
+          if (res.status === 404) errCode = 'STAFF_NOT_FOUND';
+          else if (res.status === 401) errCode = 'INVALID_CREDENTIALS';
+          else if (res.status === 403) errCode = 'APP_CHECK_ERROR';
+          else errCode = 'SERVER_CONFIG_ERROR';
+        }
+
+        let friendlyMessage = data.message;
+        if (!friendlyMessage || friendlyMessage.includes('temporarily unavailable')) {
+          switch (errCode) {
+            case 'INVALID_CREDENTIALS':
+              friendlyMessage = 'Invalid mobile number or password.';
+              break;
+            case 'STAFF_NOT_FOUND':
+              friendlyMessage = 'Staff account not found.';
+              break;
+            case 'APP_CHECK_ERROR':
+              friendlyMessage = 'Security verification failed. Please refresh and try again.';
+              break;
+            case 'FIRESTORE_PERMISSION_ERROR':
+              friendlyMessage = 'Staff authentication is temporarily unavailable.';
+              break;
+            case 'NETWORK_ERROR':
+              friendlyMessage = 'Unable to connect to the staff login service.';
+              break;
+            default:
+              friendlyMessage = 'Staff login service is temporarily unavailable.';
+          }
+        }
+
+        return {
+          success: false,
+          code: errCode,
+          message: friendlyMessage
+        };
+
+      } catch (fetchErr: any) {
+        console.warn(`[Staff Auth Diagnostic] Request failed for ${targetUrl}`, {
+          errorName: fetchErr?.name,
+          errorMessage: fetchErr?.message
+        });
+
+        lastErrorDetails = {
+          status: 0,
+          code: 'NETWORK_ERROR',
+          message: 'Unable to connect to the staff login service.'
+        };
+      }
+    }
+
+    return {
+      success: false,
+      code: lastErrorDetails.code,
+      message: lastErrorDetails.message
+    };
   },
 
   async getStaffSession(): Promise<{ success: boolean; authenticated: boolean; eplId?: string; name?: string; number?: string; email?: string; role?: 'Assistant' | 'Admin'; message?: string }> {

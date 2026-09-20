@@ -46,6 +46,7 @@ const MainAppContent: React.FC = () => {
   // Booking Flow Modal State
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [preSelectedService, setPreSelectedService] = useState<ServiceItem | null>(null);
+  const [preSelectedCouponCode, setPreSelectedCouponCode] = useState<string | null>(null);
 
   // Legal Modal State
   const [legalModalPage, setLegalModalPage] = useState<string | null>(null);
@@ -361,7 +362,14 @@ const MainAppContent: React.FC = () => {
           />
         )}
 
-        {customerTab === 'PROFILE' && <CustomerProfile />}
+        {customerTab === 'PROFILE' && (
+          <CustomerProfile
+            onOpenBookingWithCoupon={(couponCode) => {
+              setPreSelectedCouponCode(couponCode);
+              setIsBookingModalOpen(true);
+            }}
+          />
+        )}
 
         {customerTab === 'SUPPORT' && <CustomerSupport />}
       </main>
@@ -379,8 +387,10 @@ const MainAppContent: React.FC = () => {
           onClose={() => {
             setIsBookingModalOpen(false);
             setPreSelectedService(null);
+            setPreSelectedCouponCode(null);
           }}
           preSelectedService={preSelectedService}
+          initialCouponCode={preSelectedCouponCode || undefined}
           onBookingSuccess={handleBookingSuccess}
         />
       )}

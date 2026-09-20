@@ -2,14 +2,20 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, Phone, MapPin, ShieldCheck, Gift, CreditCard, Bell, Heart, Plus, Trash2, Check, LogOut } from 'lucide-react';
 import { CustomerSpendingAnalytics } from './CustomerSpendingAnalytics';
+import { ReferAFriendSection } from './ReferAFriendSection';
 
-export const CustomerProfile: React.FC = () => {
+interface CustomerProfileProps {
+  onOpenBookingWithCoupon?: (couponCode: string) => void;
+}
+
+export const CustomerProfile: React.FC<CustomerProfileProps> = ({
+  onOpenBookingWithCoupon
+}) => {
   const { currentUser, customerProfile, updateCustomerProfile, logoutCustomer } = useAuth();
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [newTitle, setNewTitle] = useState('Office');
   const [newAddress, setNewAddress] = useState('Godrej One, Vikhroli East, Mumbai');
   const [newArea, setNewArea] = useState('Vikhroli');
-  const [copySuccess, setCopySuccess] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -37,12 +43,6 @@ export const CustomerProfile: React.FC = () => {
       });
     }
     setShowAddAddress(false);
-  };
-
-  const handleCopyReferral = () => {
-    navigator.clipboard.writeText('DIBLO-AARAV100');
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
   };
 
   return (
@@ -78,27 +78,8 @@ export const CustomerProfile: React.FC = () => {
         </div>
       </div>
 
-      {/* Refer & Earn Banner */}
-      <div className="bg-gradient-to-r from-[#14213D] to-[#1E293B] text-white rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="space-y-1 text-center sm:text-left">
-          <div className="flex items-center justify-center sm:justify-start gap-1.5 text-[#F42F73] text-xs font-extrabold uppercase">
-            <Gift className="w-4 h-4 shrink-0" />
-            <span>Refer Friends & Family in Mumbai</span>
-          </div>
-          <h3 className="text-base sm:text-lg font-bold">Earn ₹100 Diblo Cash for every verified referral</h3>
-          <p className="text-xs text-gray-300">Your friend gets ₹100 off their first assistance booking too.</p>
-        </div>
-
-        <div className="flex items-center gap-2 bg-white/10 p-1.5 sm:p-2 rounded-2xl border border-white/20 w-full sm:w-auto justify-between sm:justify-start">
-          <span className="font-mono font-bold text-xs sm:text-sm px-2 text-white">DIBLO-AARAV100</span>
-          <button
-            onClick={handleCopyReferral}
-            className="px-3.5 py-2 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold transition-all min-h-[40px] flex items-center justify-center"
-          >
-            {copySuccess ? 'Copied!' : 'Copy Code'}
-          </button>
-        </div>
-      </div>
+      {/* Refer & Earn Interactive Feature: Unique Links, Tracker, and Earned Discount Coupons */}
+      <ReferAFriendSection onOpenBookingWithCoupon={onOpenBookingWithCoupon} />
 
       {/* 6-Month Booking History & Spending Pattern Summary Chart */}
       <CustomerSpendingAnalytics />

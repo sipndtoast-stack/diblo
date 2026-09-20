@@ -33,6 +33,7 @@ interface BookingFlowModalProps {
   isOpen: boolean;
   onClose: () => void;
   preSelectedService?: ServiceItem | null;
+  initialCouponCode?: string;
   onBookingSuccess: (bookingId: string) => void;
 }
 
@@ -40,6 +41,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
   isOpen,
   onClose,
   preSelectedService,
+  initialCouponCode,
   onBookingSuccess
 }) => {
   const { currentUser, customerProfile } = useAuth();
@@ -97,6 +99,15 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
       setSelectedService(preSelectedService);
     }
   }, [preSelectedService]);
+
+  useEffect(() => {
+    if (initialCouponCode) {
+      setCouponCode(initialCouponCode.toUpperCase());
+      setDiscountAmount(100);
+      setCouponSuccessMessage(`Referral Reward Coupon ${initialCouponCode.toUpperCase()} applied! Saved ₹100`);
+      setCouponError('');
+    }
+  }, [initialCouponCode]);
 
   if (!isOpen) return null;
 

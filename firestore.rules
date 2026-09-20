@@ -81,6 +81,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Referrals Collection
+    match /referrals/{referralId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
     // Societies Collection
     match /societies/{societyId} {
       allow read: if isSignedIn();

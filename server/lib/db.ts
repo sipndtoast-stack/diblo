@@ -498,6 +498,50 @@ export const dbRepository = {
   },
 
   // ----------------------------------------------------
+  // REFERRALS & REWARDS
+  // ----------------------------------------------------
+  async getReferrals(customerId?: string): Promise<Referral[]> {
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        let query: any = db.collection('referrals');
+        if (customerId) {
+          query = query.where('referrerCustomerId', '==', customerId);
+        }
+        const snapshot = await query.get();
+        if (!snapshot.empty) {
+          return snapshot.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
+        }
+      } catch (err) {
+        console.error('[DB] Error fetching referrals:', err);
+      }
+    }
+    if (customerId) {
+      return memoryReferrals.filter((r) => r.referrerCustomerId === customerId);
+    }
+    return memoryReferrals;
+  },
+
+  async saveReferral(referral: Referral): Promise<Referral> {
+    const idx = memoryReferrals.findIndex((r) => r.id === referral.id);
+    if (idx >= 0) {
+      memoryReferrals[idx] = { ...memoryReferrals[idx], ...referral };
+    } else {
+      memoryReferrals.unshift(referral);
+    }
+
+    const { isInitialized, db } = initializeFirebaseAdmin();
+    if (isInitialized && db) {
+      try {
+        await db.collection('referrals').doc(referral.id).set(referral, { merge: true });
+      } catch (err) {
+        console.error('[DB] Error saving referral:', err);
+      }
+    }
+    return referral;
+  },
+
+  // ----------------------------------------------------
   // SOCIETIES
   // ----------------------------------------------------
   async getSocieties(): Promise<Society[]> {

@@ -62,7 +62,7 @@ export interface AuthContextType {
   switchRole: (role: UserRole) => Promise<void>;
   updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
   updateAssistantProfile: (profile: Partial<AssistantProfile>) => void;
-  loginStaff: (mobileNumber: string, password: string) => Promise<{ success: boolean; role?: 'Assistant' | 'Admin'; message?: string; eplId?: string; name?: string; number?: string; email?: string }>;
+  loginStaff: (mobileNumber: string, password: string) => Promise<{ success: boolean; role?: 'Assistant' | 'Admin'; message?: string; code?: string; eplId?: string; name?: string; number?: string; email?: string }>;
   logoutStaff: () => Promise<void>;
   logoutCustomer: () => Promise<void>;
   logout?: () => Promise<void>;

@@ -1,8 +1,6 @@
 import crypto from 'crypto';
-import { AssistantApplication } from '../../src/types';
 
 export const SPREADSHEET_ID = '19GO22yFFHR7fLbC8v4R8xifkI6f2fgdQbfQlvxfMHC0';
-export const ONBOARDING_TAB_NAME = 'New Staff Onbording'; // Exact spelling specified by user
 export const STAFF_DETAILS_TAB_NAME = 'Staff Details';
 
 export interface StaffAuthResult {
@@ -30,10 +28,6 @@ interface ServiceAccountCredentials {
   project_id?: string;
 }
 
-/**
- * Extracts and parses service account credentials from environment variables.
- * Never logs the private key or full credential objects.
- */
 function getServiceAccount(): ServiceAccountCredentials | null {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_SERVICE_ACCOUNT;
   if (!raw || typeof raw !== 'string' || raw.trim().length < 20) {
@@ -64,15 +58,12 @@ function getServiceAccount(): ServiceAccountCredentials | null {
       };
     }
   } catch (err: any) {
-    console.warn('[GoogleSheetsAdmin] Error reading service account JSON:', err.message);
+    console.warn('[Functions GoogleSheetsStaff] Error reading service account JSON:', err.message);
   }
 
   return null;
 }
 
-/**
- * Generates an OAuth2 access token for Google Sheets API using RSA-SHA256 JWT assertion.
- */
 async function getGoogleSheetsAccessToken(credentials: ServiceAccountCredentials): Promise<string | null> {
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -119,146 +110,17 @@ async function getGoogleSheetsAccessToken(credentials: ServiceAccountCredentials
     });
 
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.warn('[GoogleSheetsAdmin] Token exchange failed HTTP', res.status, errText.slice(0, 150));
       return null;
     }
 
-    const tokenData = await res.json().catch(() => null);
+    const tokenData = (await res.json().catch(() => null)) as { access_token?: string } | null;
     return tokenData?.access_token || null;
   } catch (err: any) {
-    console.warn('[GoogleSheetsAdmin] Failed to generate access token:', err.message);
+    console.warn('[Functions GoogleSheetsStaff] Failed to generate access token:', err.message);
     return null;
   }
 }
 
-/**
- * Appends an onboarding record directly to the specified Google Sheet tab:
- * Spreadsheet ID: 19GO22yFFHR7fLbC8v4R8xifkI6f2fgdQbfQlvxfMHC0
- * Tab: New Staff Onbording
- *
- * Excludes sensitive document images/files.
- */
-export async function appendOnboardingToSheet(
-  app: AssistantApplication
-): Promise<{ success: boolean; method: string; message?: string }> {
-  const row = [
-    app.applicationNumber || app.id,
-    app.appliedAt || new Date().toISOString(),
-    app.fullName,
-    app.mobileNumber,
-    app.alternateMobile || '',
-    app.email || '',
-    app.dateOfBirth || '',
-    app.gender || '',
-    app.currentAddress || '',
-    app.mumbaiArea || '',
-    app.pinCode || '',
-    app.aadhaarNumber || '',
-    app.panNumber || '',
-    Array.isArray(app.languagesSpoken) ? app.languagesSpoken.join(', ') : '',
-    Array.isArray(app.selectedServices) ? app.selectedServices.join(', ') : '',
-    app.yearsOfExperience || 1,
-    Array.isArray(app.preferredOperatingZones) ? app.preferredOperatingZones.join(', ') : '',
-    app.availabilityType || 'FULL_TIME',
-    Array.isArray(app.preferredTimeSlots) ? app.preferredTimeSlots.join(', ') : '',
-    app.hasTwoWheeler ? 'YES' : 'NO',
-    app.drivingLicenseNumber || '',
-    `${app.emergencyContactName || ''} (${app.emergencyContactRelation || ''}) - ${app.emergencyContactPhone || ''}`,
-    `${app.referenceName || ''} - ${app.referencePhone || ''}`,
-    `${app.bankName || ''} - ${app.bankAccountNumber || ''} (IFSC: ${app.bankIfscCode || ''})`,
-    app.termsAccepted ? 'YES' : 'NO',
-    app.codeOfConductAccepted ? 'YES' : 'NO',
-    app.status || 'PENDING_REVIEW'
-  ];
-
-  // 1. Check if Google Apps Script URL is configured
-  const appsScriptUrl = process.env.STAFF_AUTH_APPS_SCRIPT_URL || process.env.GOOGLE_APPS_SCRIPT_URL;
-  if (appsScriptUrl && typeof appsScriptUrl === 'string' && appsScriptUrl.startsWith('http')) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      const scriptRes = await fetch(appsScriptUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Diblo-Staff-Onboarding/1.0'
-        },
-        body: JSON.stringify({
-          action: 'submitOnboarding',
-          sheetName: ONBOARDING_TAB_NAME,
-          spreadsheetId: SPREADSHEET_ID,
-          applicationNumber: app.applicationNumber,
-          row
-        }),
-        redirect: 'follow',
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (scriptRes.ok) {
-        console.log(`[GoogleSheetsAdmin] Synced application ${app.applicationNumber} via Google Apps Script`);
-        return { success: true, method: 'apps_script' };
-      }
-    } catch (scriptErr: any) {
-      console.warn('[GoogleSheetsAdmin] Apps Script append error:', scriptErr.message);
-    }
-  }
-
-  // 2. Check if Service Account is available for Google Sheets API v4
-  const serviceAccount = getServiceAccount();
-  if (serviceAccount) {
-    try {
-      const accessToken = await getGoogleSheetsAccessToken(serviceAccount);
-      if (accessToken) {
-        const encodedTab = encodeURIComponent(ONBOARDING_TAB_NAME);
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/'${encodedTab}':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-
-        const appendRes = await fetch(url, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            values: [row]
-          })
-        });
-
-        if (appendRes.ok) {
-          console.log(`[GoogleSheetsAdmin] Synced application ${app.applicationNumber} via Google Sheets API v4`);
-          return { success: true, method: 'sheets_api_v4' };
-        } else {
-          const errData = await appendRes.json().catch(() => ({}));
-          console.warn('[GoogleSheetsAdmin] Sheets API append HTTP error:', appendRes.status, errData?.error?.message);
-        }
-      }
-    } catch (apiErr: any) {
-      console.warn('[GoogleSheetsAdmin] Sheets API append exception:', apiErr.message);
-    }
-  }
-
-  // Graceful fallback: recorded in database repository
-  console.info(`[GoogleSheetsAdmin] Application ${app.applicationNumber} recorded in database repository. (Google credentials not provisioned in environment).`);
-  return {
-    success: true,
-    method: 'database_repository',
-    message: 'Recorded in database repository. Pending Google Sheets sync.'
-  };
-}
-
-/**
- * Verifies staff credentials against the "Staff Details" tab in Google Sheet:
- * Spreadsheet ID: 19GO22yFFHR7fLbC8v4R8xifkI6f2fgdQbfQlvxfMHC0
- * Tab: Staff Details
- * Columns: EPL ID | Name | Number | Email | Password | Role
- *
- * Checks in sequence:
- * 1. Google Sheets API v4 using server-side Service Account credentials
- * 2. Google Apps Script Web App (if configured via STAFF_AUTH_APPS_SCRIPT_URL)
- * 3. Fallback Staff Directory (for demo & offline environments)
- */
 export async function verifyStaffCredentials(
   mobileNumber: string,
   password: string
@@ -286,7 +148,7 @@ export async function verifyStaffCredentials(
         });
 
         if (res.ok) {
-          const data = await res.json().catch(() => null);
+          const data = (await res.json().catch(() => null)) as { values?: string[][] } | null;
           const rows: string[][] = data?.values || [];
 
           if (rows.length >= 2) {
@@ -331,7 +193,6 @@ export async function verifyStaffCredentials(
               const normalizedRole: 'Assistant' | 'Admin' =
                 rawRole.includes('admin') || rawRole.includes('operation') ? 'Admin' : 'Assistant';
 
-              console.log(`[GoogleSheetsAdmin] Staff authenticated via Sheets API: ${matchedUserRow[colName]} (${normalizedRole})`);
               return {
                 success: true,
                 role: normalizedRole,
@@ -358,12 +219,10 @@ export async function verifyStaffCredentials(
               message: 'Staff account not found.'
             };
           }
-        } else {
-          console.warn('[GoogleSheetsAdmin] Staff Details fetch failed with HTTP', res.status);
         }
       }
     } catch (apiErr: any) {
-      console.warn('[GoogleSheetsAdmin] Staff verification exception via Sheets API:', apiErr.message);
+      console.warn('[Functions GoogleSheetsStaff] Sheets API error:', apiErr.message);
     }
   }
 
@@ -393,7 +252,7 @@ export async function verifyStaffCredentials(
       clearTimeout(timeoutId);
 
       if (scriptRes.ok) {
-        const data = await scriptRes.json().catch(() => null);
+        const data: any = await scriptRes.json().catch(() => null);
         if (data && data.success) {
           const rawRole = String(data.role || '').toLowerCase();
           const normalizedRole: 'Assistant' | 'Admin' =
@@ -419,11 +278,11 @@ export async function verifyStaffCredentials(
         }
       }
     } catch (scriptErr: any) {
-      console.warn('[GoogleSheetsAdmin] Apps Script staff auth error:', scriptErr.message);
+      console.warn('[Functions GoogleSheetsStaff] Apps Script error:', scriptErr.message);
     }
   }
 
-  // 3. Fallback Directory for Demo / Seed / Local Environments
+  // 3. Fallback Directory
   const matched = FALLBACK_STAFF_DIRECTORY.find((s) => {
     const phoneMatch = s.phone.slice(-10) === lookupMobile;
     const idMatch = s.eplId.toLowerCase() === rawId;
