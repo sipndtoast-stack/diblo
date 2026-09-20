@@ -136,6 +136,9 @@ export interface BookingLocation {
   area: string;
   lat: number;
   lng: number;
+  latitude?: number;
+  longitude?: number;
+  placeId?: string;
 }
 
 export interface Booking {

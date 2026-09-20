@@ -13,12 +13,16 @@ interface GoogleMapsContextType {
   apiKey: string | null;
   isConfigured: boolean;
   isLoading: boolean;
+  authError: string | null;
+  authErrorDetails: string | null;
 }
 
 const GoogleMapsContext = createContext<GoogleMapsContextType>({
   apiKey: null,
   isConfigured: false,
-  isLoading: false
+  isLoading: false,
+  authError: null,
+  authErrorDetails: null
 });
 
 export const useGoogleMaps = () => useContext(GoogleMapsContext);
@@ -30,15 +34,27 @@ interface GoogleMapsProviderProps {
 export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children }) => {
   const [apiKey, setApiKey] = useState<string | null>(() => {
     const envKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY;
-    return isValidGoogleMapsKey(envKey) ? envKey.trim() : null;
+    if (isValidGoogleMapsKey(envKey)) return envKey.trim();
+    return 'AIzaSyCb0Fq3FsC-C1mTfM7pugmioQO7fL6Z_MM';
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authErrorDetails, setAuthErrorDetails] = useState<string | null>(null);
 
   useEffect(() => {
-    // Intercept Google Maps auth failures cleanly so no uncaught errors crash the app
+    // Intercept Google Maps authentication failures and log diagnostics
     (window as any).gm_authFailure = () => {
-      console.warn('[DIBLO MAPS] Google Maps authentication failed or disabled. Operating in native OpenStreetMap / Leaflet mode.');
-      setApiKey(null);
+      const diagnosticMsg =
+        '[DIBLO MAPS AUTH FAILURE] Google Maps JavaScript API authentication failed.\n' +
+        'Please check Google Cloud Console:\n' +
+        '1. HTTP Referrers: Ensure "https://diblo-39440.web.app/*" and "http://localhost:5173/*" are allowed.\n' +
+        '2. API Restrictions: Ensure Maps JavaScript API, Places API, Geocoding API, and Routes API are enabled.\n' +
+        '3. Billing: Ensure a billing account is linked to the Google Cloud project.';
+      console.warn(diagnosticMsg);
+      setAuthError('AUTH_FAILURE');
+      setAuthErrorDetails(
+        'Google Maps authentication failed. Expected referrers: https://diblo-39440.web.app/*, http://localhost:5173/*'
+      );
     };
 
     let isMounted = true;
@@ -49,18 +65,17 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
       }
 
       try {
+        setIsLoading(true);
         const config = await api.getMapsConfig();
         if (isMounted) {
           if (config.configured && isValidGoogleMapsKey(config.apiKey)) {
             setApiKey(config.apiKey!.trim());
-          } else {
-            setApiKey(null);
           }
         }
       } catch {
-        if (isMounted) {
-          setApiKey(null);
-        }
+        // keep fallback key
+      } finally {
+        if (isMounted) setIsLoading(false);
       }
     }
 
@@ -69,14 +84,21 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [apiKey]);
 
   const isConfigured = Boolean(apiKey && isValidGoogleMapsKey(apiKey));
 
-  // If no valid API key is available or user opted out, provide context with graceful fallback
+  const contextValue: GoogleMapsContextType = {
+    apiKey,
+    isConfigured,
+    isLoading,
+    authError,
+    authErrorDetails
+  };
+
   if (!isConfigured) {
     return (
-      <GoogleMapsContext.Provider value={{ apiKey: null, isConfigured: false, isLoading: false }}>
+      <GoogleMapsContext.Provider value={contextValue}>
         {children}
       </GoogleMapsContext.Provider>
     );
@@ -86,15 +108,15 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
     <APIProvider
       apiKey={apiKey!}
       libraries={['places', 'marker', 'geometry', 'routes']}
-      onLoad={() => {
-        // Loaded successfully
-      }}
-      onError={() => {
-        console.warn('[DIBLO MAPS] Maps API Provider notification, falling back to Leaflet');
-        setApiKey(null);
+      onError={(err) => {
+        console.warn('[DIBLO MAPS] Maps API Provider load notification:', err);
+        setAuthError('LOAD_ERROR');
+        setAuthErrorDetails(
+          'Failed to load Google Maps script. Please check your network and Google Cloud API restrictions.'
+        );
       }}
     >
-      <GoogleMapsContext.Provider value={{ apiKey, isConfigured: true, isLoading: false }}>
+      <GoogleMapsContext.Provider value={contextValue}>
         {children}
       </GoogleMapsContext.Provider>
     </APIProvider>

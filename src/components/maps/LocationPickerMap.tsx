@@ -2,133 +2,55 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Map,
   AdvancedMarker,
-  Pin,
   useMap,
   useMapsLibrary,
   useApiLoadingStatus,
   APILoadingStatus
 } from '@vis.gl/react-google-maps';
-import L from 'leaflet';
 import {
   Search,
   MapPin,
-  Navigation,
   Crosshair,
-  Compass,
   Check,
   Loader2,
   AlertCircle,
   Building,
-  Info
+  Info,
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 import { useGoogleMaps } from './GoogleMapsProvider';
 import { api } from '../../lib/api';
 
-// Native interactive Leaflet Map for when Google Maps is not enabled
-const LeafletLocationPickerInner: React.FC<{
+export interface LocationPickerResult {
+  latitude: number;
+  longitude: number;
   lat: number;
   lng: number;
-  onLocationChange: (lat: number, lng: number) => void;
-}> = ({ lat, lng, onLocationChange }) => {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<L.Marker | null>(null);
-
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        center: [lat, lng],
-        zoom: 15,
-        zoomControl: true,
-        attributionControl: false
-      });
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }).addTo(map);
-
-      const customPin = L.divIcon({
-        className: 'custom-leaflet-picker-pin',
-        html: `
-          <div style="position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;">
-            <div style="width:36px;height:36px;border-radius:50%;background-color:#F42F73;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);">
-              <svg style="width:20px;height:20px;color:white;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21s-8-6.5-8-12a8 8 0 1116 0c0 5.5-8 12-8 12z" />
-                <circle cx="12" cy="9" r="2.5" fill="white" />
-              </svg>
-            </div>
-            <div style="width:10px;height:10px;background:#F42F73;transform:rotate(45deg);margin-top:-5px;"></div>
-          </div>
-        `,
-        iconSize: [36, 42],
-        iconAnchor: [18, 42]
-      });
-
-      const marker = L.marker([lat, lng], {
-        draggable: true,
-        icon: customPin
-      }).addTo(map);
-
-      marker.on('dragend', () => {
-        const position = marker.getLatLng();
-        onLocationChange(position.lat, position.lng);
-      });
-
-      map.on('click', (e: L.LeafletMouseEvent) => {
-        marker.setLatLng(e.latlng);
-        onLocationChange(e.latlng.lat, e.latlng.lng);
-      });
-
-      mapInstanceRef.current = map;
-      markerRef.current = marker;
-    }
-
-    return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (mapInstanceRef.current && markerRef.current) {
-      const currentPos = markerRef.current.getLatLng();
-      if (Math.abs(currentPos.lat - lat) > 0.0001 || Math.abs(currentPos.lng - lng) > 0.0001) {
-        markerRef.current.setLatLng([lat, lng]);
-        mapInstanceRef.current.panTo([lat, lng]);
-      }
-    }
-  }, [lat, lng]);
-
-  return <div ref={mapContainerRef} className="w-full h-full" />;
-};
+  address: string;
+  area: string;
+  landmark?: string;
+  placeId?: string;
+}
 
 interface LocationPickerMapProps {
   initialLat?: number;
   initialLng?: number;
   initialAddress?: string;
   initialArea?: string;
-  onLocationSelected: (location: {
-    lat: number;
-    lng: number;
-    address: string;
-    area: string;
-    landmark?: string;
-  }) => void;
+  initialPlaceId?: string;
+  onLocationSelected: (location: LocationPickerResult) => void;
   height?: string;
   showConfirmButton?: boolean;
   onConfirm?: () => void;
 }
 
-// Inner component when Google Maps JS API is available
-const GoogleMapInner: React.FC<{
+// Inner component for controlling Google Map instance
+const GoogleMapController: React.FC<{
   lat: number;
   lng: number;
   onMapClick: (lat: number, lng: number) => void;
-  onMarkerDragEnd?: (lat: number, lng: number) => void;
+  onMarkerDragEnd: (lat: number, lng: number) => void;
 }> = ({ lat, lng, onMapClick, onMarkerDragEnd }) => {
   const map = useMap();
 
@@ -156,19 +78,14 @@ const GoogleMapInner: React.FC<{
         }
       }}
       className="w-full h-full"
+      style={{ width: '100%', height: '100%', minHeight: '260px' }}
     >
       <AdvancedMarker
         position={{ lat, lng }}
         draggable={true}
         onDragEnd={(e) => {
           if (e.latLng) {
-            const newLat = e.latLng.lat();
-            const newLng = e.latLng.lng();
-            if (onMarkerDragEnd) {
-              onMarkerDragEnd(newLat, newLng);
-            } else {
-              onMapClick(newLat, newLng);
-            }
+            onMarkerDragEnd(e.latLng.lat(), e.latLng.lng());
           }
         }}
       >
@@ -177,34 +94,12 @@ const GoogleMapInner: React.FC<{
             <MapPin className="w-5 h-5 text-white" />
           </div>
           <div className="w-2.5 h-2.5 bg-[#F42F73] rotate-45 -mt-1.5 shadow-md"></div>
-          <div className="mt-1 bg-[#14213D] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-            Selected Location
+          <div className="mt-1 bg-[#14213D] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
+            Service Location
           </div>
         </div>
       </AdvancedMarker>
     </Map>
-  );
-};
-
-// Status-aware wrapper for Google Map inner component (only rendered when Google Maps is configured)
-const GoogleMapInnerWithStatus: React.FC<{
-  lat: number;
-  lng: number;
-  onMapClick: (lat: number, lng: number) => void;
-  onMarkerDragEnd?: (lat: number, lng: number) => void;
-  fallback: React.ReactNode;
-}> = ({ lat, lng, onMapClick, onMarkerDragEnd, fallback }) => {
-  const apiStatus = useApiLoadingStatus();
-  if (apiStatus !== APILoadingStatus.LOADED) {
-    return <>{fallback}</>;
-  }
-  return (
-    <GoogleMapInner
-      lat={lat}
-      lng={lng}
-      onMapClick={onMapClick}
-      onMarkerDragEnd={onMarkerDragEnd}
-    />
   );
 };
 
@@ -213,66 +108,88 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   initialLng = 72.8295,
   initialAddress = 'Bandra West, Mumbai, Maharashtra',
   initialArea = 'Bandra West',
+  initialPlaceId,
   onLocationSelected,
-  height = '340px',
+  height = '320px',
   showConfirmButton = true,
   onConfirm
 }) => {
-  const { isConfigured, apiKey } = useGoogleMaps();
+  const { isConfigured, authError, authErrorDetails } = useGoogleMaps();
+  const apiStatus = useApiLoadingStatus();
+  const placesLib = useMapsLibrary('places');
 
   const [selectedLat, setSelectedLat] = useState<number>(initialLat);
   const [selectedLng, setSelectedLng] = useState<number>(initialLng);
   const [formattedAddress, setFormattedAddress] = useState<string>(initialAddress);
   const [selectedArea, setSelectedArea] = useState<string>(initialArea);
+  const [placeId, setPlaceId] = useState<string | undefined>(initialPlaceId);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<Array<{ formattedAddress: string; area: string; lat: number; lng: number }>>([]);
+  const [searchResults, setSearchResults] = useState<
+    Array<{
+      formattedAddress: string;
+      area: string;
+      lat: number;
+      lng: number;
+      placeId?: string;
+    }>
+  >([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showSearchResults, setShowSearchResults] = useState<boolean>(false);
 
-  // GPS / Geolocation state
+  // Geolocation state
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isReverseGeocoding, setIsReverseGeocoding] = useState<boolean>(false);
 
-  // Perform reverse geocoding on lat/lng change
-  const handleLocationUpdate = useCallback(async (lat: number, lng: number) => {
-    setSelectedLat(lat);
-    setSelectedLng(lng);
-    setIsReverseGeocoding(true);
-    setLocationError(null);
+  // Reverse Geocoding handler
+  const handleLocationUpdate = useCallback(
+    async (lat: number, lng: number) => {
+      setSelectedLat(lat);
+      setSelectedLng(lng);
+      setIsReverseGeocoding(true);
+      setLocationError(null);
 
-    try {
-      const res = await api.reverseGeocode(lat, lng);
-      if (res && res.formattedAddress) {
-        setFormattedAddress(res.formattedAddress);
-        setSelectedArea(res.area || 'Mumbai');
+      try {
+        const res = await api.reverseGeocode(lat, lng);
+        if (res && res.formattedAddress) {
+          setFormattedAddress(res.formattedAddress);
+          const area = res.area || 'Mumbai';
+          setSelectedArea(area);
+          setPlaceId(res.placeId);
+          onLocationSelected({
+            latitude: lat,
+            longitude: lng,
+            lat,
+            lng,
+            address: res.formattedAddress,
+            area,
+            placeId: res.placeId
+          });
+        }
+      } catch {
+        const fallbackAddr = `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E, Mumbai`;
+        setFormattedAddress(fallbackAddr);
         onLocationSelected({
+          latitude: lat,
+          longitude: lng,
           lat,
           lng,
-          address: res.formattedAddress,
-          area: res.area || 'Mumbai'
+          address: fallbackAddr,
+          area: selectedArea
         });
+      } finally {
+        setIsReverseGeocoding(false);
       }
-    } catch {
-      const fallbackAddr = `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E, Mumbai`;
-      setFormattedAddress(fallbackAddr);
-      onLocationSelected({
-        lat,
-        lng,
-        address: fallbackAddr,
-        area: selectedArea
-      });
-    } finally {
-      setIsReverseGeocoding(false);
-    }
-  }, [onLocationSelected, selectedArea]);
+    },
+    [onLocationSelected, selectedArea]
+  );
 
-  // Handle GPS Current Location
+  // Current GPS Location handler
   const handleGetCurrentLocation = () => {
     if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser');
+      setLocationError('Geolocation is not supported by your browser.');
       return;
     }
 
@@ -289,16 +206,18 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       (error) => {
         setIsLocating(false);
         if (error.code === error.PERMISSION_DENIED) {
-          setLocationError('Location permission denied. Please allow location access or search above.');
+          setLocationError(
+            'Location permission is required to automatically detect your location. You can also search for an address manually.'
+          );
         } else {
-          setLocationError('Could not retrieve GPS location. Please search for your area.');
+          setLocationError('Could not retrieve GPS location. Please search for an address.');
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
-  // Search input debounced handler
+  // Autocomplete search using Places API (New) or server proxy fallback
   useEffect(() => {
     if (!searchQuery.trim() || searchQuery.trim().length < 2) {
       setSearchResults([]);
@@ -308,11 +227,77 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
 
     const timer = setTimeout(async () => {
       setIsSearching(true);
+
+      // Attempt client-side Places API Autocomplete if loaded
+      if (placesLib) {
+        try {
+          // Places API (New) autocomplete suggestions
+          if ((placesLib as any).AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+            const resp = await (placesLib as any).AutocompleteSuggestion.fetchAutocompleteSuggestions({
+              input: searchQuery.trim(),
+              locationBias: {
+                center: { lat: 19.0760, lng: 72.8777 },
+                radius: 50000
+              }
+            });
+
+            if (resp.suggestions && resp.suggestions.length > 0) {
+              const parsed = await Promise.all(
+                resp.suggestions.slice(0, 5).map(async (s: any) => {
+                  const placePred = s.placePrediction;
+                  const text = placePred?.text?.toString() || searchQuery;
+                  const mainText = placePred?.mainText?.toString() || text;
+                  const pid = placePred?.placeId;
+
+                  // Geocode selected prediction or resolve location
+                  try {
+                    const place = placePred?.toPlace ? placePred.toPlace() : null;
+                    if (place && place.fetchFields) {
+                      await place.fetchFields({ fields: ['location', 'formattedAddress'] });
+                      const loc = place.location;
+                      if (loc) {
+                        return {
+                          formattedAddress: place.formattedAddress || text,
+                          area: mainText,
+                          lat: loc.lat(),
+                          lng: loc.lng(),
+                          placeId: pid
+                        };
+                      }
+                    }
+                  } catch {
+                    // fallback
+                  }
+
+                  return {
+                    formattedAddress: text,
+                    area: mainText,
+                    lat: 19.0596,
+                    lng: 72.8295,
+                    placeId: pid
+                  };
+                })
+              );
+
+              setSearchResults(parsed);
+              setShowSearchResults(true);
+              setIsSearching(false);
+              return;
+            }
+          }
+        } catch {
+          // Fall through to server-side geocoding
+        }
+      }
+
+      // Server-side Geocoding & Places Proxy
       try {
         const data = await api.geocodeAddress(searchQuery.trim());
-        if (data && data.results) {
+        if (data && data.results && data.results.length > 0) {
           setSearchResults(data.results);
           setShowSearchResults(true);
+        } else {
+          setSearchResults([]);
         }
       } catch {
         setSearchResults([]);
@@ -322,110 +307,84 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, placesLib]);
 
-  const handleSelectSearchResult = (item: { formattedAddress: string; area: string; lat: number; lng: number }) => {
+  const handleSelectSearchResult = (item: {
+    formattedAddress: string;
+    area: string;
+    lat: number;
+    lng: number;
+    placeId?: string;
+  }) => {
     setSelectedLat(item.lat);
     setSelectedLng(item.lng);
     setFormattedAddress(item.formattedAddress);
     setSelectedArea(item.area);
+    setPlaceId(item.placeId);
     setShowSearchResults(false);
     setSearchQuery('');
     onLocationSelected({
+      latitude: item.lat,
+      longitude: item.lng,
       lat: item.lat,
       lng: item.lng,
       address: item.formattedAddress,
-      area: item.area
+      area: item.area,
+      placeId: item.placeId
     });
   };
 
-  const fallbackView = (
-    /* Graceful Interactive Fallback if API key is in setup or loading */
-    <div className="relative w-full h-full flex flex-col items-center justify-center p-4 text-center bg-linear-to-b from-slate-50 to-slate-100">
-      {/* Visual Map Grid Graphic */}
-      <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#14213D_1px,transparent_1px)] [background-size:16px_16px]" />
+  const handleConfirmLocationClick = () => {
+    onLocationSelected({
+      latitude: selectedLat,
+      longitude: selectedLng,
+      lat: selectedLat,
+      lng: selectedLng,
+      address: formattedAddress,
+      area: selectedArea,
+      placeId
+    });
+    if (onConfirm) onConfirm();
+  };
 
-      <div className="relative z-10 max-w-sm space-y-3">
-        <div className="w-12 h-12 rounded-2xl bg-white shadow-md border border-gray-200 flex items-center justify-center mx-auto">
-          <MapPin className="w-6 h-6 text-[#F42F73]" />
-        </div>
-
-        <div>
-          <div className="text-xs font-bold text-[#14213D]">
-            {formattedAddress}
-          </div>
-          <div className="text-[11px] text-gray-500 mt-0.5">
-            Coordinates: {selectedLat.toFixed(4)}° N, {selectedLng.toFixed(4)}° E ({selectedArea})
-          </div>
-        </div>
-
-        {/* Quick Mumbai Locality Chips */}
-        <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
-          {[
-            { name: 'Bandra West', lat: 19.0596, lng: 72.8295 },
-            { name: 'Andheri West', lat: 19.1197, lng: 72.8468 },
-            { name: 'Powai', lat: 19.1176, lng: 72.9060 },
-            { name: 'BKC', lat: 19.0657, lng: 72.8687 },
-            { name: 'Dadar', lat: 19.0178, lng: 72.8478 }
-          ].map((loc) => (
-            <button
-              key={loc.name}
-              type="button"
-              onClick={() => handleLocationUpdate(loc.lat, loc.lng)}
-              className="px-2.5 py-1 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold text-[#14213D] shadow-xs active:scale-95 transition-all"
-            >
-              {loc.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="text-[10px] text-gray-400 flex items-center justify-center gap-1">
-          <Info className="w-3 h-3" />
-          <span>Click chips or search above to position pin</span>
-        </div>
-      </div>
-    </div>
-  );
+  const isMapLoaded = isConfigured && apiStatus === APILoadingStatus.LOADED && !authError;
 
   return (
     <div className="w-full space-y-3">
-      {/* Search Input Bar with Current Location Quick Button */}
-      <div className="relative">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => {
-                if (searchResults.length > 0) setShowSearchResults(true);
-              }}
-              placeholder="Search society, building, street, or area in Mumbai..."
-              className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs sm:text-sm font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] focus:bg-white min-h-[44px] transition-all shadow-xs"
-            />
-            {isSearching && (
-              <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
-            )}
-          </div>
+      {/* Title / Section Label */}
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-bold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
+          <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
+          <span>Select Service Location</span>
+        </label>
+        {isReverseGeocoding && (
+          <span className="text-[11px] text-[#F42F73] flex items-center gap-1 font-semibold">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Updating pin...</span>
+          </span>
+        )}
+      </div>
 
-          <button
-            type="button"
-            onClick={handleGetCurrentLocation}
-            disabled={isLocating}
-            className="px-3.5 py-2.5 bg-white hover:bg-gray-50 border border-gray-200 text-[#14213D] rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[44px] shadow-xs active:scale-95 transition-all shrink-0"
-            title="Use current GPS location"
-          >
-            {isLocating ? (
-              <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin" />
-            ) : (
-              <Crosshair className="w-4 h-4 text-[#F42F73]" />
-            )}
-            <span className="hidden sm:inline">Use GPS</span>
-          </button>
+      {/* 1. Search Location Bar */}
+      <div className="relative">
+        <div className="relative">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => {
+              if (searchResults.length > 0) setShowSearchResults(true);
+            }}
+            placeholder="Search address, landmark, society or building in Mumbai..."
+            className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs sm:text-sm font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] focus:bg-white min-h-[44px] transition-all shadow-xs"
+          />
+          {isSearching && (
+            <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
+          )}
         </div>
 
-        {/* Autocomplete / Search Suggestions Dropdown */}
+        {/* Places Autocomplete Suggestions Dropdown */}
         {showSearchResults && searchResults.length > 0 && (
           <div className="absolute top-full left-0 right-0 z-50 mt-1.5 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden max-h-60 overflow-y-auto">
             {searchResults.map((res, idx) => (
@@ -445,77 +404,106 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         )}
       </div>
 
-      {/* Geolocation Error Notification */}
+      {/* Geolocation Notice / Permission Error */}
       {locationError && (
-        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-800">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-          <span>{locationError}</span>
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 leading-relaxed">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">{locationError}</div>
         </div>
       )}
 
-      {/* Interactive Map Container */}
+      {/* 2. Google Map Container */}
       <div
         className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
         style={{ height }}
       >
-        {isConfigured ? (
-          <GoogleMapInnerWithStatus
+        {authError ? (
+          /* Clear, authentic error display when API key restriction prevents load - DO NOT SILENTLY FAKE */
+          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-50 space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="max-w-md space-y-1">
+              <h4 className="text-sm font-bold text-[#14213D]">
+                Map is temporarily unavailable
+              </h4>
+              <p className="text-xs text-gray-500">
+                {authErrorDetails || 'Google Maps service could not be loaded.'}
+              </p>
+            </div>
+            <div className="bg-white p-3 rounded-xl border border-gray-200 text-left max-w-md text-[11px] text-gray-600 space-y-1">
+              <div className="font-bold text-[#14213D]">Google Cloud Key Configuration Checklist:</div>
+              <div>&bull; HTTP Referrers: <code className="text-[#F42F73]">https://diblo-39440.web.app/*</code>, <code className="text-[#F42F73]">http://localhost:5173/*</code></div>
+              <div>&bull; Enabled APIs: Maps JavaScript, Places (New), Geocoding, Routes</div>
+              <div>&bull; Cloud Billing: Active billing account must be linked</div>
+            </div>
+          </div>
+        ) : isMapLoaded ? (
+          <GoogleMapController
             lat={selectedLat}
             lng={selectedLng}
             onMapClick={handleLocationUpdate}
             onMarkerDragEnd={handleLocationUpdate}
-            fallback={fallbackView}
           />
         ) : (
-          <LeafletLocationPickerInner
-            lat={selectedLat}
-            lng={selectedLng}
-            onLocationChange={handleLocationUpdate}
-          />
+          <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gray-50 text-gray-500 space-y-2">
+            <Loader2 className="w-6 h-6 text-[#F42F73] animate-spin" />
+            <span className="text-xs font-semibold">Loading Google Maps...</span>
+          </div>
         )}
 
-        {/* Floating "Click on map to drop pin" Tip */}
-        <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-gray-100 flex items-center gap-2 text-[11px] font-medium text-[#14213D]">
-          <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-          <span>Click anywhere on map to drop pin</span>
-        </div>
-
-        {/* Floating Reverse Geocode Status */}
-        {isReverseGeocoding && (
-          <div className="absolute bottom-3 left-3 z-10 bg-[#14213D]/90 text-white px-3 py-1.5 rounded-xl shadow-md flex items-center gap-2 text-[11px]">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#F42F73]" />
-            <span>Resolving address...</span>
+        {/* Tip: Click or drag pin to position */}
+        {isMapLoaded && (
+          <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-gray-100 flex items-center gap-1.5 text-[11px] font-medium text-[#14213D] pointer-events-none">
+            <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
+            <span>Drag pin or click map to adjust</span>
           </div>
         )}
       </div>
 
-      {/* Selected Location Address Card */}
-      <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-start gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-white border border-gray-200 flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+      {/* 3. [ Use my current location ] Button */}
+      <button
+        type="button"
+        onClick={handleGetCurrentLocation}
+        disabled={isLocating}
+        className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 border border-gray-200 text-[#14213D] rounded-xl text-xs font-bold flex items-center justify-center gap-2 min-h-[44px] shadow-xs active:scale-[0.99] transition-all"
+      >
+        {isLocating ? (
+          <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin" />
+        ) : (
+          <Crosshair className="w-4 h-4 text-[#F42F73]" />
+        )}
+        <span>Use my current location</span>
+      </button>
+
+      {/* 4. Selected Location Box & Confirm Button */}
+      <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-white border border-gray-200 flex items-center justify-center shrink-0 shadow-xs mt-0.5">
             <MapPin className="w-4 h-4 text-[#F42F73]" />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-              Confirmed Pickup Point
+            <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              Selected Location
             </div>
-            <div className="text-xs sm:text-sm font-bold text-[#14213D] leading-tight">
+            <div className="text-xs sm:text-sm font-bold text-[#14213D] leading-snug">
               {formattedAddress}
             </div>
             <div className="text-[11px] text-gray-500 mt-0.5">
-              Area: <span className="font-semibold text-[#14213D]">{selectedArea}</span> &bull; Lat/Lng: {selectedLat.toFixed(4)}, {selectedLng.toFixed(4)}
+              Area: <span className="font-semibold text-[#14213D]">{selectedArea}</span> &bull; Coordinates: {selectedLat.toFixed(4)}, {selectedLng.toFixed(4)}
+              {placeId && <span className="text-[10px] text-gray-400 ml-1">(Place ID verified)</span>}
             </div>
           </div>
         </div>
 
-        {showConfirmButton && onConfirm && (
+        {showConfirmButton && (
           <button
             type="button"
-            onClick={onConfirm}
+            onClick={handleConfirmLocationClick}
             className="w-full sm:w-auto px-5 py-2.5 bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-1.5 min-h-[44px] transition-all shrink-0 active:scale-95"
           >
             <Check className="w-4 h-4" />
-            <span>Confirm This Location</span>
+            <span>Confirm Location</span>
           </button>
         )}
       </div>

@@ -914,7 +914,7 @@ export const api = {
     }
   },
 
-  async reverseGeocode(lat: number, lng: number): Promise<{ formattedAddress: string; area: string; lat: number; lng: number; isFallback?: boolean }> {
+  async reverseGeocode(lat: number, lng: number): Promise<{ formattedAddress: string; area: string; lat: number; lng: number; placeId?: string; isFallback?: boolean }> {
     try {
       const res = await authFetch(`/api/maps/reverse-geocode?lat=${lat}&lng=${lng}`);
       return safeJson(res, {
@@ -935,12 +935,58 @@ export const api = {
     }
   },
 
-  async geocodeAddress(address: string): Promise<{ results: Array<{ formattedAddress: string; area: string; lat: number; lng: number; isFallback?: boolean }> }> {
+  async geocodeAddress(address: string): Promise<{ results: Array<{ formattedAddress: string; area: string; lat: number; lng: number; placeId?: string; isFallback?: boolean }> }> {
     try {
       const res = await authFetch(`/api/maps/geocode?address=${encodeURIComponent(address)}`);
       return safeJson(res, { results: [] });
     } catch {
       return { results: [] };
+    }
+  },
+
+  async getRoute(
+    originLat: number,
+    originLng: number,
+    destLat: number,
+    destLng: number,
+    travelMode: 'DRIVE' | 'TWO_WHEELER' | 'WALK' = 'DRIVE'
+  ): Promise<{
+    success: boolean;
+    distanceMeters: number;
+    distanceKm: number;
+    distanceText: string;
+    durationMinutes: number;
+    durationText: string;
+    polyline: string | null;
+    isFallback: boolean;
+  }> {
+    try {
+      const res = await authFetch('/api/maps/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ originLat, originLng, destLat, destLng, travelMode })
+      });
+      return safeJson(res, {
+        success: true,
+        distanceMeters: 3000,
+        distanceKm: 3.0,
+        distanceText: '3.0 km',
+        durationMinutes: 12,
+        durationText: '12 min',
+        polyline: null,
+        isFallback: true
+      });
+    } catch {
+      return {
+        success: true,
+        distanceMeters: 3000,
+        distanceKm: 3.0,
+        distanceText: '3.0 km',
+        durationMinutes: 12,
+        durationText: '12 min',
+        polyline: null,
+        isFallback: true
+      };
     }
   },
 

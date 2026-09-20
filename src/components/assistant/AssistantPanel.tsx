@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ShieldCheck,
   Power,
@@ -18,12 +18,31 @@ import {
   Lock,
   ArrowRight,
   Sparkles,
-  LogOut
+  LogOut,
+  Car,
+  RefreshCw,
+  Loader2,
+  ExternalLink,
+  Compass
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { api } from '../../lib/api';
 import { MapView } from '../common/MapView';
+import { AssistantTaskMap } from '../maps/AssistantTaskMap';
+
+export interface EstimatedRouteDetails {
+  distanceText: string;
+  distanceKm: number;
+  durationText: string;
+  durationMinutes: number;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  calculatedAt: string;
+  isFallback: boolean;
+}
 
 export const AssistantPanel: React.FC = () => {
   const { assistantProfile, updateAssistantProfile, logoutStaff, staffUser } = useAuth();
@@ -35,6 +54,12 @@ export const AssistantPanel: React.FC = () => {
   const [otpError, setOtpError] = useState('');
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+
+  // Google Routes API estimate state
+  const [routeEstimate, setRouteEstimate] = useState<EstimatedRouteDetails | null>(null);
+  const [isCalculatingRoute, setIsCalculatingRoute] = useState<boolean>(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [assistantGpsCoords, setAssistantGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   // Active assistant's current task
   const activeTask = bookings.find(
@@ -49,6 +74,118 @@ export const AssistantPanel: React.FC = () => {
     (b) => b.status === 'SEARCHING' || (b.status === 'ASSIGNED' && b.assistantId === (assistantProfile?.id || 'asst-1'))
   );
 
+  /**
+   * Helper function that utilizes the Google Routes API to calculate and display
+   * the estimated distance and travel time from the assistant's current location
+   * to the customer's service location once a request is accepted.
+   */
+  const calculateRouteToCustomer = useCallback(
+    async (targetLocation?: { lat: number; lng: number }): Promise<EstimatedRouteDetails | null> => {
+      setIsCalculatingRoute(true);
+      setRouteError(null);
+
+      try {
+        // 1. Determine assistant's current coordinates (via Geolocation or profile fallback)
+        let originLat = assistantGpsCoords?.lat || assistantProfile?.currentLocation?.lat || 19.0596;
+        let originLng = assistantGpsCoords?.lng || assistantProfile?.currentLocation?.lng || 72.8295;
+
+        if (typeof navigator !== 'undefined' && navigator.geolocation) {
+          try {
+            const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 30000
+              });
+            });
+            originLat = position.coords.latitude;
+            originLng = position.coords.longitude;
+            setAssistantGpsCoords({ lat: originLat, lng: originLng });
+          } catch {
+            // If GPS permission is denied or timed out, use assistant profile coordinate
+          }
+        }
+
+        // 2. Determine destination coordinates from customer service location
+        const destLat =
+          targetLocation?.lat ??
+          activeTask?.location?.latitude ??
+          activeTask?.location?.lat;
+        const destLng =
+          targetLocation?.lng ??
+          activeTask?.location?.longitude ??
+          activeTask?.location?.lng;
+
+        if (
+          typeof destLat !== 'number' ||
+          typeof destLng !== 'number' ||
+          isNaN(destLat) ||
+          isNaN(destLng)
+        ) {
+          setRouteError('Customer service coordinates are not available.');
+          return null;
+        }
+
+        // 3. Call Google Routes API via secure proxy endpoint
+        const route = await api.getRoute(originLat, originLng, destLat, destLng, 'DRIVE');
+
+        if (route && route.success) {
+          const estimate: EstimatedRouteDetails = {
+            distanceText: route.distanceText,
+            distanceKm: route.distanceKm,
+            durationText: route.durationText,
+            durationMinutes: route.durationMinutes,
+            originLat,
+            originLng,
+            destLat,
+            destLng,
+            calculatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isFallback: route.isFallback
+          };
+          setRouteEstimate(estimate);
+          return estimate;
+        } else {
+          setRouteError('Could not calculate driving route via Google Routes API.');
+          return null;
+        }
+      } catch (err) {
+        console.error('Error calculating route to customer:', err);
+        setRouteError('Failed to fetch route estimate.');
+        return null;
+      } finally {
+        setIsCalculatingRoute(false);
+      }
+    },
+    [
+      assistantGpsCoords,
+      assistantProfile?.currentLocation?.lat,
+      assistantProfile?.currentLocation?.lng,
+      activeTask?.location?.latitude,
+      activeTask?.location?.lat,
+      activeTask?.location?.longitude,
+      activeTask?.location?.lng
+    ]
+  );
+
+  // Automatically calculate route once active task is present if not yet computed
+  useEffect(() => {
+    if (activeTask) {
+      const destLat = activeTask.location?.latitude || activeTask.location?.lat;
+      const destLng = activeTask.location?.longitude || activeTask.location?.lng;
+      if (typeof destLat === 'number' && typeof destLng === 'number') {
+        if (
+          !routeEstimate ||
+          routeEstimate.destLat !== destLat ||
+          routeEstimate.destLng !== destLng
+        ) {
+          calculateRouteToCustomer({ lat: destLat, lng: destLng });
+        }
+      }
+    } else {
+      setRouteEstimate(null);
+    }
+  }, [activeTask?.id, activeTask?.status, calculateRouteToCustomer]);
+
   const handleToggleOnline = async () => {
     if (!assistantProfile) return;
     try {
@@ -61,8 +198,19 @@ export const AssistantPanel: React.FC = () => {
   };
 
   const handleAcceptTask = async (bookingId: string) => {
+    const targetBooking = bookings.find((b) => b.id === bookingId);
     await api.acceptBooking(bookingId, assistantProfile?.id || 'asst-1');
     await refreshBookings();
+
+    // Automatically trigger Google Routes API to calculate and display estimated distance and travel time
+    const targetLat = targetBooking?.location?.latitude || targetBooking?.location?.lat;
+    const targetLng = targetBooking?.location?.longitude || targetBooking?.location?.lng;
+
+    if (typeof targetLat === 'number' && typeof targetLng === 'number') {
+      await calculateRouteToCustomer({ lat: targetLat, lng: targetLng });
+    } else {
+      await calculateRouteToCustomer();
+    }
   };
 
   const handleStartRoute = async (bookingId: string) => {
@@ -193,9 +341,69 @@ export const AssistantPanel: React.FC = () => {
                   ACTIVE ASSISTANCE: {activeTask.status.replace('_', ' ')}
                 </span>
                 <h3 className="text-xl sm:text-2xl font-black text-[#14213D] mt-2">{activeTask.serviceName}</h3>
-                <div className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 text-[#F42F73] shrink-0" />
-                  <span className="line-clamp-1">{activeTask.location.address} ({activeTask.location.area})</span>
+                
+                {/* Service Location Information & Real-Time Distance / ETA Badges */}
+                <div className="mt-2 space-y-2">
+                  <div className="text-xs text-gray-600 flex items-start gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                    <MapPin className="w-4 h-4 text-[#F42F73] shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-[#14213D]">Service Location: </span>
+                      <span className="text-gray-700">{activeTask.location.address}</span>
+                      {activeTask.location.area && (
+                        <span className="text-gray-400 font-medium"> ({activeTask.location.area})</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Calculated Distance (km) & Estimated Travel Time (min) prominently placed right near location info */}
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    {isCalculatingRoute ? (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold">
+                        <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+                        <span>Calculating route from your location...</span>
+                      </div>
+                    ) : routeEstimate ? (
+                      <>
+                        {/* Distance Badge */}
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FFF0F5] border border-[#F42F73]/30 text-[#F42F73] shadow-2xs">
+                          <Compass className="w-4 h-4 text-[#F42F73]" />
+                          <span className="text-[11px] font-bold text-gray-500 uppercase">Distance:</span>
+                          <span className="text-xs font-black text-[#14213D]">
+                            {routeEstimate.distanceText}
+                          </span>
+                        </div>
+
+                        {/* Travel Time Badge */}
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 shadow-2xs">
+                          <Clock className="w-4 h-4 text-blue-600" />
+                          <span className="text-[11px] font-bold text-gray-500 uppercase">Est. Travel Time:</span>
+                          <span className="text-xs font-black text-[#14213D]">
+                            {routeEstimate.durationText}
+                          </span>
+                        </div>
+
+                        {/* Quick Refresh Icon */}
+                        <button
+                          type="button"
+                          onClick={() => calculateRouteToCustomer()}
+                          disabled={isCalculatingRoute}
+                          title="Recalculate route from current GPS"
+                          className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs transition-colors"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => calculateRouteToCustomer()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-all"
+                      >
+                        <Compass className="w-3.5 h-3.5 text-[#F42F73]" />
+                        <span>Calculate distance & travel time</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -228,6 +436,154 @@ export const AssistantPanel: React.FC = () => {
                 </a>
               </div>
             </div>
+
+            {/* Google Routes API Live Travel & Distance Estimate */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-200 shadow-xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#F42F73]/10 text-[#F42F73] flex items-center justify-center shrink-0">
+                    <Car className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>Google Routes API Live Estimate</span>
+                      {routeEstimate && (
+                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-extrabold px-1.5 py-0.2 rounded">
+                          REAL-TIME
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-sm font-bold text-[#14213D] leading-tight">
+                      Estimated Distance & Transit Time to Customer
+                    </h4>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => calculateRouteToCustomer()}
+                    disabled={isCalculatingRoute}
+                    className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-[#14213D] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 min-h-[36px] transition-all self-start sm:self-auto active:scale-95 disabled:opacity-60"
+                    title="Recalculate route using current GPS position"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#F42F73] ${isCalculatingRoute ? 'animate-spin' : ''}`} />
+                    <span>{isCalculatingRoute ? 'Calculating...' : 'Recalculate Route'}</span>
+                  </button>
+
+                  {routeEstimate && (
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&origin=${routeEstimate.originLat},${routeEstimate.originLng}&destination=${routeEstimate.destLat},${routeEstimate.destLng}&travelmode=driving`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 bg-[#14213D] hover:bg-[#1E293B] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 min-h-[36px] transition-all self-start sm:self-auto"
+                    >
+                      <span>Navigate in Maps</span>
+                      <ExternalLink className="w-3 h-3 text-[#F42F73]" />
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {isCalculatingRoute ? (
+                <div className="p-4 bg-gray-50 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold text-gray-600">
+                  <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin" />
+                  <span>Calculating driving distance and travel time from your location via Google Routes API...</span>
+                </div>
+              ) : routeEstimate ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Distance Card */}
+                  <div className="bg-[#FFF0F5] p-3.5 rounded-xl border border-[#F42F73]/20 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#F42F73] text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <MapPin className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-[#F42F73] uppercase tracking-wider">
+                        Estimated Driving Distance
+                      </div>
+                      <div className="text-xl font-black text-[#14213D] leading-tight">
+                        {routeEstimate.distanceText}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        Distance from current coordinates to service doorstep
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Travel Time Card */}
+                  <div className="bg-[#EFF6FF] p-3.5 rounded-xl border border-[#3B82F6]/20 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#3B82F6] text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-[#3B82F6] uppercase tracking-wider">
+                        Estimated Travel Time
+                      </div>
+                      <div className="text-xl font-black text-[#14213D] leading-tight">
+                        {routeEstimate.durationText}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        Live traffic estimate &bull; Calculated at {routeEstimate.calculatedAt}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : routeError ? (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>{routeError}</span>
+                  </div>
+                  <button
+                    onClick={() => calculateRouteToCustomer()}
+                    className="text-xs font-bold text-[#F42F73] hover:underline shrink-0"
+                  >
+                    Retry Calculation
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3 bg-gray-50 rounded-xl text-xs text-gray-500 flex items-center justify-between">
+                  <span>Press "Recalculate Route" to get live travel time from your current GPS position.</span>
+                  <button
+                    onClick={() => calculateRouteToCustomer()}
+                    className="text-xs font-bold text-[#F42F73] hover:underline ml-2 shrink-0"
+                  >
+                    Calculate Now
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Google Maps Customer Location & Routes API Navigation */}
+            <AssistantTaskMap
+              customerLocation={{
+                lat: activeTask.location.latitude || activeTask.location.lat || 19.0596,
+                lng: activeTask.location.longitude || activeTask.location.lng || 72.8295,
+                address: activeTask.location.address,
+                area: activeTask.location.area,
+                landmark: activeTask.location.landmark
+              }}
+              serviceName={activeTask.serviceName}
+              bookingNumber={activeTask.bookingNumber}
+              height="280px"
+              externalRouteInfo={
+                routeEstimate
+                  ? {
+                      distanceText: routeEstimate.distanceText,
+                      durationText: routeEstimate.durationText,
+                      isFallback: routeEstimate.isFallback
+                    }
+                  : null
+              }
+              assistantCoordinates={
+                routeEstimate
+                  ? { lat: routeEstimate.originLat, lng: routeEstimate.originLng }
+                  : assistantGpsCoords || (assistantProfile?.currentLocation ? {
+                      lat: assistantProfile.currentLocation.lat,
+                      lng: assistantProfile.currentLocation.lng
+                    } : null)
+              }
+            />
 
             {/* Assistant Workflow Action Step Buttons */}
             <div className="space-y-3">
@@ -330,10 +686,20 @@ export const AssistantPanel: React.FC = () => {
 
                   <button
                     onClick={() => handleAcceptTask(req.id)}
-                    className="w-full py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-xs min-h-[44px]"
+                    disabled={isCalculatingRoute}
+                    className="w-full py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-xs min-h-[44px] disabled:opacity-80"
                   >
-                    <span>Accept Task Booking</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    {isCalculatingRoute ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Accepting & Calculating Route...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Accept Task Booking</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
                   </button>
                 </div>
               ))}

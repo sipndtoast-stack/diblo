@@ -280,6 +280,113 @@ async function startServer() {
     }
   });
 
+  // Routes API Proxy (origin -> destination distance & duration)
+  app.post('/api/maps/route', async (req, res) => {
+    const { originLat, originLng, destLat, destLng, travelMode } = req.body || {};
+
+    if (
+      originLat === undefined || originLng === undefined ||
+      destLat === undefined || destLng === undefined
+    ) {
+      return res.status(400).json({ error: 'Origin and destination coordinates are required' });
+    }
+
+    const oLat = Number(originLat);
+    const oLng = Number(originLng);
+    const dLat = Number(destLat);
+    const dLng = Number(destLng);
+
+    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+
+    // Helper estimation function
+    const estimateRouteFallback = () => {
+      const R = 6371; // Earth radius in km
+      const deltaLat = (dLat - oLat) * (Math.PI / 180);
+      const deltaLng = (dLng - oLng) * (Math.PI / 180);
+      const a =
+        Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+        Math.cos(oLat * (Math.PI / 180)) * Math.cos(dLat * (Math.PI / 180)) *
+        Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const straightDist = R * c;
+      const roadDistKm = Math.max(0.4, Number((straightDist * 1.35).toFixed(1)));
+      const estMinutes = Math.max(4, Math.round(roadDistKm * 3.5)); // ~18-20 km/h in Mumbai traffic
+      return {
+        success: true,
+        distanceMeters: Math.round(roadDistKm * 1000),
+        distanceKm: roadDistKm,
+        distanceText: `${roadDistKm} km`,
+        durationMinutes: estMinutes,
+        durationText: `${estMinutes} min`,
+        polyline: null,
+        isFallback: true
+      };
+    };
+
+    if (!isValidGoogleMapsKey(mapsKey)) {
+      return res.json(estimateRouteFallback());
+    }
+
+    try {
+      const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+      const bodyPayload = {
+        origin: {
+          location: {
+            latLng: { latitude: oLat, longitude: oLng }
+          }
+        },
+        destination: {
+          location: {
+            latLng: { latitude: dLat, longitude: dLng }
+          }
+        },
+        travelMode: travelMode === 'TWO_WHEELER' ? 'TWO_WHEELER' : travelMode === 'WALK' ? 'WALK' : 'DRIVE',
+        routingPreference: 'TRAFFIC_AWARE'
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': mapsKey.trim(),
+          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline'
+        },
+        body: JSON.stringify(bodyPayload)
+      });
+
+      if (!response.ok) {
+        console.warn(`[MAPS PROXY] Routes API returned status ${response.status}. Using geometric estimation.`);
+        return res.json(estimateRouteFallback());
+      }
+
+      const data = await response.json();
+      if (data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        const meters = route.distanceMeters || 1000;
+        const distKm = Number((meters / 1000).toFixed(1));
+        // duration is e.g. "1240s"
+        const durationSec = parseInt(route.duration?.replace('s', '') || '600', 10);
+        const durationMins = Math.max(1, Math.round(durationSec / 60));
+
+        return res.json({
+          success: true,
+          distanceMeters: meters,
+          distanceKm: distKm,
+          distanceText: `${distKm} km`,
+          durationMinutes: durationMins,
+          durationText: `${durationMins} min`,
+          polyline: route.polyline?.encodedPolyline || null,
+          isFallback: false
+        });
+      }
+
+      return res.json(estimateRouteFallback());
+    } catch (err) {
+      console.warn('[MAPS PROXY] Routes API request error. Using geometric estimation.');
+      return res.json(estimateRouteFallback());
+    }
+  });
+
   // ==========================================
   // AUTHENTICATION & OTP
   // ==========================================

@@ -66,6 +66,7 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
   const [customArea, setCustomArea] = useState('Bandra West');
   const [customLat, setCustomLat] = useState(19.0607);
   const [customLng, setCustomLng] = useState(72.8258);
+  const [customPlaceId, setCustomPlaceId] = useState<string | undefined>(undefined);
   const [hasDestination, setHasDestination] = useState(false);
   const [destinationAddress, setDestinationAddress] = useState('Lilavati Hospital, Bandra West');
 
@@ -160,7 +161,10 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
       landmark: customLandmark,
       area: customArea,
       lat: customLat,
-      lng: customLng
+      lng: customLng,
+      latitude: customLat,
+      longitude: customLng,
+      placeId: customPlaceId
     };
 
     const bookingPayload = {
@@ -445,13 +449,16 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                       initialLng={customLng}
                       initialAddress={customAddress}
                       initialArea={customArea}
-                      height="240px"
-                      showConfirmButton={false}
+                      initialPlaceId={customPlaceId}
+                      height="260px"
+                      showConfirmButton={true}
+                      onConfirm={() => setCurrentStep(4)}
                       onLocationSelected={(loc) => {
                         setCustomLat(loc.lat);
                         setCustomLng(loc.lng);
                         setCustomAddress(loc.address);
                         setCustomArea(loc.area);
+                        setCustomPlaceId(loc.placeId);
                       }}
                     />
 

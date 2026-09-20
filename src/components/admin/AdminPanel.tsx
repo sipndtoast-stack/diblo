@@ -45,6 +45,7 @@ import { api } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import { MapView } from '../common/MapView';
+import { AdminBookingsMap } from '../maps/AdminBookingsMap';
 import { GoogleSheetsHub } from './GoogleSheetsHub';
 import {
   AssistantProfile,
@@ -92,6 +93,9 @@ export const AdminPanel: React.FC = () => {
   const [newSocietyName, setNewSocietyName] = useState('');
   const [newSocietyArea, setNewSocietyArea] = useState('Bandra West');
   const [newSocietyFlats, setNewSocietyFlats] = useState(250);
+
+  // Map view mode toggle (Service Request Markers vs Assistant Fleet)
+  const [mapViewMode, setMapViewMode] = useState<'REQUESTS' | 'FLEET'>('REQUESTS');
 
   // Support ticket reply
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
@@ -520,45 +524,90 @@ export const AdminPanel: React.FC = () => {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 2: LIVE MAP RADAR */}
+        {/* TAB 2: LIVE MAP RADAR & SERVICE REQUEST DISPATCH */}
         {/* ========================================================= */}
         {activeTab === 'LIVEMAP' && (
           <div className="space-y-4">
-            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-bold">Mumbai Live Assistant Fleet Radar</h2>
-                <p className="text-xs text-gray-500">Real-time GPS status of all registered assistants across Mumbai</p>
+                <h2 className="text-lg font-bold text-[#14213D]">
+                  {mapViewMode === 'REQUESTS' ? 'Service Request Location Dispatch Map' : 'Mumbai Live Assistant Fleet Radar'}
+                </h2>
+                <p className="text-xs text-gray-500">
+                  {mapViewMode === 'REQUESTS'
+                    ? 'Geospatial distribution of customer bookings, request IDs, service types, and live statuses'
+                    : 'Real-time GPS status of all registered assistants across Mumbai'}
+                </p>
               </div>
-              <div className="flex items-center gap-3 text-xs font-semibold">
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#10B981]" />
-                  <span>Available</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#F59E0B]" />
-                  <span>On Active Task</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#94A3B8]" />
-                  <span>Offline</span>
+
+              {/* Toggle Mode */}
+              <div className="flex items-center gap-2">
+                <div className="bg-gray-100 p-1 rounded-2xl flex items-center">
+                  <button
+                    onClick={() => setMapViewMode('REQUESTS')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      mapViewMode === 'REQUESTS'
+                        ? 'bg-[#F42F73] text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Service Requests ({bookings.length})
+                  </button>
+                  <button
+                    onClick={() => setMapViewMode('FLEET')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      mapViewMode === 'FLEET'
+                        ? 'bg-[#14213D] text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Assistant Fleet ({assistants.length})
+                  </button>
                 </div>
               </div>
             </div>
 
-            <MapView
-              allAssistants={assistants.map((a) => ({
-                id: a.id,
-                name: a.name,
-                photo: a.photo,
-                rating: a.rating,
-                lat: a.currentLocation.lat,
-                lng: a.currentLocation.lng,
-                isOnline: a.isOnline,
-                activeBookingId: a.activeBookingId,
-                serviceArea: a.serviceArea
-              }))}
-              height="550px"
-            />
+            {mapViewMode === 'REQUESTS' ? (
+              <AdminBookingsMap
+                bookings={bookings}
+                height="550px"
+              />
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-white px-5 py-3 rounded-2xl border border-gray-100 shadow-xs flex items-center justify-between text-xs font-semibold">
+                  <span className="text-gray-500">Fleet Status Indicator</span>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
+                      <span>Available</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
+                      <span>On Active Task</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#94A3B8]" />
+                      <span>Offline</span>
+                    </div>
+                  </div>
+                </div>
+
+                <MapView
+                  allAssistants={assistants.map((a) => ({
+                    id: a.id,
+                    name: a.name,
+                    photo: a.photo,
+                    rating: a.rating,
+                    lat: a.currentLocation.lat,
+                    lng: a.currentLocation.lng,
+                    isOnline: a.isOnline,
+                    activeBookingId: a.activeBookingId,
+                    serviceArea: a.serviceArea
+                  }))}
+                  height="550px"
+                />
+              </div>
+            )}
           </div>
         )}
 
