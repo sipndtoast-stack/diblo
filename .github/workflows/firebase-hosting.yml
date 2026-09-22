@@ -32,9 +32,9 @@ jobs:
       - name: Build Vite application
         run: npm run build
         env:
-          VITE_FIREBASE_PROJECT_ID: diblo-3944a
-          VITE_FIREBASE_AUTH_DOMAIN: diblo-3944a.firebaseapp.com
-          VITE_FIREBASE_STORAGE_BUCKET: diblo-3944a.firebasestorage.app
+          VITE_FIREBASE_PROJECT_ID: diblo-39440
+          VITE_FIREBASE_AUTH_DOMAIN: diblo-39440.firebaseapp.com
+          VITE_FIREBASE_STORAGE_BUCKET: diblo-39440.firebasestorage.app
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyCb0Fq3FsC-C1mTfM7pugmioQO7fL6Z_MM' }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY || 'AIzaSyCb0Fq3FsC-C1mTfM7pugmioQO7fL6Z_MM' }}
 
