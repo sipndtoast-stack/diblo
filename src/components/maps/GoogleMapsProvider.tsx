@@ -35,7 +35,7 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
   const [apiKey, setApiKey] = useState<string | null>(() => {
     const envKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY;
     if (isValidGoogleMapsKey(envKey)) return envKey.trim();
-    return 'AIzaSyCb0Fq3FsC-C1mTfM7pugmioQO7fL6Z_MM';
+    return null;
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -44,16 +44,15 @@ export const GoogleMapsProvider: React.FC<GoogleMapsProviderProps> = ({ children
   useEffect(() => {
     // Intercept Google Maps authentication failures and log diagnostics
     (window as any).gm_authFailure = () => {
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const diagnosticMsg =
-        '[DIBLO MAPS AUTH FAILURE] Google Maps JavaScript API authentication failed.\n' +
-        'Please check Google Cloud Console:\n' +
-        '1. HTTP Referrers: Ensure "https://diblo-39440.web.app/*" and "http://localhost:5173/*" are allowed.\n' +
-        '2. API Restrictions: Ensure Maps JavaScript API, Places API, Geocoding API, and Routes API are enabled.\n' +
-        '3. Billing: Ensure a billing account is linked to the Google Cloud project.';
+        `[DIBLO MAPS AUTH NOTIFICATION] Google Maps JavaScript API key is restricted or unauthorized for origin: ${currentOrigin}.\n` +
+        `The app has automatically switched to OpenStreetMap / Leaflet to ensure uninterrupted service.\n` +
+        `To use your Google Maps key directly in AI Studio, add "${currentOrigin}/*" to the authorized HTTP Referrers in Google Cloud Console.`;
       console.warn(diagnosticMsg);
       setAuthError('AUTH_FAILURE');
       setAuthErrorDetails(
-        'Google Maps authentication failed. Expected referrers: https://diblo-39440.web.app/*, http://localhost:5173/*'
+        `Google Maps authorization failed for ${currentOrigin}. To authorize, add ${currentOrigin}/* to HTTP Referrers in Google Cloud Console.`
       );
     };
 

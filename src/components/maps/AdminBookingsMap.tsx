@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Map,
   AdvancedMarker,
@@ -7,6 +7,7 @@ import {
   useApiLoadingStatus,
   APILoadingStatus
 } from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   MapPin,
   Clock,
@@ -48,6 +49,88 @@ const AdminMapBoundsController: React.FC<{
   }, [map, markers]);
 
   return null;
+};
+
+const LeafletAdminBookingsMapInner: React.FC<{
+  bookings: Booking[];
+  onBookingSelect?: (bookingId: string) => void;
+  getStatusColor: (status: string) => string;
+}> = ({ bookings, onBookingSelect, getStatusColor }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    if (!mapRef.current) {
+      const map = L.map(containerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([19.076, 72.8777], 12);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      mapRef.current = map;
+    }
+
+    const map = mapRef.current;
+
+    map.eachLayer((layer) => {
+      if (layer instanceof L.Marker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    const bounds: [number, number][] = [];
+
+    bookings.forEach((booking) => {
+      const lat = booking.location.latitude || booking.location.lat;
+      const lng = booking.location.longitude || booking.location.lng;
+      if (!lat || !lng) return;
+
+      const color = getStatusColor(booking.status);
+      const customIcon = L.divIcon({
+        className: 'custom-admin-pin',
+        html: `
+          <div class="relative flex flex-col items-center cursor-pointer">
+            <div class="w-7 h-7 rounded-full border-2 border-white shadow-md flex items-center justify-center text-white text-[10px] font-bold" style="background-color: ${color}">
+              ★
+            </div>
+            <div class="mt-0.5 bg-[#14213D] text-white text-[9px] font-bold px-1.5 py-0.2 rounded shadow whitespace-nowrap">
+              ${booking.bookingNumber || 'Booking'}
+            </div>
+          </div>
+        `,
+        iconSize: [32, 40],
+        iconAnchor: [16, 20]
+      });
+
+      const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+      marker.bindPopup(`
+        <div class="p-1 min-w-[140px] text-xs">
+          <div class="font-bold text-[#14213D]">${booking.serviceTitle}</div>
+          <div class="text-gray-500">${booking.location.area || 'Mumbai'}</div>
+          <div class="mt-1 font-semibold" style="color: ${color}">${booking.status.replace(/_/g, ' ')}</div>
+        </div>
+      `);
+
+      if (onBookingSelect) {
+        marker.on('click', () => onBookingSelect(booking.id));
+      }
+
+      bounds.push([lat, lng]);
+    });
+
+    if (bounds.length > 1) {
+      map.fitBounds(bounds, { padding: [40, 40] });
+    } else if (bounds.length === 1) {
+      map.setView(bounds[0], 14);
+    }
+  }, [bookings, onBookingSelect, getStatusColor]);
+
+  return <div ref={containerRef} className="w-full h-full" />;
 };
 
 export const AdminBookingsMap: React.FC<AdminBookingsMapProps> = ({
@@ -152,15 +235,16 @@ export const AdminBookingsMap: React.FC<AdminBookingsMapProps> = ({
         className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-xs bg-gray-100"
         style={{ height }}
       >
-        {authError ? (
-          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-50 space-y-2">
-            <AlertCircle className="w-8 h-8 text-amber-500" />
-            <div className="text-xs font-bold text-[#14213D]">Google Maps is temporarily unavailable</div>
-            <div className="text-[11px] text-gray-500 max-w-sm">
-              {authErrorDetails || 'Please check Google Cloud Console HTTP Referrers and API restrictions.'}
+        {authError && (
+          <div className="absolute top-2.5 left-2.5 right-2.5 z-[400] px-3 py-1.5 bg-white/95 backdrop-blur-md border border-amber-300 rounded-xl text-[11px] text-amber-900 flex items-center justify-between gap-2 shadow-sm">
+            <div className="flex items-center gap-1.5 truncate">
+              <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="truncate font-medium">Using OpenStreetMap dispatch map</span>
             </div>
           </div>
-        ) : isMapLoaded ? (
+        )}
+
+        {isMapLoaded ? (
           <Map
             defaultCenter={defaultCenter}
             defaultZoom={12}
@@ -269,10 +353,16 @@ export const AdminBookingsMap: React.FC<AdminBookingsMapProps> = ({
             )}
           </Map>
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gray-50 text-gray-500 space-y-2">
-            <Loader2 className="w-6 h-6 text-[#F42F73] animate-spin" />
-            <span className="text-xs font-semibold">Loading Mumbai service request markers...</span>
-          </div>
+          <LeafletAdminBookingsMapInner
+            bookings={filteredBookings}
+            selectedBooking={selectedBooking}
+            onBookingSelect={(id) => {
+              const b = filteredBookings.find((item) => item.id === id);
+              if (b) setSelectedBooking(b);
+              if (onBookingSelect) onBookingSelect(id);
+            }}
+            getStatusColor={getStatusColor}
+          />
         )}
       </div>
 

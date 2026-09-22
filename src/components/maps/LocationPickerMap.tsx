@@ -7,6 +7,7 @@ import {
   useApiLoadingStatus,
   APILoadingStatus
 } from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   Search,
   MapPin,
@@ -101,6 +102,71 @@ const GoogleMapController: React.FC<{
       </AdvancedMarker>
     </Map>
   );
+};
+
+// Leaflet fallback controller when Google Maps is not configured or restricted
+const LeafletLocationPickerController: React.FC<{
+  lat: number;
+  lng: number;
+  onMapClick: (lat: number, lng: number) => void;
+  onMarkerDragEnd: (lat: number, lng: number) => void;
+}> = ({ lat, lng, onMapClick, onMarkerDragEnd }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    if (!mapRef.current) {
+      const map = L.map(containerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([lat, lng], 15);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      const customIcon = L.divIcon({
+        className: 'custom-picker-pin',
+        html: `
+          <div class="relative flex flex-col items-center">
+            <div class="w-9 h-9 rounded-full bg-[#F42F73] text-white flex items-center justify-center border-2 border-white shadow-xl">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="w-2 h-2 bg-[#F42F73] rotate-45 -mt-1 shadow-md"></div>
+          </div>
+        `,
+        iconSize: [40, 48],
+        iconAnchor: [20, 24]
+      });
+
+      const marker = L.marker([lat, lng], { icon: customIcon, draggable: true }).addTo(map);
+      marker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        onMarkerDragEnd(pos.lat, pos.lng);
+      });
+
+      map.on('click', (e) => {
+        onMapClick(e.latlng.lat, e.latlng.lng);
+      });
+
+      markerRef.current = marker;
+      mapRef.current = map;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mapRef.current && markerRef.current) {
+      markerRef.current.setLatLng([lat, lng]);
+      mapRef.current.setView([lat, lng]);
+    }
+  }, [lat, lng]);
+
+  return <div ref={containerRef} className="w-full h-full" />;
 };
 
 export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
@@ -417,28 +483,16 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
         style={{ height }}
       >
-        {authError ? (
-          /* Clear, authentic error display when API key restriction prevents load - DO NOT SILENTLY FAKE */
-          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-50 space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <div className="max-w-md space-y-1">
-              <h4 className="text-sm font-bold text-[#14213D]">
-                Map is temporarily unavailable
-              </h4>
-              <p className="text-xs text-gray-500">
-                {authErrorDetails || 'Google Maps service could not be loaded.'}
-              </p>
-            </div>
-            <div className="bg-white p-3 rounded-xl border border-gray-200 text-left max-w-md text-[11px] text-gray-600 space-y-1">
-              <div className="font-bold text-[#14213D]">Google Cloud Key Configuration Checklist:</div>
-              <div>&bull; HTTP Referrers: <code className="text-[#F42F73]">https://diblo-39440.web.app/*</code>, <code className="text-[#F42F73]">http://localhost:5173/*</code></div>
-              <div>&bull; Enabled APIs: Maps JavaScript, Places (New), Geocoding, Routes</div>
-              <div>&bull; Cloud Billing: Active billing account must be linked</div>
+        {authError && (
+          <div className="absolute top-2.5 left-2.5 right-2.5 z-[400] px-3 py-1.5 bg-white/95 backdrop-blur-md border border-amber-300 rounded-xl text-[11px] text-amber-900 flex items-center justify-between gap-2 shadow-sm">
+            <div className="flex items-center gap-1.5 truncate">
+              <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="truncate font-medium">Using OpenStreetMap for location selection</span>
             </div>
           </div>
-        ) : isMapLoaded ? (
+        )}
+
+        {isMapLoaded ? (
           <GoogleMapController
             lat={selectedLat}
             lng={selectedLng}
@@ -446,19 +500,19 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             onMarkerDragEnd={handleLocationUpdate}
           />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gray-50 text-gray-500 space-y-2">
-            <Loader2 className="w-6 h-6 text-[#F42F73] animate-spin" />
-            <span className="text-xs font-semibold">Loading Google Maps...</span>
-          </div>
+          <LeafletLocationPickerController
+            lat={selectedLat}
+            lng={selectedLng}
+            onMapClick={handleLocationUpdate}
+            onMarkerDragEnd={handleLocationUpdate}
+          />
         )}
 
         {/* Tip: Click or drag pin to position */}
-        {isMapLoaded && (
-          <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-gray-100 flex items-center gap-1.5 text-[11px] font-medium text-[#14213D] pointer-events-none">
-            <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-            <span>Drag pin or click map to adjust</span>
-          </div>
-        )}
+        <div className="absolute top-3 left-3 z-[401] bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-gray-100 flex items-center gap-1.5 text-[11px] font-medium text-[#14213D] pointer-events-none">
+          <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
+          <span>Drag pin or click map to adjust</span>
+        </div>
       </div>
 
       {/* 3. [ Use my current location ] Button */}
