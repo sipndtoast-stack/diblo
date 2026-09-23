@@ -84,35 +84,62 @@ export const requestAppsScriptWithDiagnostics = async (
 
     clearTimeout(timeoutId);
 
-    // Use console.error to output the full Response object, request headers, and the target URL when the status is not 200
-    if (response.status !== 200) {
+    // Use console.error to output the full request object, response status, and headers when the status is not 200 or request fails
+    if (!response.ok) {
+      const responseHeadersObj: Record<string, string> = {};
+      try {
+        response.headers.forEach((val, key) => {
+          responseHeadersObj[key] = val;
+        });
+      } catch (hErr) {
+        // fallback
+      }
+
+      const requestDetails = {
+        url: targetUrl,
+        method: init?.method || (payload ? 'POST' : 'GET'),
+        headers: requestHeaders,
+        body: payload,
+        mode: init?.mode,
+        credentials: init?.credentials
+      };
+
       console.error(
-        '[StaffLogin Apps Script Diagnostic] Apps Script fetch response status is not 200:',
+        '[StaffLogin Diagnostic] Fetch request failed with non-OK status:',
         {
-          targetUrl,
-          requestHeaders,
-          status: response.status,
-          statusText: response.statusText,
+          request: requestDetails,
+          responseStatus: response.status,
+          responseStatusText: response.statusText,
+          responseHeaders: responseHeadersObj,
           response
         }
       );
-      console.error('Target URL:', targetUrl);
-      console.error('Request Headers:', requestHeaders);
-      console.error('Full Response Object:', response);
+      console.error('[StaffLogin Diagnostic] Full Request Object:', requestDetails);
+      console.error('[StaffLogin Diagnostic] Response Status:', response.status, response.statusText);
+      console.error('[StaffLogin Diagnostic] Response Headers:', responseHeadersObj);
     }
 
     return response;
   } catch (networkError: any) {
+    const requestDetails = {
+      url: targetUrl,
+      method: init?.method || (payload ? 'POST' : 'GET'),
+      headers: requestHeaders,
+      body: payload,
+      mode: init?.mode,
+      credentials: init?.credentials
+    };
+
     console.error(
-      '[StaffLogin Apps Script Diagnostic] Network exception occurred while requesting Apps Script URL:',
+      '[StaffLogin Diagnostic] Network exception occurred while executing fetch request:',
       {
-        targetUrl,
-        requestHeaders,
+        request: requestDetails,
         error: networkError
       }
     );
-    console.error('Target URL:', targetUrl);
-    console.error('Request Headers:', requestHeaders);
+    console.error('[StaffLogin Diagnostic] Full Request Object:', requestDetails);
+    console.error('[StaffLogin Diagnostic] Request Headers:', requestHeaders);
+    console.error('[StaffLogin Diagnostic] Connection Error:', networkError);
     throw networkError;
   }
 };
@@ -226,16 +253,51 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
           message: displayMsg,
           timestamp: new Date().toLocaleTimeString()
         });
+
+        // Log connection failure details to help pinpoint connection and verification issues
+        if (res.code === 'NETWORK_ERROR' || res.code === 'SERVER_CONFIG_ERROR' || !res.success) {
+          console.error('[StaffLogin Diagnostic] Authentication request returned failure:', {
+            request: {
+              url: primaryTargetUrl,
+              fallbackUrl: cloudFunctionTargetUrl,
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: { mobile: cleanMobile, mobileNumber: cleanMobile, password: '***' }
+            },
+            responseStatus: res.code,
+            responseMessage: res.message,
+            code: res.code
+          });
+        }
       }
     } catch (err: any) {
-      console.error('[StaffLogin Diagnostic] Exact Network Error Response:', {
-        name: err?.name,
-        message: err?.message,
-        stack: err?.stack,
+      const fullRequestObject = {
         primaryTargetUrl,
         cloudFunctionTargetUrl,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: {
+          mobile: cleanMobile,
+          mobileNumber: cleanMobile,
+          password: '***'
+        }
+      };
+
+      console.error('[StaffLogin Diagnostic] Connection Failure — Fetch request failed:', {
+        request: fullRequestObject,
+        responseStatus: err?.status ?? 'NETWORK_FAILURE',
+        headers: err?.response?.headers || err?.headers || 'N/A (No HTTP response received)',
+        errorName: err?.name,
+        errorMessage: err?.message,
+        stack: err?.stack,
         timestamp: new Date().toISOString()
       });
+      console.error('[StaffLogin Diagnostic] Full Request Object:', fullRequestObject);
+      console.error('[StaffLogin Diagnostic] Response Status:', err?.status ?? 'NETWORK_FAILURE');
+      console.error('[StaffLogin Diagnostic] Response Headers:', err?.response?.headers || err?.headers || 'N/A');
 
       const failureMsg = 'Assistance login service is temporarily unavailable. Please try again.';
       setErrorMessage(failureMsg);
