@@ -155,9 +155,20 @@ async function safeJson<T = any>(res: Response, fallbackValue?: T): Promise<T> {
     console.warn('[API safeJson parse warning]', err);
   }
 
+  const isArrayExpected = Array.isArray(fallbackValue);
+
   // If HTTP status is 200-299, IT IS A SUCCESS.
   // NEVER treat HTTP 200 as an authentication or network failure!
   if (res.ok) {
+    if (isArrayExpected) {
+      if (Array.isArray(parsed)) return parsed as T;
+      if (parsed && typeof parsed === 'object') {
+        const potentialList = parsed.bookings || parsed.data || parsed.items || parsed.list || parsed.results;
+        if (Array.isArray(potentialList)) return potentialList as T;
+      }
+      return (fallbackValue !== undefined ? fallbackValue : []) as unknown as T;
+    }
+
     if (parsed && typeof parsed === 'object') {
       if (parsed.success === undefined && !parsed.error) {
         parsed.success = true;
@@ -176,6 +187,16 @@ async function safeJson<T = any>(res: Response, fallbackValue?: T): Promise<T> {
       authenticated: true,
       ...(fallbackValue && typeof fallbackValue === 'object' ? fallbackValue : {})
     } as unknown) as T;
+  }
+
+  // If HTTP status is NOT ok (e.g. 4xx, 5xx):
+  if (isArrayExpected) {
+    if (Array.isArray(parsed)) return parsed as T;
+    if (parsed && typeof parsed === 'object') {
+      const potentialList = parsed.bookings || parsed.data || parsed.items || parsed.list;
+      if (Array.isArray(potentialList)) return potentialList as T;
+    }
+    return (fallbackValue !== undefined ? fallbackValue : []) as unknown as T;
   }
 
   if (parsed && typeof parsed === 'object') {
@@ -510,7 +531,10 @@ export const api = {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
       const res = await authFetch(`/api/bookings?${query}`);
-      return safeJson<Booking[]>(res, []);
+      const data = await safeJson<Booking[]>(res, []);
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray((data as any).bookings)) return (data as any).bookings;
+      return [];
     } catch {
       return [];
     }
@@ -536,6 +560,31 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assistantId })
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async rejectBooking(id: string, assistantId?: string) {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assistantId })
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async startRouteBooking(id: string) {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/start-route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
       });
       return safeJson(res, { success: true });
     } catch (e: any) {
@@ -1001,6 +1050,13 @@ export const api = {
     name?: string;
     number?: string;
     email?: string;
+    staff?: {
+      eplId?: string;
+      name?: string;
+      number?: string;
+      email?: string;
+      role?: 'Assistant' | 'Admin';
+    };
     token?: string;
     code?: 'NETWORK_ERROR' | 'INVALID_CREDENTIALS' | 'STAFF_NOT_FOUND' | 'APP_CHECK_ERROR' | 'SERVER_CONFIG_ERROR' | 'FIRESTORE_PERMISSION_ERROR';
     message?: string;
@@ -1012,25 +1068,34 @@ export const api = {
       return {
         success: false,
         code: 'INVALID_CREDENTIALS',
-        message: 'Invalid mobile number or password.'
+        message: 'Mobile number or password is incorrect.'
       };
     }
 
-    const projectId = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'diblo-3944a';
+    const envProj = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string)?.trim();
+    const projectId = (envProj && envProj.length > 3 && !/^\d+$/.test(envProj)) ? envProj : 'diblo-39440';
     const hasAppCheckToken = typeof window !== 'undefined' && Boolean((window as any).__FIREBASE_APPCHECK_TOKEN__ || (window as any).appCheckToken);
     const hasEnvConfig = Boolean(import.meta.env.VITE_FIREBASE_PROJECT_ID);
 
     // List of endpoint URLs to attempt in order:
-    // 1. Relative route (handled by Vite Express dev server or Firebase Hosting rewrite to Cloud Function)
-    // 2. Direct Cloud Function endpoints if Firebase Hosting rewrite serves static HTML fallback
+    // 1. Relative route (handled by Vite Express dev server, Cloud Run, custom domain, or Firebase Hosting rewrite)
+    // 2. Direct Cloud Function endpoints
     const customApiBase = (import.meta.env.VITE_API_URL as string)?.replace(/\/+$/, '');
-    const candidateUrls = [
-      ...(customApiBase ? [`${customApiBase}/api/staff/login`] : []),
-      '/api/staff/login',
-      `https://us-central1-${projectId}.cloudfunctions.net/api/api/staff/login`,
-      `https://us-central1-${projectId}.cloudfunctions.net/staffLogin`,
-      `https://asia-south1-${projectId}.cloudfunctions.net/api/api/staff/login`
-    ];
+    const candidateUrls: string[] = [];
+
+    if (customApiBase) {
+      candidateUrls.push(`${customApiBase}/api/staff/login`);
+    }
+
+    // Relative endpoint (local dev, Cloud Run, custom domain diblo.in, or hosting rewrite)
+    candidateUrls.push('/api/staff/login');
+
+    // Cloud Function endpoints (us-central1 and asia-south1)
+    candidateUrls.push(`https://us-central1-${projectId}.cloudfunctions.net/api/staff/login`);
+    candidateUrls.push(`https://us-central1-${projectId}.cloudfunctions.net/api/api/staff/login`);
+    candidateUrls.push(`https://us-central1-${projectId}.cloudfunctions.net/staffLogin`);
+    candidateUrls.push(`https://asia-south1-${projectId}.cloudfunctions.net/api/staff/login`);
+    candidateUrls.push(`https://asia-south1-${projectId}.cloudfunctions.net/staffLogin`);
 
     let lastErrorDetails: {
       status: number;
@@ -1039,12 +1104,11 @@ export const api = {
     } = {
       status: 0,
       code: 'NETWORK_ERROR',
-      message: 'Unable to connect to the staff login service.'
+      message: 'Assistance login service is temporarily unavailable. Please try again.'
     };
 
     for (const targetUrl of candidateUrls) {
       try {
-        // Diagnostic log: Safe fields only (never log passwords or secret tokens)
         console.log('[Staff Auth Diagnostic] Attempting login', {
           targetUrl,
           hasAppCheckToken,
@@ -1061,7 +1125,11 @@ export const api = {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
-          body: JSON.stringify({ mobileNumber: cleanMobile, password: cleanPassword }),
+          body: JSON.stringify({
+            mobile: cleanMobile,
+            mobileNumber: cleanMobile,
+            password: cleanPassword
+          }),
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -1081,7 +1149,7 @@ export const api = {
           lastErrorDetails = {
             status: res.status,
             code: 'SERVER_CONFIG_ERROR',
-            message: 'Staff login service is temporarily unavailable. Please try again.'
+            message: 'Assistance login service is temporarily unavailable. Please try again.'
           };
           continue;
         }
@@ -1093,7 +1161,7 @@ export const api = {
           lastErrorDetails = {
             status: res.status,
             code: 'SERVER_CONFIG_ERROR',
-            message: 'Staff login service is temporarily unavailable.'
+            message: 'Assistance login service is temporarily unavailable. Please try again.'
           };
           continue;
         }
@@ -1102,21 +1170,38 @@ export const api = {
           targetUrl,
           success: data.success,
           code: data.code,
-          role: data.role,
+          role: data.role || data.staff?.role,
           hasToken: Boolean(data.token)
         });
 
-        if (data.success && data.token) {
-          staffSessionStorage.setToken(data.token);
+        if (data.success && (data.role || data.staff?.role)) {
+          const role = data.role || data.staff?.role;
+          const eplId = data.eplId || data.staff?.eplId || '';
+          const name = data.name || data.staff?.name || '';
+          const number = data.number || data.staff?.number || cleanMobile;
+          const email = data.email || data.staff?.email || '';
+
+          if (data.token) {
+            staffSessionStorage.setToken(data.token);
+          }
           staffSessionStorage.setSession({
             authenticated: true,
-            eplId: data.eplId || '',
-            name: data.name || '',
-            number: data.number || cleanMobile,
-            email: data.email || '',
-            role: data.role
+            eplId,
+            name,
+            number,
+            email,
+            role
           });
-          return data;
+          return {
+            success: true,
+            role,
+            eplId,
+            name,
+            number,
+            email,
+            staff: { eplId, name, number, email, role },
+            token: data.token
+          };
         }
 
         // Handle error responses from backend
@@ -1132,22 +1217,19 @@ export const api = {
         if (!friendlyMessage || friendlyMessage.includes('temporarily unavailable')) {
           switch (errCode) {
             case 'INVALID_CREDENTIALS':
-              friendlyMessage = 'Invalid mobile number or password.';
+              friendlyMessage = 'Mobile number or password is incorrect.';
               break;
             case 'STAFF_NOT_FOUND':
-              friendlyMessage = 'Staff account not found.';
+              friendlyMessage = 'Assistance account not found.';
               break;
             case 'APP_CHECK_ERROR':
               friendlyMessage = 'Security verification failed. Please refresh and try again.';
               break;
             case 'FIRESTORE_PERMISSION_ERROR':
-              friendlyMessage = 'Staff authentication is temporarily unavailable.';
-              break;
-            case 'NETWORK_ERROR':
-              friendlyMessage = 'Unable to connect to the staff login service.';
+              friendlyMessage = 'Assistance login service is temporarily unavailable. Please try again.';
               break;
             default:
-              friendlyMessage = 'Staff login service is temporarily unavailable.';
+              friendlyMessage = 'Assistance login service is temporarily unavailable. Please try again.';
           }
         }
 
@@ -1163,18 +1245,20 @@ export const api = {
           errorMessage: fetchErr?.message
         });
 
-        lastErrorDetails = {
-          status: 0,
-          code: 'NETWORK_ERROR',
-          message: 'Unable to connect to the staff login service.'
-        };
+        if (lastErrorDetails.code !== 'SERVER_CONFIG_ERROR' && lastErrorDetails.code !== 'STAFF_NOT_FOUND' && lastErrorDetails.code !== 'INVALID_CREDENTIALS') {
+          lastErrorDetails = {
+            status: 0,
+            code: 'NETWORK_ERROR',
+            message: 'Assistance login service is temporarily unavailable. Please try again.'
+          };
+        }
       }
     }
 
     return {
       success: false,
       code: lastErrorDetails.code,
-      message: lastErrorDetails.message
+      message: lastErrorDetails.message || 'Assistance login service is temporarily unavailable. Please try again.'
     };
   },
 

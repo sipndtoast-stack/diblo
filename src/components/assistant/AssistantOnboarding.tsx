@@ -266,13 +266,13 @@ export const AssistantOnboarding: React.FC<AssistantOnboardingProps> = ({
               onClick={() => {
                 if (onSuccess) onSuccess();
                 else if (typeof window !== 'undefined') {
-                  window.history.pushState({}, '', '/staff-login');
+                  window.history.pushState({}, '', '/assistance-login');
                   window.dispatchEvent(new PopStateEvent('popstate'));
                 }
               }}
               className="flex-1 py-3 px-4 rounded-xl bg-[#14213D] hover:bg-black text-white font-bold text-xs transition-colors"
             >
-              Go to Staff Login
+              Go to Assistance Login
             </button>
             <button
               onClick={() => {

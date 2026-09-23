@@ -21,7 +21,14 @@ export const FALLBACK_STAFF_DIRECTORY = [
   { eplId: 'EPL001', name: 'Rajesh Sharma', phone: '9876543210', email: 'rajesh.sharma@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
   { eplId: 'EPL002', name: 'Kabir Varma', phone: '9876543211', email: 'admin@diblo.in', passwords: ['123456', 'password'], role: 'Admin' as const },
   { eplId: 'EPL003', name: 'Pooja Verma', phone: '9820554433', email: 'pooja.verma@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
-  { eplId: 'EPL004', name: 'Operations Admin', phone: '9820001122', email: 'ops@diblo.in', passwords: ['123456', 'password'], role: 'Admin' as const }
+  { eplId: 'EPL004', name: 'Operations Admin', phone: '9820001122', email: 'ops@diblo.in', passwords: ['123456', 'password'], role: 'Admin' as const },
+  { eplId: 'EPL005', name: 'Priya Shinde', phone: '9821667788', email: 'priya.shinde@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL006', name: 'Amitabh Verma', phone: '9819778899', email: 'amitabh.verma@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL007', name: 'Suresh Patil', phone: '9820889900', email: 'suresh.patil@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL008', name: 'Anjali Nair', phone: '9833990011', email: 'anjali.nair@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL009', name: 'Karan Jaiswal', phone: '9820223344', email: 'karan.jaiswal@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL010', name: 'Nitin Kamble', phone: '9821334455', email: 'nitin.kamble@diblo.in', passwords: ['123456', 'password'], role: 'Assistant' as const },
+  { eplId: 'EPL011', name: 'Sneha Kulkarni', phone: '9820003344', email: 'ops.mumbai@diblo.in', passwords: ['123456', 'password'], role: 'Admin' as const }
 ];
 
 interface ServiceAccountCredentials {
@@ -348,7 +355,7 @@ export async function verifyStaffCredentials(
               return {
                 success: false,
                 code: 'INVALID_CREDENTIALS',
-                message: 'Invalid mobile number or password.'
+                message: 'Mobile number or password is incorrect.'
               };
             }
 
@@ -414,7 +421,7 @@ export async function verifyStaffCredentials(
           return {
             success: false,
             code: isNotFound ? 'STAFF_NOT_FOUND' : 'INVALID_CREDENTIALS',
-            message: isNotFound ? 'Staff account not found.' : 'Invalid mobile number or password.'
+            message: isNotFound ? 'Staff account not found.' : 'Mobile number or password is incorrect.'
           };
         }
       }
@@ -446,7 +453,7 @@ export async function verifyStaffCredentials(
     return {
       success: false,
       code: 'INVALID_CREDENTIALS',
-      message: 'Invalid mobile number or password.'
+      message: 'Mobile number or password is incorrect.'
     };
   }
 

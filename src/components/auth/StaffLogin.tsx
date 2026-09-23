@@ -9,6 +9,121 @@ interface StaffLoginProps {
   initialMessage?: string;
 }
 
+/**
+ * Diagnostic logging function in the StaffLogin component that wraps the fetch request to the Apps Script URL.
+ * - Ensures the URL is correctly constructed using the STAFF_AUTH_APPS_SCRIPT_URL environment variable.
+ * - Logs with console.error if this variable is missing or empty before making the call.
+ * - Uses console.error to output the full Response object, request headers, and the target URL when the status is not 200.
+ */
+export const requestAppsScriptWithDiagnostics = async (
+  payload?: any,
+  customHeaders?: Record<string, string> | HeadersInit,
+  init?: RequestInit
+): Promise<Response | null> => {
+  // Retrieve environment variable across Vite and process.env runtimes
+  const rawEnvUrl =
+    (typeof process !== 'undefined' && process.env && process.env.STAFF_AUTH_APPS_SCRIPT_URL) ||
+    (import.meta as any).env?.STAFF_AUTH_APPS_SCRIPT_URL ||
+    (import.meta as any).env?.VITE_STAFF_AUTH_APPS_SCRIPT_URL ||
+    '';
+
+  const appsScriptEnvVar = typeof rawEnvUrl === 'string' ? rawEnvUrl.trim() : '';
+
+  // Log if this variable is missing or empty before making the call
+  if (!appsScriptEnvVar) {
+    console.error(
+      '[StaffLogin Apps Script Diagnostic] STAFF_AUTH_APPS_SCRIPT_URL environment variable is missing or empty before making the call.'
+    );
+    return null;
+  }
+
+  // Ensure the URL is correctly constructed using the STAFF_AUTH_APPS_SCRIPT_URL environment variable
+  let targetUrl = appsScriptEnvVar;
+  try {
+    let normalized = appsScriptEnvVar;
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = normalized.startsWith('//') ? `https:${normalized}` : `https://${normalized.replace(/^\/+/, '')}`;
+    }
+    const parsedUrl = new URL(normalized);
+    targetUrl = parsedUrl.toString();
+  } catch (urlConstructError) {
+    console.error(
+      '[StaffLogin Apps Script Diagnostic] Failed to construct target URL from STAFF_AUTH_APPS_SCRIPT_URL:',
+      appsScriptEnvVar,
+      urlConstructError
+    );
+    targetUrl = appsScriptEnvVar;
+  }
+
+  // Build and normalize request headers
+  const requestHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...(customHeaders instanceof Headers
+      ? Object.fromEntries(customHeaders.entries())
+      : Array.isArray(customHeaders)
+      ? Object.fromEntries(customHeaders)
+      : (customHeaders as Record<string, string>) || {})
+  };
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const signal = init?.signal || controller.signal;
+
+    const response = await fetch(targetUrl, {
+      method: init?.method || (payload ? 'POST' : 'GET'),
+      headers: requestHeaders,
+      body: payload !== undefined
+        ? (typeof payload === 'string' ? payload : JSON.stringify(payload))
+        : undefined,
+      redirect: 'follow',
+      signal,
+      ...init
+    });
+
+    clearTimeout(timeoutId);
+
+    // Use console.error to output the full Response object, request headers, and the target URL when the status is not 200
+    if (response.status !== 200) {
+      console.error(
+        '[StaffLogin Apps Script Diagnostic] Apps Script fetch response status is not 200:',
+        {
+          targetUrl,
+          requestHeaders,
+          status: response.status,
+          statusText: response.statusText,
+          response
+        }
+      );
+      console.error('Target URL:', targetUrl);
+      console.error('Request Headers:', requestHeaders);
+      console.error('Full Response Object:', response);
+    }
+
+    return response;
+  } catch (networkError: any) {
+    console.error(
+      '[StaffLogin Apps Script Diagnostic] Network exception occurred while requesting Apps Script URL:',
+      {
+        targetUrl,
+        requestHeaders,
+        error: networkError
+      }
+    );
+    console.error('Target URL:', targetUrl);
+    console.error('Request Headers:', requestHeaders);
+    throw networkError;
+  }
+};
+
+export const fetchAppsScriptWithDiagnostics = requestAppsScriptWithDiagnostics;
+
+if (typeof window !== 'undefined') {
+  (window as any).requestAppsScriptWithDiagnostics = requestAppsScriptWithDiagnostics;
+  (window as any).fetchAppsScriptWithDiagnostics = fetchAppsScriptWithDiagnostics;
+}
+
 export const StaffLogin: React.FC<StaffLoginProps> = ({
   onSuccess,
   onBackToSelection,
@@ -21,6 +136,14 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(initialMessage || '');
+  const [diagnosticInfo, setDiagnosticInfo] = useState<{
+    targetUrl?: string;
+    status?: number;
+    code?: string;
+    message?: string;
+    details?: string;
+    timestamp?: string;
+  } | null>(null);
 
   // If already authenticated as staff, allow 1-click redirect
   const handleExistingSessionRedirect = () => {
@@ -32,25 +155,97 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setDiagnosticInfo(null);
 
     const cleanMobile = mobileNumber.trim();
     const cleanPass = password.trim();
 
     if (!cleanMobile || !cleanPass) {
-      setErrorMessage('Invalid mobile number or password.');
+      setErrorMessage('Mobile number or password is incorrect.');
       return;
     }
 
     setIsLoading(true);
+
+    // Verify and log target URL format beforehand
+    const envProj = (import.meta.env.VITE_FIREBASE_PROJECT_ID as string)?.trim();
+    const projectId = (envProj && envProj.length > 3 && !/^\d+$/.test(envProj)) ? envProj : 'diblo-39440';
+    const customApiBase = (import.meta.env.VITE_API_URL as string)?.replace(/\/+$/, '');
+    const primaryTargetUrl = customApiBase ? `${customApiBase}/api/staff/login` : '/api/staff/login';
+    const cloudFunctionTargetUrl = `https://us-central1-${projectId}.cloudfunctions.net/api/staff/login`;
+
+    // Validate URL formats (relative path or valid HTTP/HTTPS URL)
+    const isValidUrlFormat = (url: string) => {
+      if (url.startsWith('/')) return true;
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    };
+
+    console.group('[StaffLogin Diagnostic] Form Submission Initiated');
+    console.log('[StaffLogin Diagnostic] Target URL Format Verification:', {
+      primaryTargetUrl,
+      isPrimaryFormatValid: isValidUrlFormat(primaryTargetUrl),
+      cloudFunctionTargetUrl,
+      isCloudFunctionFormatValid: isValidUrlFormat(cloudFunctionTargetUrl),
+      projectId,
+      hasCustomApiBase: Boolean(customApiBase),
+      timestamp: new Date().toISOString()
+    });
+    console.groupEnd();
+
+    // Trigger diagnostic logging for Apps Script request wrapping
+    requestAppsScriptWithDiagnostics({
+      action: 'verifyStaff',
+      mobileNumber: cleanMobile,
+      password: cleanPass
+    }).catch(() => {
+      // All error logging is cleanly handled via console.error inside requestAppsScriptWithDiagnostics
+    });
+
     try {
       const res = await loginStaff(cleanMobile, cleanPass);
+      console.log('[StaffLogin Diagnostic] loginStaff response:', {
+        success: res.success,
+        role: res.role,
+        code: res.code,
+        message: res.message
+      });
+
       if (res.success && res.role) {
         onSuccess(res.role);
       } else {
-        setErrorMessage(res.message || 'Invalid mobile number or password.');
+        const displayMsg = res.message || 'Mobile number or password is incorrect.';
+        setErrorMessage(displayMsg);
+        setDiagnosticInfo({
+          targetUrl: primaryTargetUrl,
+          code: res.code,
+          message: displayMsg,
+          timestamp: new Date().toLocaleTimeString()
+        });
       }
-    } catch {
-      setErrorMessage('Staff login service is temporarily unavailable. Please try again.');
+    } catch (err: any) {
+      console.error('[StaffLogin Diagnostic] Exact Network Error Response:', {
+        name: err?.name,
+        message: err?.message,
+        stack: err?.stack,
+        primaryTargetUrl,
+        cloudFunctionTargetUrl,
+        timestamp: new Date().toISOString()
+      });
+
+      const failureMsg = 'Assistance login service is temporarily unavailable. Please try again.';
+      setErrorMessage(failureMsg);
+      setDiagnosticInfo({
+        targetUrl: primaryTargetUrl,
+        code: 'NETWORK_ERROR',
+        message: failureMsg,
+        details: err?.message || 'Network request failed or was aborted',
+        timestamp: new Date().toLocaleTimeString()
+      });
     } finally {
       setIsLoading(false);
     }
@@ -76,7 +271,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
           id="btn-back-to-selection"
         >
           <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-          <span>Back to Access Selection</span>
+          <span>Back to Customer</span>
         </button>
 
         <div className="text-center">
@@ -84,10 +279,10 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
             <Shield className="w-7 h-7 text-[#F42F73]" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-[#14213D] tracking-tight">
-            Staff Login
+            Assistance Login
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            Internal access for Diblo Field Assistants & Operations Admins
+            For Diblo Field Assistants & Operations Admins
           </p>
         </div>
       </div>
@@ -115,13 +310,29 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
             </div>
           )}
 
-          {/* Error Message Box */}
+          {/* Error Message Box with Diagnostic Details */}
           {errorMessage && (
-            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3 animate-in fade-in duration-200">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <div className="flex-1 text-xs text-rose-800 font-medium">
-                {errorMessage}
+            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 animate-in fade-in duration-200">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1 text-xs text-rose-800 font-medium">
+                  {errorMessage}
+                </div>
               </div>
+
+              {diagnosticInfo && (
+                <div className="mt-3 pt-2.5 border-t border-rose-200/60 text-[11px] text-rose-900 font-mono">
+                  <div className="flex items-center justify-between text-rose-700 font-semibold mb-1">
+                    <span>Network Diagnostic:</span>
+                    <span>{diagnosticInfo.timestamp}</span>
+                  </div>
+                  <div className="bg-rose-100/70 p-2 rounded-lg space-y-0.5 break-all">
+                    <div><span className="text-gray-500">Target URL:</span> {diagnosticInfo.targetUrl}</div>
+                    {diagnosticInfo.code && <div><span className="text-gray-500">Error Code:</span> {diagnosticInfo.code}</div>}
+                    {diagnosticInfo.details && <div><span className="text-gray-500">Details:</span> {diagnosticInfo.details}</div>}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -173,7 +384,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   required
-                  placeholder="Enter your staff password"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-11 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F42F73] focus:border-transparent transition-all bg-gray-50/50 hover:bg-white focus:bg-white font-medium"
@@ -202,7 +413,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
                     <span>Verifying with Google Sheet...</span>
                   </>
                 ) : (
-                  <span>Login</span>
+                  <span>Assistance Login</span>
                 )}
               </button>
             </div>

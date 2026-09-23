@@ -423,8 +423,20 @@ export const dbRepository = {
       }
     }
 
+    // Safe timestamp extractor
+    const getTimestamp = (val: any) => {
+      if (!val) return 0;
+      if (typeof val?.toDate === 'function') {
+        try { return val.toDate().getTime(); } catch { return 0; }
+      }
+      if (typeof val === 'number') return val;
+      const parsed = new Date(val).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     // Sort newest first
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    list = (list || []).filter(Boolean);
+    list.sort((a, b) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt));
     return list;
   },
 

@@ -190,8 +190,9 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const refreshBookings = async () => {
     try {
       const data = await api.getBookings();
-      setBookings(data);
-      const active = data.find(
+      const safeData = Array.isArray(data) ? data : [];
+      setBookings(safeData);
+      const active = safeData.find(
         (b) =>
           b.status !== 'COMPLETED' &&
           b.status !== 'CANCELLED' &&
@@ -203,7 +204,7 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (active && (!activeBooking || activeBooking.id === active.id)) {
         setActiveBooking(active);
       } else if (!active && activeBooking && activeBooking.status !== 'COMPLETED') {
-        const prevNowCompleted = data.find((b) => b.id === activeBooking.id && b.status === 'COMPLETED');
+        const prevNowCompleted = safeData.find((b) => b.id === activeBooking.id && b.status === 'COMPLETED');
         if (prevNowCompleted) {
           setActiveBooking(prevNowCompleted);
         }
@@ -211,7 +212,7 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       // Automatically trigger feedback modal when any customer booking is COMPLETED and unrated
       if (currentRole === 'CUSTOMER') {
-        const justCompleted = data.find(
+        const justCompleted = safeData.find(
           (b) =>
             b.status === 'COMPLETED' &&
             !b.rating &&
@@ -235,11 +236,12 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           api.getBookings(),
           api.getPricing()
         ]);
-        setBookings(bookingsData);
+        const safeBookings = Array.isArray(bookingsData) ? bookingsData : [];
+        setBookings(safeBookings);
         setPricing(pricingData);
 
         // Find primary active booking
-        const active = bookingsData.find(
+        const active = safeBookings.find(
           (b) => b.status === 'ON_THE_WAY' || b.status === 'IN_PROGRESS' || b.status === 'ASSIGNED' || b.status === 'ACCEPTED'
         );
         if (active) setActiveBooking(active);
@@ -377,8 +379,9 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const completeBooking = async (bookingId: string) => {
     await api.completeBooking(bookingId);
     const updatedBookings = await api.getBookings();
-    setBookings(updatedBookings);
-    const completed = updatedBookings.find((b) => b.id === bookingId);
+    const safeUpdated = Array.isArray(updatedBookings) ? updatedBookings : [];
+    setBookings(safeUpdated);
+    const completed = safeUpdated.find((b) => b.id === bookingId);
     if (completed) {
       setActiveBooking(completed);
       if (!completed.rating && !dismissedBookingFeedbackIds.current.has(completed.id)) {

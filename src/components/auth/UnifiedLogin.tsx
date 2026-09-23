@@ -5,6 +5,7 @@ import {
   Smartphone,
   Lock,
   ArrowRight,
+  ArrowLeft,
   RefreshCw,
   AlertCircle,
   Eye,
@@ -31,6 +32,7 @@ interface UnifiedLoginProps {
   onStaffSuccess: (role: 'Assistant' | 'Admin') => void;
   onApplyAssistant?: () => void;
   onModeChange?: (mode: 'CUSTOMER' | 'STAFF') => void;
+  onBackToCustomer?: () => void;
 }
 
 /**
@@ -78,7 +80,8 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   onCustomerSuccess,
   onStaffSuccess,
   onApplyAssistant,
-  onModeChange
+  onModeChange,
+  onBackToCustomer
 }) => {
   const { syncFirebaseCustomer, loginStaff, staffUser } = useAuth();
 
@@ -365,7 +368,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
         setErrorMessage(res.message || 'Invalid mobile number or password.');
       }
     } catch {
-      setErrorMessage('Staff login service is temporarily unavailable. Please try again.');
+      setErrorMessage('Assistance login service is temporarily unavailable. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -453,69 +456,39 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
 
           {/* Heading */}
           <h1 className="text-2xl sm:text-4xl font-extrabold text-[#14213D] tracking-tight leading-tight">
-            How would you like to continue?
+            {mode === 'CUSTOMER' ? 'Customer' : 'Assistance Login'}
           </h1>
 
           {/* Subtitle */}
           <p className="text-xs sm:text-sm text-gray-500 max-w-md sm:max-w-lg mx-auto leading-relaxed">
-            Choose your portal below to access Diblo services or log in to the staff operational workspace.
+            {mode === 'CUSTOMER'
+              ? 'Book verified on-demand hourly assistants across Mumbai.'
+              : 'Sign in to your Diblo Assistance Workspace.'}
           </p>
         </div>
 
         {/* ONE Unified Login Card */}
         <div className="w-full max-w-[460px] bg-white rounded-3xl sm:rounded-[32px] p-6 sm:p-8 shadow-xl shadow-pink-950/[0.04] border border-gray-100 relative z-20">
-          {/* Segmented Toggle at Top of Card: [ 👤 Customer ] [ 🛡 Staff ] */}
-          <div
-            className="bg-[#F1F3F5] p-1.5 rounded-full flex items-center justify-between gap-1.5 mb-6 border border-gray-200/50"
-            role="tablist"
-            aria-label="Login Mode Selection"
-          >
-            {/* Customer Tab */}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'CUSTOMER'}
-              onClick={() => handleToggleMode('CUSTOMER')}
-              id="tab-toggle-customer"
-              className={`w-1/2 py-2.5 sm:py-3 px-3 sm:px-4 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer ${
-                mode === 'CUSTOMER'
-                  ? 'bg-[#F42F73] text-white shadow-sm shadow-[#F42F73]/30 scale-[1.01]'
-                  : 'text-gray-500 hover:text-gray-800 font-semibold'
-              }`}
-            >
-              <div
-                className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                  mode === 'CUSTOMER' ? 'bg-white/20 text-white' : 'text-gray-500'
-                }`}
+          {/* Back button for Assistance Login mode */}
+          {mode === 'STAFF' && (
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onBackToCustomer) {
+                    onBackToCustomer();
+                  } else {
+                    handleToggleMode('CUSTOMER');
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-[#F42F73] transition-colors cursor-pointer group"
+                id="btn-back-to-customer"
               >
-                <User className="w-3.5 h-3.5" />
-              </div>
-              <span>Customer</span>
-            </button>
-
-            {/* Staff Tab */}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'STAFF'}
-              onClick={() => handleToggleMode('STAFF')}
-              id="tab-toggle-staff"
-              className={`w-1/2 py-2.5 sm:py-3 px-3 sm:px-4 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer ${
-                mode === 'STAFF'
-                  ? 'bg-[#F42F73] text-white shadow-sm shadow-[#F42F73]/30 scale-[1.01]'
-                  : 'text-gray-500 hover:text-gray-800 font-semibold'
-              }`}
-            >
-              <div
-                className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                  mode === 'STAFF' ? 'bg-white/20 text-white' : 'text-gray-500'
-                }`}
-              >
-                <Shield className="w-3.5 h-3.5" />
-              </div>
-              <span>Staff</span>
-            </button>
-          </div>
+                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+                <span>Back to Customer</span>
+              </button>
+            </div>
+          )}
 
           {/* Error Message Notice */}
           {errorMessage && (
@@ -677,39 +650,27 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     </div>
 
                     {/* OR Divider Line */}
-                    <div className="my-5 flex items-center before:flex-1 before:border-t before:border-gray-200 after:flex-1 after:border-t after:border-gray-200 text-[11px] font-bold tracking-widest text-gray-400 px-1 gap-3">
+                    <div className="my-4 flex items-center before:flex-1 before:border-t before:border-gray-200 after:flex-1 after:border-t after:border-gray-200 text-[11px] font-bold tracking-widest text-gray-400 px-1 gap-3">
                       OR
                     </div>
 
-                    {/* Secondary Staff Login Shortcut Card (Matching Reference Design) */}
-                    <div
+                    {/* Assistant Login Option Button right below Google Sign-In */}
+                    <button
+                      type="button"
                       onClick={() => handleToggleMode('STAFF')}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleToggleMode('STAFF');
-                        }
-                      }}
-                      id="card-switch-to-staff"
-                      className="bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-slate-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition-all group active:scale-[0.99]"
+                      id="btn-switch-to-assistant-login"
+                      className="w-full h-12 bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-[#14213D] rounded-2xl font-bold text-xs sm:text-sm shadow-xs hover:shadow-sm transition-all flex items-center justify-between px-4 cursor-pointer active:scale-[0.99] group"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white border border-slate-200/80 flex items-center justify-center text-[#14213D] shadow-xs shrink-0 group-hover:scale-105 transition-transform">
-                          <Shield className="w-5 h-5 text-[#14213D]" />
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[#14213D] group-hover:text-[#F42F73] transition-colors">
+                          <Shield className="w-4 h-4" />
                         </div>
-                        <div className="text-left">
-                          <div className="font-bold text-sm text-[#14213D] group-hover:text-[#F42F73] transition-colors">
-                            Staff Login
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            For team members and operations staff
-                          </div>
-                        </div>
+                        <span className="font-semibold text-gray-800 group-hover:text-[#14213D]">
+                          Assistants Log In
+                        </span>
                       </div>
-                      <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-700 group-hover:translate-x-0.5 transition-all shrink-0" />
-                    </div>
+                      <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#F42F73] group-hover:translate-x-0.5 transition-all" />
+                    </button>
                   </>
                 ) : (
                   /* CUSTOMER STEP 2: 6-DIGIT OTP VERIFICATION */
@@ -824,16 +785,16 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                 transition={{ duration: 0.18 }}
                 className="space-y-5"
               >
-                {/* Staff Icon Badge */}
+                {/* Assistance Icon Badge */}
                 <div className="text-center">
                   <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-slate-100 border border-slate-200/80 flex items-center justify-center text-[#14213D] mx-auto mb-2.5 shadow-xs">
                     <Shield className="w-6 h-6 sm:w-7 sm:h-7 text-[#14213D]" />
                   </div>
                   <h2 className="text-xl sm:text-2xl font-black text-[#14213D] tracking-tight">
-                    Staff Login
+                    Assistance Login
                   </h2>
                   <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-xs mx-auto leading-relaxed">
-                    Sign in to your Diblo operational workspace.
+                    Sign in to your Diblo Assistance Workspace.
                   </p>
                 </div>
 
@@ -857,7 +818,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                   </div>
                 )}
 
-                {/* Staff Login Form */}
+                {/* Assistance Login Form */}
                 <form onSubmit={handleStaffSubmit} className="space-y-4">
                   {/* Mobile Number Input */}
                   <div>
@@ -916,7 +877,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     </div>
                   </div>
 
-                  {/* Submit Button: Staff Login → */}
+                  {/* Submit Button: Assistance Login → */}
                   <button
                     type="submit"
                     disabled={isLoading}
@@ -930,7 +891,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                       </>
                     ) : (
                       <>
-                        <span>Staff Login</span>
+                        <span>Assistance Login</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
@@ -1000,13 +961,23 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
 
                 {/* Secondary Customer Login Shortcut Card */}
                 <div
-                  onClick={() => handleToggleMode('CUSTOMER')}
+                  onClick={() => {
+                    if (onBackToCustomer) {
+                      onBackToCustomer();
+                    } else {
+                      handleToggleMode('CUSTOMER');
+                    }
+                  }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      handleToggleMode('CUSTOMER');
+                      if (onBackToCustomer) {
+                        onBackToCustomer();
+                      } else {
+                        handleToggleMode('CUSTOMER');
+                      }
                     }
                   }}
                   id="card-switch-to-customer"
@@ -1018,7 +989,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     </div>
                     <div className="text-left">
                       <div className="font-bold text-sm text-[#14213D] group-hover:text-[#F42F73] transition-colors">
-                        Customer Login
+                        Customer
                       </div>
                       <div className="text-xs text-gray-500">
                         Book verified on-demand hourly assistants
@@ -1033,9 +1004,25 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
         </div>
       </main>
 
-      {/* Subtle Bottom Footer */}
-      <footer className="w-full py-4 px-4 text-center text-xs text-gray-400 relative z-10">
+      {/* Subtle Bottom Footer with Obscured Assistance Login link for employees */}
+      <footer className="w-full py-4 px-4 text-center text-xs text-gray-400 relative z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
         <p>© {new Date().getFullYear()} Diblo Technologies Pvt. Ltd. • Mumbai's On-Demand Assistance</p>
+        <span className="text-gray-300 select-none">•</span>
+        <a
+          href="/assistance-login"
+          onClick={(e) => {
+            e.preventDefault();
+            if (typeof window !== 'undefined') {
+              window.history.pushState({}, '', '/assistance-login');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }
+          }}
+          className="text-gray-400/80 hover:text-gray-600 text-[11px] font-normal transition-colors cursor-pointer"
+          title="Diblo Internal Workspace"
+          id="link-obscured-assistance-portal"
+        >
+          Assistance Login
+        </a>
       </footer>
     </div>
   );

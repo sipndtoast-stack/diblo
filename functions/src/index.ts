@@ -5,7 +5,36 @@ import jwt from 'jsonwebtoken';
 import { verifyStaffCredentials } from './googleSheetsStaff';
 
 const app = express();
-app.use(cors({ origin: true }));
+
+const allowedOrigins = [
+  'https://diblo-39440.web.app',
+  'https://diblo-39440.firebaseapp.com',
+  'https://diblo.in',
+  'https://www.diblo.in'
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.includes('.run.app') ||
+      origin.includes('.web.app') ||
+      origin.includes('.firebaseapp.com')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Firebase-AppCheck']
+}));
+app.options('*', (req, res) => {
+  res.sendStatus(204);
+});
 app.use(express.json());
 
 const JWT_SECRET = process.env.SESSION_SECRET || 'diblo-jwt-secret-mumbai-2026-secure';
@@ -28,7 +57,7 @@ app.get(['/api/health', '/health'], (req: Request, res: Response) => {
     status: 'ok',
     service: 'diblo-cloud-functions',
     region: process.env.FUNCTION_REGION || 'us-central1',
-    project: 'diblo-3944a',
+    project: process.env.GCLOUD_PROJECT || 'diblo-39440',
     timestamp: new Date().toISOString()
   });
 });
@@ -265,17 +294,17 @@ app.post(['/api/maps/route', '/maps/route'], async (req: Request, res: Response)
 });
 
 // Staff Login endpoint
-app.post(['/api/staff/login', '/staff/login'], async (req: Request, res: Response) => {
+app.post(['/api/staff/login', '/staff/login', '/api/api/staff/login', '/'], async (req: Request, res: Response) => {
   try {
-    const { mobileNumber, number, phone, eplId, password } = req.body || {};
-    const rawMobile = String(mobileNumber || number || phone || eplId || '').trim();
+    const { mobileNumber, mobile, number, phone, eplId, password } = req.body || {};
+    const rawMobile = String(mobileNumber || mobile || number || phone || eplId || '').trim();
     const rawPassword = String(password || '').trim();
 
     if (!rawMobile || !rawPassword) {
       return res.status(400).json({
         success: false,
         code: 'INVALID_CREDENTIALS',
-        message: 'Invalid mobile number or password.'
+        message: 'Mobile number or password is incorrect.'
       });
     }
 
@@ -283,10 +312,13 @@ app.post(['/api/staff/login', '/staff/login'], async (req: Request, res: Respons
 
     if (!result.success) {
       const statusCode = result.code === 'STAFF_NOT_FOUND' ? 404 : 401;
+      const msg = result.code === 'STAFF_NOT_FOUND'
+        ? 'Assistance account not found.'
+        : 'Mobile number or password is incorrect.';
       return res.status(statusCode).json({
         success: false,
         code: result.code || 'INVALID_CREDENTIALS',
-        message: result.message || 'Invalid mobile number or password.'
+        message: msg
       });
     }
 
@@ -308,6 +340,13 @@ app.post(['/api/staff/login', '/staff/login'], async (req: Request, res: Respons
       name: result.name,
       number: result.number,
       email: result.email,
+      staff: {
+        eplId: result.eplId,
+        name: result.name,
+        number: result.number,
+        email: result.email,
+        role: result.role
+      },
       token
     });
   } catch (err: any) {
@@ -315,7 +354,7 @@ app.post(['/api/staff/login', '/staff/login'], async (req: Request, res: Respons
     return res.status(500).json({
       success: false,
       code: 'SERVER_CONFIG_ERROR',
-      message: 'Staff login service is temporarily unavailable.'
+      message: 'Staff login service is temporarily unavailable. Please try again.'
     });
   }
 });

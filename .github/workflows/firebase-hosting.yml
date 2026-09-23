@@ -45,6 +45,16 @@ jobs:
             npm --prefix functions run build
           fi
 
+      - name: Deploy Cloud Functions to Firebase
+        if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}"
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > /tmp/sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
+          npx --yes firebase-tools deploy --only functions --project diblo-39440 --non-interactive || echo "Functions deployment warning, continuing with hosting..."
+          rm -f /tmp/sa.json
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
       - name: Verify build output
         run: |
           if [ ! -d "dist" ]; then

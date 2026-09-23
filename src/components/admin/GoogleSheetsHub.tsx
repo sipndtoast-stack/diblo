@@ -273,7 +273,7 @@ Existing cell content in those tabs will be refreshed. Do you wish to proceed?`,
     }
     setConfirmModal({
       isOpen: true,
-      title: 'Confirm Staff Roster Export',
+      title: 'Confirm Assistance Roster Export',
       description: `This will write ${assistants.length} assistants and verified staff into the "Staff Details" tab of the Google Sheet.`,
       actionType: 'EXPORT_STAFF',
       payloadCount: assistants.length,
@@ -303,7 +303,7 @@ Existing cell content in those tabs will be refreshed. Do you wish to proceed?`,
     }
     setConfirmModal({
       isOpen: true,
-      title: 'Confirm Staff Sync from Sheet',
+      title: 'Confirm Assistance Sync from Sheet',
       description: `This will read registered staff mobile numbers and verification statuses from the "Staff Details" tab in your Google Sheet and synchronize them into Diblo's staff roster.`,
       actionType: 'IMPORT_STAFF',
       targetSheetName: 'Staff Details'
@@ -672,7 +672,7 @@ Existing cell content in those tabs will be refreshed. Do you wish to proceed?`,
                     className="w-full flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-white border border-white/10 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
                   >
                     <Upload className="w-3.5 h-3.5" />
-                    <span>Export Staff to Sheet</span>
+                    <span>Export Assistance to Sheet</span>
                   </button>
                   <button
                     onClick={promptImportStaff}
@@ -681,7 +681,7 @@ Existing cell content in those tabs will be refreshed. Do you wish to proceed?`,
                     title="Read staff registered in Google Sheet to sync into Diblo"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Sync Staff From Sheet</span>
+                    <span>Sync Assistance From Sheet</span>
                   </button>
                 </div>
               </div>

@@ -217,17 +217,17 @@ const MainAppContent: React.FC = () => {
     return (
       <AssistantOnboarding
         onSuccess={() => {
-          navigateTo('/staff-login');
+          navigateTo('/assistance-login');
         }}
         onBackToSelection={() => {
-          navigateTo('/staff-login');
+          navigateTo('/assistance-login');
         }}
       />
     );
   }
 
-  // VIEW 2: STAFF LOGIN PAGE (/staff-login)
-  if (currentPath === '/staff-login') {
+  // VIEW 2: ASSISTANCE LOGIN PAGE (/assistance-login or /staff-login)
+  if (currentPath === '/assistance-login' || currentPath === '/staff-login') {
     return (
       <UnifiedLogin
         initialMode="STAFF"
@@ -243,6 +243,9 @@ const MainAppContent: React.FC = () => {
         }}
         onApplyAssistant={() => {
           navigateTo('/apply-assistant');
+        }}
+        onBackToCustomer={() => {
+          navigateTo('/');
         }}
       />
     );

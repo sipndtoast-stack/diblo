@@ -11,7 +11,7 @@ export const RoleSwitcher: React.FC = () => {
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
 
-  // If in Customer Panel, never render Assistant/Admin role switches or staff login buttons
+  // If in Customer Panel, never render Assistant/Admin role switches or assistance login buttons
   if (currentRole === 'CUSTOMER') {
     return null;
   }
@@ -79,7 +79,7 @@ export const RoleSwitcher: React.FC = () => {
         <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
           <div className="items-center gap-1 text-gray-400 font-bold uppercase tracking-wider text-[10px] mr-1 hidden lg:flex">
             <Sparkles className="w-3.5 h-3.5 text-[#F42F73]" />
-            <span>Portal:</span>
+            <span>Role:</span>
           </div>
 
           <div className="flex items-center bg-black/30 p-0.5 sm:p-1 rounded-xl border border-white/10 gap-0.5 sm:gap-1">
@@ -126,20 +126,20 @@ export const RoleSwitcher: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Staff Identity or Login Link */}
+        {/* Right: Assistance Identity or Login Link */}
         <div className="flex items-center gap-2 ml-auto text-[11px]">
           {staffUser ? (
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 bg-emerald-950/60 text-emerald-300 px-2.5 py-1 rounded-lg border border-emerald-500/30">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>
-                  Staff: <strong>{staffUser.name}</strong> ({staffUser.eplId}) • {staffUser.role}
+                  Assistance: <strong>{staffUser.name}</strong> ({staffUser.eplId}) • {staffUser.role}
                 </span>
               </div>
               <button
                 onClick={() => logoutStaff()}
                 className="flex items-center gap-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 px-2.5 py-1 rounded-lg border border-rose-400/30 font-semibold transition-colors"
-                title="Log out of Staff Portal"
+                title="Log out of Assistance"
               >
                 <LogOut className="w-3 h-3" />
                 <span>Logout</span>
@@ -147,11 +147,11 @@ export const RoleSwitcher: React.FC = () => {
             </div>
           ) : (
             <button
-              onClick={() => navigateTo('/staff-login')}
+              onClick={() => navigateTo('/assistance-login')}
               className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-200 px-2.5 py-1 rounded-lg border border-white/10 font-semibold transition-colors"
             >
               <Lock className="w-3 h-3 text-[#F42F73]" />
-              <span>Staff Login</span>
+              <span>Assistance Login</span>
             </button>
           )}
 

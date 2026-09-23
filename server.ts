@@ -66,9 +66,9 @@ async function startServer() {
     }
     res.json({
       apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyBZgAbbS7_cTo7ml3EkUf5yKxPiADy5k1U',
-      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-3944a.firebaseapp.com',
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-3944a',
-      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-3944a.firebasestorage.app',
+      authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'diblo-39440.firebaseapp.com',
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'diblo-39440',
+      storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'diblo-39440.firebasestorage.app',
       messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '650321096736',
       appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:650321096736:web:218a11d36b1ca9e38c0c45',
     });
@@ -819,17 +819,17 @@ async function startServer() {
 
   // Fallback directory matching Google Sheet specifications:
   // Tab: Staff Details
-  app.post('/api/staff/login', async (req, res) => {
+  app.post(['/api/staff/login', '/staff/login'], async (req, res) => {
     try {
-      const { mobileNumber, number, phone, eplId, password } = req.body;
-      const rawMobile = String(mobileNumber || number || phone || eplId || '').trim();
+      const { mobileNumber, mobile, number, phone, eplId, password } = req.body || {};
+      const rawMobile = String(mobileNumber || mobile || number || phone || eplId || '').trim();
       const rawPassword = String(password || '').trim();
 
       if (!rawMobile || !rawPassword) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_CREDENTIALS',
-          message: 'Invalid mobile number or password.'
+          message: 'Mobile number or password is incorrect.'
         });
       }
 
@@ -837,10 +837,13 @@ async function startServer() {
 
       if (!result.success) {
         const statusCode = result.code === 'STAFF_NOT_FOUND' ? 404 : 401;
+        const msg = result.code === 'STAFF_NOT_FOUND'
+          ? 'Assistance account not found.'
+          : 'Mobile number or password is incorrect.';
         return res.status(statusCode).json({
           success: false,
           code: result.code || 'INVALID_CREDENTIALS',
-          message: result.message || 'Invalid mobile number or password.'
+          message: msg
         });
       }
 
@@ -864,6 +867,13 @@ async function startServer() {
         name: result.name,
         number: result.number,
         email: result.email,
+        staff: {
+          eplId: result.eplId,
+          name: result.name,
+          number: result.number,
+          email: result.email,
+          role: result.role
+        },
         token
       });
 
@@ -872,7 +882,7 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         code: 'SERVER_CONFIG_ERROR',
-        message: 'Staff login service is temporarily unavailable.'
+        message: 'Staff login service is temporarily unavailable. Please try again.'
       });
     }
   });
@@ -1330,9 +1340,15 @@ async function startServer() {
         status: status as string
       });
 
-      res.json(list);
+      res.json(Array.isArray(list) ? list : []);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to fetch bookings', details: err.message });
+      console.error('[API /api/bookings error]:', err);
+      try {
+        const fallback = await dbRepository.getBookings();
+        res.json(Array.isArray(fallback) ? fallback : []);
+      } catch {
+        res.status(500).json({ error: 'Failed to fetch bookings', details: err?.message, bookings: [] });
+      }
     }
   });
 
@@ -1471,18 +1487,54 @@ async function startServer() {
       booking.acceptedAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
-      // Auto transition to ON_THE_WAY after a brief moment
-      setTimeout(async () => {
-        const current = await dbRepository.getBooking(booking.id);
-        if (current && current.status === 'ACCEPTED') {
-          current.status = 'ON_THE_WAY';
-          await dbRepository.saveBooking(current);
-        }
-      }, 2000);
-
       res.json({ success: true, booking });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to accept booking', details: err.message });
+    }
+  });
+
+  // Assistant Reject Booking
+  app.post('/api/bookings/:id/reject', async (req: AuthenticatedRequest, res) => {
+    try {
+      const booking = await dbRepository.getBooking(req.params.id);
+      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+      const assistantId = req.user?.assistantId || req.body.assistantId;
+      if (assistantId && booking.assistantId === assistantId) {
+        booking.assistantId = null;
+        booking.assistantName = null;
+        booking.assistantPhone = null;
+        booking.assistantPhoto = null;
+        booking.status = 'SEARCHING';
+      }
+
+      if (assistantId) {
+        const rejected = (booking as any).rejectedAssistantIds || [];
+        if (!rejected.includes(assistantId)) {
+          (booking as any).rejectedAssistantIds = [...rejected, assistantId];
+        }
+      }
+
+      await dbRepository.saveBooking(booking);
+      res.json({ success: true, message: 'Order rejected', booking });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to reject booking', details: err.message });
+    }
+  });
+
+  // Assistant Start Route / Go To Customer
+  app.post('/api/bookings/:id/start-route', async (req: AuthenticatedRequest, res) => {
+    try {
+      const booking = await dbRepository.getBooking(req.params.id);
+      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+      booking.status = 'ON_THE_WAY';
+      (booking as any).startedRouteAt = new Date().toISOString();
+      await dbRepository.saveBooking(booking);
+
+      res.json({ success: true, booking });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to start route', details: err.message });
     }
   });
 
