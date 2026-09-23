@@ -11,28 +11,41 @@ interface StaffLoginProps {
 
 /**
  * Diagnostic logging function in the StaffLogin component that wraps the fetch request to the Apps Script URL.
- * - Ensures the URL is correctly constructed using the STAFF_AUTH_APPS_SCRIPT_URL environment variable.
- * - Logs with console.error if this variable is missing or empty before making the call.
- * - Uses console.error to output the full Response object, request headers, and the target URL when the status is not 200.
+ * - Specifically verifies if the STAFF_AUTH_APPS_SCRIPT_URL environment variable is properly loaded and non-empty before attempting the fetch.
+ * - Captures and outputs the full request object, target URL, and response status/headers in a console.error block upon any failure or non-OK response.
  */
 export const requestAppsScriptWithDiagnostics = async (
   payload?: any,
   customHeaders?: Record<string, string> | HeadersInit,
   init?: RequestInit
 ): Promise<Response | null> => {
-  // Retrieve environment variable across Vite and process.env runtimes
-  const rawEnvUrl =
-    (typeof process !== 'undefined' && process.env && process.env.STAFF_AUTH_APPS_SCRIPT_URL) ||
-    (import.meta as any).env?.STAFF_AUTH_APPS_SCRIPT_URL ||
-    (import.meta as any).env?.VITE_STAFF_AUTH_APPS_SCRIPT_URL ||
-    '';
+  // Retrieve and verify environment variable across Vite and process.env runtimes
+  const envVite = (import.meta as any).env?.VITE_STAFF_AUTH_APPS_SCRIPT_URL;
+  const envMeta = (import.meta as any).env?.STAFF_AUTH_APPS_SCRIPT_URL;
+  const envProcess = typeof process !== 'undefined' && process.env ? process.env.STAFF_AUTH_APPS_SCRIPT_URL : undefined;
 
+  const rawEnvUrl = envVite || envMeta || envProcess || '';
   const appsScriptEnvVar = typeof rawEnvUrl === 'string' ? rawEnvUrl.trim() : '';
 
-  // Log if this variable is missing or empty before making the call
-  if (!appsScriptEnvVar) {
+  // Specifically verify if the STAFF_AUTH_APPS_SCRIPT_URL environment variable is properly loaded and non-empty before attempting the fetch
+  const isEnvProperlyLoaded = Boolean(appsScriptEnvVar && appsScriptEnvVar.length > 0);
+
+  if (!isEnvProperlyLoaded) {
+    const envDiagnostics = {
+      isLoaded: false,
+      isEmpty: true,
+      variableName: 'STAFF_AUTH_APPS_SCRIPT_URL',
+      checkedSources: {
+        'import.meta.env.VITE_STAFF_AUTH_APPS_SCRIPT_URL': envVite ?? null,
+        'import.meta.env.STAFF_AUTH_APPS_SCRIPT_URL': envMeta ?? null,
+        'process.env.STAFF_AUTH_APPS_SCRIPT_URL': envProcess ?? null
+      },
+      message: 'STAFF_AUTH_APPS_SCRIPT_URL environment variable is missing, undefined, or empty before attempting the fetch.'
+    };
+
     console.error(
-      '[StaffLogin Apps Script Diagnostic] STAFF_AUTH_APPS_SCRIPT_URL environment variable is missing or empty before making the call.'
+      '[StaffLogin Diagnostic] Environment variable verification failed: STAFF_AUTH_APPS_SCRIPT_URL is not properly loaded or is empty before attempting fetch.',
+      envDiagnostics
     );
     return null;
   }
@@ -48,9 +61,11 @@ export const requestAppsScriptWithDiagnostics = async (
     targetUrl = parsedUrl.toString();
   } catch (urlConstructError) {
     console.error(
-      '[StaffLogin Apps Script Diagnostic] Failed to construct target URL from STAFF_AUTH_APPS_SCRIPT_URL:',
-      appsScriptEnvVar,
-      urlConstructError
+      '[StaffLogin Diagnostic] Failed to construct target URL from STAFF_AUTH_APPS_SCRIPT_URL:',
+      {
+        rawUrl: appsScriptEnvVar,
+        error: urlConstructError
+      }
     );
     targetUrl = appsScriptEnvVar;
   }
@@ -66,17 +81,38 @@ export const requestAppsScriptWithDiagnostics = async (
       : (customHeaders as Record<string, string>) || {})
   };
 
+  const method = init?.method || (payload !== undefined ? 'POST' : 'GET');
+  const serializedBody = payload !== undefined
+    ? (typeof payload === 'string' ? payload : JSON.stringify(payload))
+    : undefined;
+
+  // Build full request object representation for diagnostics
+  const fullRequestObject = {
+    url: targetUrl,
+    targetUrl,
+    method,
+    headers: requestHeaders,
+    body: payload,
+    serializedBody,
+    mode: init?.mode || 'cors',
+    credentials: init?.credentials || 'same-origin',
+    redirect: init?.redirect || 'follow',
+    envCheck: {
+      isLoaded: true,
+      variable: 'STAFF_AUTH_APPS_SCRIPT_URL',
+      resolvedTarget: targetUrl
+    }
+  };
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     const signal = init?.signal || controller.signal;
 
     const response = await fetch(targetUrl, {
-      method: init?.method || (payload ? 'POST' : 'GET'),
+      method,
       headers: requestHeaders,
-      body: payload !== undefined
-        ? (typeof payload === 'string' ? payload : JSON.stringify(payload))
-        : undefined,
+      body: serializedBody,
       redirect: 'follow',
       signal,
       ...init
@@ -84,7 +120,7 @@ export const requestAppsScriptWithDiagnostics = async (
 
     clearTimeout(timeoutId);
 
-    // Use console.error to output the full request object, response status, and headers when the status is not 200 or request fails
+    // Comprehensive diagnostic logging block capturing full request object, target URL, response status, and headers on failure
     if (!response.ok) {
       const responseHeadersObj: Record<string, string> = {};
       try {
@@ -95,50 +131,39 @@ export const requestAppsScriptWithDiagnostics = async (
         // fallback
       }
 
-      const requestDetails = {
-        url: targetUrl,
-        method: init?.method || (payload ? 'POST' : 'GET'),
-        headers: requestHeaders,
-        body: payload,
-        mode: init?.mode,
-        credentials: init?.credentials
-      };
-
       console.error(
         '[StaffLogin Diagnostic] Fetch request failed with non-OK status:',
         {
-          request: requestDetails,
+          fullRequestObject,
+          targetUrl,
           responseStatus: response.status,
           responseStatusText: response.statusText,
           responseHeaders: responseHeadersObj,
           response
         }
       );
-      console.error('[StaffLogin Diagnostic] Full Request Object:', requestDetails);
+      console.error('[StaffLogin Diagnostic] Full Request Object:', fullRequestObject);
+      console.error('[StaffLogin Diagnostic] Target URL:', targetUrl);
       console.error('[StaffLogin Diagnostic] Response Status:', response.status, response.statusText);
       console.error('[StaffLogin Diagnostic] Response Headers:', responseHeadersObj);
     }
 
     return response;
   } catch (networkError: any) {
-    const requestDetails = {
-      url: targetUrl,
-      method: init?.method || (payload ? 'POST' : 'GET'),
-      headers: requestHeaders,
-      body: payload,
-      mode: init?.mode,
-      credentials: init?.credentials
-    };
-
     console.error(
-      '[StaffLogin Diagnostic] Network exception occurred while executing fetch request:',
+      '[StaffLogin Diagnostic] Fetch request failed due to network exception:',
       {
-        request: requestDetails,
+        fullRequestObject,
+        targetUrl,
+        responseStatus: networkError?.status || 'NETWORK_FAILURE',
+        responseHeaders: networkError?.response?.headers || networkError?.headers || 'N/A (No HTTP response headers available)',
         error: networkError
       }
     );
-    console.error('[StaffLogin Diagnostic] Full Request Object:', requestDetails);
-    console.error('[StaffLogin Diagnostic] Request Headers:', requestHeaders);
+    console.error('[StaffLogin Diagnostic] Full Request Object:', fullRequestObject);
+    console.error('[StaffLogin Diagnostic] Target URL:', targetUrl);
+    console.error('[StaffLogin Diagnostic] Response Status:', networkError?.status || 'NETWORK_FAILURE');
+    console.error('[StaffLogin Diagnostic] Response Headers:', networkError?.response?.headers || networkError?.headers || 'N/A');
     console.error('[StaffLogin Diagnostic] Connection Error:', networkError);
     throw networkError;
   }

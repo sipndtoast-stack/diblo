@@ -23,6 +23,7 @@ import { useBooking } from '../../context/BookingContext';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 import { api } from '../../lib/api';
 import { EmergencyAlert } from '../../types';
+import { CustomerDrawer } from './CustomerDrawer';
 
 interface CustomerHeaderProps {
   onOpenBooking: () => void;
@@ -36,7 +37,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Emergency SOS distress state
   const [isDispatchingSos, setIsDispatchingSos] = useState(false);
@@ -56,7 +57,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
 
   const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => {
     onSelectTab(tab);
-    setMobileMenuOpen(false);
+    setIsDrawerOpen(false);
   };
 
   const playDistressChirp = () => {
@@ -177,8 +178,30 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-100 transition-all">
       <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
-        {/* Brand Logo & Location */}
-        <div className="flex items-center gap-2 sm:gap-6">
+        {/* Brand Logo, Sidebar Drawer Toggle & Location */}
+        <div className="flex items-center gap-2 sm:gap-4">
+          {/* Hamburger Drawer Toggle Button (Visible on all screen sizes, matching AssistantPanel) */}
+          <button
+            id="customer-header-menu-btn"
+            type="button"
+            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+            className="p-2 sm:p-2.5 rounded-2xl bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-[#14213D] transition-all min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] flex items-center justify-center shadow-2xs relative cursor-pointer"
+            aria-label={isDrawerOpen ? 'Close Navigation Drawer' : 'Open Navigation Drawer'}
+            title="Open Sidebar Menu"
+          >
+            {isDrawerOpen ? (
+              <X className="w-5 h-5 text-[#14213D]" />
+            ) : (
+              <Menu className="w-5 h-5 text-[#14213D]" />
+            )}
+            {activeBooking && !isDrawerOpen && (
+              <span
+                id="customer-header-active-badge"
+                className="absolute -top-1 -right-1 w-3 h-3 bg-[#10B981] rounded-full border-2 border-white animate-pulse"
+              />
+            )}
+          </button>
+
           <div
             onClick={() => handleTabClick('HOME')}
             className="cursor-pointer flex items-baseline gap-1 select-none py-1"
@@ -337,99 +360,38 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
 
           {/* Mobile Menu Hamburger Button (Hidden on Desktop) */}
           <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2 rounded-xl text-gray-700 hover:bg-gray-100 transition-colors min-w-[40px] min-h-[40px] flex items-center justify-center ml-0.5"
+            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+            className="lg:hidden p-2 rounded-xl text-gray-700 hover:bg-gray-100 transition-colors min-w-[40px] min-h-[40px] flex items-center justify-center ml-0.5 cursor-pointer"
             aria-label="Open Menu"
+            title="Menu"
           >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            {isDrawerOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </div>
 
-      {/* Mobile Drawer Menu */}
-      {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-x-0 top-16 bg-white/98 backdrop-blur-xl border-b border-gray-200 shadow-2xl z-50 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200 max-h-[85vh] overflow-y-auto">
-          {/* Mobile Zone Selector */}
-          <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100">
-            <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Operating Area</div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {mumbaiAreas.slice(0, 6).map((area) => (
-                <button
-                  key={area}
-                  onClick={() => setSelectedArea(area)}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
-                    selectedArea === area
-                      ? 'bg-[#F42F73] text-white font-bold'
-                      : 'bg-white border border-gray-200 text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  {area.split(',')[0]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Mobile Navigation List */}
-          <div className="space-y-1">
-            {[
-              { id: 'HOME', label: 'Home Page' },
-              { id: 'BOOKINGS', label: 'My Bookings & Receipts' },
-              { id: 'ACTIVITY', label: 'Live Assistance & GPS' },
-              { id: 'SUPPORT', label: 'Customer Helpdesk 24x7' },
-              { id: 'PROFILE', label: 'My Profile & Addresses' }
-            ].map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleTabClick(item.id as any)}
-                className={`w-full text-left px-4 py-3 rounded-2xl text-sm font-bold flex items-center justify-between transition-colors min-h-[44px] ${
-                  activeTab === item.id
-                    ? 'bg-[#FFF0F5] text-[#F42F73]'
-                    : 'text-[#14213D] hover:bg-gray-50'
-                }`}
-              >
-                <span>{item.label}</span>
-                {item.id === 'ACTIVITY' && activeBooking && (
-                  <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-extrabold">LIVE</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Mobile Quick Action Buttons */}
-          <div className="pt-2 space-y-2 border-t border-gray-100">
-            {/* Mobile PWA Install option */}
-            <div className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FFF0F5] border border-[#F42F73]/20">
-              <div className="flex items-center gap-2.5">
-                <img src="/icon.svg" className="w-8 h-8 rounded-xl shrink-0" alt="Diblo" />
-                <div className="text-left">
-                  <div className="text-xs font-bold text-[#14213D]">Diblo App</div>
-                  <div className="text-[10px] text-gray-500">Fast home screen access</div>
-                </div>
-              </div>
-              <PWAInstallButton variant="compact" />
-            </div>
-
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenBooking();
-              }}
-              className="w-full py-3 rounded-2xl bg-[#F42F73] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 min-h-[46px]"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Book Assistant @ ₹149/hr</span>
-            </button>
-
-            <a
-              href="tel:8291919829"
-              className="w-full py-2.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#14213D] font-bold text-xs flex items-center justify-center gap-2 min-h-[44px] transition-colors"
-            >
-              <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
-              <span>24x7 Mumbai Helpline (8291919829)</span>
-            </a>
-          </div>
-        </div>
-      )}
+      {/* Customer Sidebar Menu Drawer (Full-featured sidebar like AssistantPanel) */}
+      <CustomerDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        activeTab={activeTab as any}
+        onSelectTab={(tab) => {
+          handleTabClick(tab);
+        }}
+        onOpenBooking={() => {
+          setIsDrawerOpen(false);
+          onOpenBooking();
+        }}
+        onTriggerSos={() => {
+          setIsDrawerOpen(false);
+          handleTriggerEmergencySos();
+        }}
+        selectedArea={selectedArea}
+        onSelectArea={(area) => {
+          setSelectedArea(area);
+        }}
+        mumbaiAreas={mumbaiAreas}
+      />
 
       {/* Floating 'Emergency SOS' Button */}
       <div className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40">
