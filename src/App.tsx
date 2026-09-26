@@ -19,14 +19,42 @@ import { AccessSelection } from './components/auth/AccessSelection';
 import { CustomerLogin } from './components/auth/CustomerLogin';
 import { UnifiedLogin } from './components/auth/UnifiedLogin';
 import { AssistantOnboarding } from './components/assistant/AssistantOnboarding';
-import { ServiceItem, Booking } from './types';
+import { CustomerFavoritesView } from './components/customer/CustomerFavoritesView';
+import { ServiceItem, Booking, AssistantProfile } from './types';
 import { AlertCircle, X, Loader2 } from 'lucide-react';
 import { PostBookingFeedbackModal } from './components/customer/PostBookingFeedbackModal';
 import { AssistantPanel } from './components/assistant/AssistantPanel';
 import { AdminPanel } from './components/admin/AdminPanel';
+import { CustomerSidebar } from './components/customer/CustomerSidebar';
+import { CustomerNotificationsView } from './components/customer/CustomerNotificationsView';
+import { CustomerPaymentsView } from './components/customer/CustomerPaymentsView';
+import { LogoutConfirmModal } from './components/customer/LogoutConfirmModal';
+
+export type CustomerTabType =
+  | 'HOME'
+  | 'REQUESTS'
+  | 'BOOKINGS'
+  | 'TRACK'
+  | 'ACTIVITY'
+  | 'PROFILE'
+  | 'NOTIFICATIONS'
+  | 'PAYMENTS'
+  | 'SUPPORT'
+  | 'FAVORITES';
+
+const getTabFromPath = (path: string): CustomerTabType => {
+  if (path.includes('/requests') || path.includes('/bookings')) return 'REQUESTS';
+  if (path.includes('/track') || path.includes('/activity')) return 'TRACK';
+  if (path.includes('/profile')) return 'PROFILE';
+  if (path.includes('/notifications')) return 'NOTIFICATIONS';
+  if (path.includes('/payments')) return 'PAYMENTS';
+  if (path.includes('/support')) return 'SUPPORT';
+  if (path.includes('/favorites')) return 'FAVORITES';
+  return 'HOME';
+};
 
 const MainAppContent: React.FC = () => {
-  const { staffUser, switchRole, isCustomerAuthenticated, isAuthLoading } = useAuth();
+  const { staffUser, switchRole, isCustomerAuthenticated, isAuthLoading, logoutCustomer } = useAuth();
   const { setActiveBooking, bookings, completedFeedbackBooking, dismissFeedbackModal } = useBooking();
 
   // Current URL Path state
@@ -40,12 +68,25 @@ const MainAppContent: React.FC = () => {
   // Access denied notification banner
   const [accessDeniedNotice, setAccessDeniedNotice] = useState<string | null>(null);
 
-  // Customer Navigation Tab
-  const [customerTab, setCustomerTab] = useState<'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT'>('HOME');
+  // Customer Navigation Tab with URL preservation
+  const [customerTab, setCustomerTab] = useState<CustomerTabType>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname || '/';
+      if (path.startsWith('/customer')) {
+        return getTabFromPath(path);
+      }
+    }
+    return 'HOME';
+  });
+
+  // Logout Confirmation Dialog State
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Booking Flow Modal State
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [preSelectedService, setPreSelectedService] = useState<ServiceItem | null>(null);
+  const [preSelectedAssistant, setPreSelectedAssistant] = useState<AssistantProfile | null>(null);
   const [preSelectedCouponCode, setPreSelectedCouponCode] = useState<string | null>(null);
 
   // Legal Modal State
@@ -60,6 +101,38 @@ const MainAppContent: React.FC = () => {
     }
   };
 
+  // Handle Tab Switch and sync URL path so refreshing preserves location
+  const handleCustomerTabChange = (tab: any) => {
+    setCustomerTab(tab);
+    let path = '/customer';
+    if (tab === 'REQUESTS' || tab === 'BOOKINGS') path = '/customer/requests';
+    else if (tab === 'TRACK' || tab === 'ACTIVITY') path = '/customer/track';
+    else if (tab === 'PROFILE') path = '/customer/profile';
+    else if (tab === 'NOTIFICATIONS') path = '/customer/notifications';
+    else if (tab === 'PAYMENTS') path = '/customer/payments';
+    else if (tab === 'SUPPORT') path = '/customer/support';
+    else if (tab === 'FAVORITES') path = '/customer/favorites';
+
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+      setCurrentPath(path);
+    }
+  };
+
+  // Handle Confirmed Logout: clear session and return to entry / login screen
+  const handleConfirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logoutCustomer();
+      setShowLogoutConfirm(false);
+      navigateTo('/');
+    } catch (err) {
+      console.error('Logout error:', err);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   // Synchronize browser history and path changes
   useEffect(() => {
     const handlePopState = () => {
@@ -71,6 +144,9 @@ const MainAppContent: React.FC = () => {
           setCurrentPath('/');
         } else {
           setCurrentPath(path);
+          if (path.startsWith('/customer')) {
+            setCustomerTab(getTabFromPath(path));
+          }
         }
       }
     };
@@ -118,12 +194,13 @@ const MainAppContent: React.FC = () => {
     // 3. /customer: Protected Customer Route
     // If authenticated: switch role to CUSTOMER
     // If not authenticated (and auth is loaded): redirect to /customer-login
-    if (currentPath === '/customer') {
+    if (currentPath.startsWith('/customer')) {
       if (!isAuthLoading) {
         if (!isCustomerAuthenticated) {
           navigateTo('/customer-login');
         } else {
           switchRole('CUSTOMER');
+          setCustomerTab(getTabFromPath(currentPath));
         }
       }
     }
@@ -138,6 +215,11 @@ const MainAppContent: React.FC = () => {
 
   const handleOpenBookingWithService = (service: ServiceItem) => {
     setPreSelectedService(service);
+    setIsBookingModalOpen(true);
+  };
+
+  const handleOpenBookingWithAssistant = (assistant: AssistantProfile) => {
+    setPreSelectedAssistant(assistant);
     setIsBookingModalOpen(true);
   };
 
@@ -333,54 +415,113 @@ const MainAppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#fcfcfc] flex flex-col font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
-      {/* Customer Header */}
-      <CustomerHeader
-        onOpenBooking={() => setIsBookingModalOpen(true)}
-        onSelectTab={(tab) => setCustomerTab(tab)}
+    <div className="min-h-screen bg-[#fcfcfc] flex font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
+      {/* Desktop Customer Sidebar (Visible on Desktop >= lg, left side, Diblo logo + 8 navigation items) */}
+      <CustomerSidebar
         activeTab={customerTab}
+        onSelectTab={(tab) => handleCustomerTabChange(tab)}
+        onOpenLogout={() => setShowLogoutConfirm(true)}
+        onOpenBooking={() => {
+          setPreSelectedAssistant(null);
+          setIsBookingModalOpen(true);
+        }}
       />
 
-      <main className="flex-1">
-        {customerTab === 'HOME' && (
-          <CustomerHome
-            onSelectService={handleOpenBookingWithService}
-            onOpenBooking={() => setIsBookingModalOpen(true)}
-            onOpenLegal={(page) => setLegalModalPage(page)}
-            onSelectTab={(tab) => setCustomerTab(tab)}
-          />
-        )}
+      {/* Main Content View (Header + Active Tab Content) */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+        {/* Customer Header */}
+        <CustomerHeader
+          onOpenBooking={() => setIsBookingModalOpen(true)}
+          onSelectTab={(tab) => handleCustomerTabChange(tab)}
+          activeTab={customerTab}
+          onOpenLogout={() => setShowLogoutConfirm(true)}
+        />
 
-        {customerTab === 'BOOKINGS' && (
-          <CustomerBookings
-            onSelectBooking={handleSelectBookingFromList}
-            onOpenBooking={() => setIsBookingModalOpen(true)}
-          />
-        )}
+        <main className="flex-1">
+          {customerTab === 'HOME' && (
+            <CustomerHome
+              onSelectService={handleOpenBookingWithService}
+              onOpenBooking={() => {
+                setPreSelectedAssistant(null);
+                setIsBookingModalOpen(true);
+              }}
+              onOpenLegal={(page) => setLegalModalPage(page)}
+              onSelectTab={(tab) => handleCustomerTabChange(tab)}
+              onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
+            />
+          )}
 
-        {customerTab === 'ACTIVITY' && (
-          <ActiveBookingView
-            onOpenBooking={() => setIsBookingModalOpen(true)}
-            onSelectTab={(tab) => setCustomerTab(tab)}
-          />
-        )}
+          {(customerTab === 'REQUESTS' || customerTab === 'BOOKINGS') && (
+            <CustomerBookings
+              onSelectBooking={handleSelectBookingFromList}
+              onOpenBooking={() => {
+                setPreSelectedAssistant(null);
+                setIsBookingModalOpen(true);
+              }}
+            />
+          )}
 
-        {customerTab === 'PROFILE' && (
-          <CustomerProfile
-            onOpenBookingWithCoupon={(couponCode) => {
-              setPreSelectedCouponCode(couponCode);
-              setIsBookingModalOpen(true);
-            }}
-          />
-        )}
+          {(customerTab === 'TRACK' || customerTab === 'ACTIVITY') && (
+            <ActiveBookingView
+              onOpenBooking={() => {
+                setPreSelectedAssistant(null);
+                setIsBookingModalOpen(true);
+              }}
+              onSelectTab={(tab) => handleCustomerTabChange(tab)}
+            />
+          )}
 
-        {customerTab === 'SUPPORT' && <CustomerSupport />}
-      </main>
+          {customerTab === 'NOTIFICATIONS' && (
+            <CustomerNotificationsView
+              onNavigateToRequests={() => handleCustomerTabChange('REQUESTS')}
+              onNavigateToTrack={() => handleCustomerTabChange('TRACK')}
+              onNavigateToPayments={() => handleCustomerTabChange('PAYMENTS')}
+            />
+          )}
+
+          {customerTab === 'PAYMENTS' && (
+            <CustomerPaymentsView />
+          )}
+
+          {customerTab === 'PROFILE' && (
+            <CustomerProfile
+              onOpenBookingWithCoupon={(couponCode) => {
+                setPreSelectedCouponCode(couponCode);
+                setPreSelectedAssistant(null);
+                setIsBookingModalOpen(true);
+              }}
+              onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
+              onViewAllFavorites={() => handleCustomerTabChange('FAVORITES')}
+              onOpenLogout={() => setShowLogoutConfirm(true)}
+            />
+          )}
+
+          {customerTab === 'SUPPORT' && <CustomerSupport />}
+
+          {customerTab === 'FAVORITES' && (
+            <CustomerFavoritesView
+              onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
+              onOpenGeneralBooking={() => {
+                setPreSelectedAssistant(null);
+                setIsBookingModalOpen(true);
+              }}
+            />
+          )}
+        </main>
+      </div>
 
       {/* Customer Mobile Navigation */}
       <CustomerBottomNav
         activeTab={customerTab}
-        onSelectTab={(tab) => setCustomerTab(tab)}
+        onSelectTab={(tab) => handleCustomerTabChange(tab)}
+      />
+
+      {/* Logout Confirmation Dialog: “Are you sure you want to logout?” */}
+      <LogoutConfirmModal
+        isOpen={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleConfirmLogout}
+        isLoading={isLoggingOut}
       />
 
       {/* Global Booking Flow Modal */}
@@ -390,9 +531,11 @@ const MainAppContent: React.FC = () => {
           onClose={() => {
             setIsBookingModalOpen(false);
             setPreSelectedService(null);
+            setPreSelectedAssistant(null);
             setPreSelectedCouponCode(null);
           }}
           preSelectedService={preSelectedService}
+          preSelectedAssistant={preSelectedAssistant}
           initialCouponCode={preSelectedCouponCode || undefined}
           onBookingSuccess={handleBookingSuccess}
         />

@@ -94,21 +94,21 @@ export const AssistantLocationView: React.FC<AssistantLocationViewProps> = ({
           </div>
         </div>
 
-        {/* If unavailable, show simple instruction */}
+        {/* If unavailable, show clear instruction */}
         {!isAvailable && (
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-2">
             <div className="font-bold flex items-center gap-1.5 text-amber-800">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Location is unavailable</span>
+              <span>Location Permission Required</span>
             </div>
-            <p className="leading-relaxed">
-              Please turn on <strong>Location / GPS</strong> in your phone settings and tap "Allow" when your browser asks for location access.
+            <p className="leading-relaxed font-semibold">
+              Location permission is required to provide live tracking. Please enable location access in your browser/device settings.
             </p>
             <button
               onClick={onRefreshLocation}
               className="mt-1 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs"
             >
-              Try Again
+              Retry Location Access
             </button>
           </div>
         )}

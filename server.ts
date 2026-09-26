@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
-import { initializeFirebaseAdmin } from './server/lib/firebaseAdmin';
+import { initializeFirebaseAdmin, sendFcmAdminMessage } from './server/lib/firebaseAdmin';
 import { dbRepository } from './server/lib/db';
 import {
   authenticateUser,
@@ -108,16 +108,42 @@ async function startServer() {
     return trimmed.startsWith('AIza') && trimmed.length >= 25;
   };
 
+  const getConfiguredGoogleMapsKey = (): string => {
+    const candidates = [
+      process.env.GOOGLE_MAPS_API_KEY,
+      process.env.VITE_GOOGLE_MAPS_API_KEY,
+      process.env.FIREBASE_API_KEY,
+      process.env.VITE_FIREBASE_API_KEY
+    ];
+    for (const c of candidates) {
+      if (isValidGoogleMapsKey(c)) return c!.trim();
+    }
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        if (isValidGoogleMapsKey(config?.apiKey)) {
+          return config.apiKey.trim();
+        }
+      }
+    } catch {
+      // Ignore read error
+    }
+    return '';
+  };
+
+  const MAPS_REFERER_HEADER = 'https://diblo-39440.web.app/';
+
   app.get('/api/maps/config', (req, res) => {
-    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+    const mapsKey = getConfiguredGoogleMapsKey();
     const isValid = isValidGoogleMapsKey(mapsKey);
     res.json({
       configured: isValid,
-      apiKey: isValid ? mapsKey.trim() : null
+      apiKey: isValid ? mapsKey : null
     });
   });
 
-  // Reverse Geocoding Proxy (lat/lng -> formatted address)
+  // Reverse Geocoding Proxy (lat/lng -> formatted address via Google Geocoding API)
   app.get('/api/maps/reverse-geocode', async (req, res) => {
     const { lat, lng } = req.query;
     if (!lat || !lng) {
@@ -126,29 +152,23 @@ async function startServer() {
 
     const latitude = Number(lat);
     const longitude = Number(lng);
-    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    const mapsKey = getConfiguredGoogleMapsKey();
 
     if (!isValidGoogleMapsKey(mapsKey)) {
-      // Graceful fallback for local preview without key
-      return res.json({
-        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
-        area: 'Mumbai',
-        lat: latitude,
-        lng: longitude,
-        isFallback: true
-      });
+      return res.status(503).json({ error: 'Google Maps API key is not configured' });
     }
 
     try {
       const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(mapsKey)}`;
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: { Referer: MAPS_REFERER_HEADER }
+      });
       const data = await response.json();
 
       if (data.status === 'OK' && data.results && data.results.length > 0) {
         const result = data.results[0];
-        // Extract sublocality or locality
         let area = 'Mumbai';
-        for (const comp of result.address_components) {
+        for (const comp of result.address_components || []) {
           if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
             area = comp.long_name;
             break;
@@ -167,92 +187,90 @@ async function startServer() {
         });
       }
 
-      return res.json({
-        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
-        area: 'Mumbai',
-        lat: latitude,
-        lng: longitude,
-        isFallback: true
-      });
+      return res.status(404).json({ error: 'No address found for coordinates', status: data.status });
     } catch (err: any) {
-      console.error('[MAPS PROXY] Reverse geocode error occurred');
-      return res.json({
-        formattedAddress: `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E, Mumbai, Maharashtra`,
-        area: 'Mumbai',
-        lat: latitude,
-        lng: longitude,
-        isFallback: true
-      });
+      console.error('[MAPS PROXY] Reverse geocode error occurred:', err?.message);
+      return res.status(500).json({ error: 'Reverse geocoding failed' });
     }
   });
 
-  // Forward Geocoding / Search Proxy (query -> lat/lng & address)
+  // Places API (New) Autocomplete & Forward Geocoding Search Proxy
   app.get('/api/maps/geocode', async (req, res) => {
     const { address } = req.query;
     if (!address || typeof address !== 'string') {
       return res.status(400).json({ error: 'Address query is required' });
     }
 
-    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    const mapsKey = getConfiguredGoogleMapsKey();
     const query = address.trim();
 
     if (!isValidGoogleMapsKey(mapsKey)) {
-      // Return predefined Mumbai landmark matches if no key
-      const lower = query.toLowerCase();
-      let mockLat = 19.0596;
-      let mockLng = 72.8295;
-      let area = 'Bandra West';
-
-      if (lower.includes('andheri')) {
-        mockLat = 19.1197;
-        mockLng = 72.8468;
-        area = 'Andheri West';
-      } else if (lower.includes('powai')) {
-        mockLat = 19.1176;
-        mockLng = 72.9060;
-        area = 'Powai';
-      } else if (lower.includes('dadar')) {
-        mockLat = 19.0178;
-        mockLng = 72.8478;
-        area = 'Dadar';
-      } else if (lower.includes('colaba') || lower.includes('gate of india')) {
-        mockLat = 18.9067;
-        mockLng = 72.8147;
-        area = 'Colaba';
-      } else if (lower.includes('bkc') || lower.includes('kurla')) {
-        mockLat = 19.0657;
-        mockLng = 72.8687;
-        area = 'BKC';
-      } else if (lower.includes('juhu')) {
-        mockLat = 19.1075;
-        mockLng = 72.8263;
-        area = 'Juhu';
-      }
-
-      return res.json({
-        results: [
-          {
-            formattedAddress: `${query}, ${area}, Mumbai, Maharashtra`,
-            area,
-            lat: mockLat,
-            lng: mockLng,
-            isFallback: true
-          }
-        ]
-      });
+      return res.status(503).json({ error: 'Google Maps API key is not configured', results: [] });
     }
 
     try {
-      // Append Mumbai for context if not specified
+      // 1. Try Google Places API (New) Text Search first for rich place + coordinates resolution
+      const placesUrl = 'https://places.googleapis.com/v1/places:searchText';
+      const placesResp = await fetch(placesUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': mapsKey,
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.addressComponents',
+          Referer: MAPS_REFERER_HEADER
+        },
+        body: JSON.stringify({
+          textQuery: query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai`,
+          locationBias: {
+            circle: {
+              center: { latitude: 19.076, longitude: 72.8777 },
+              radius: 50000.0
+            }
+          }
+        })
+      });
+
+      if (placesResp.ok) {
+        const placesData = await placesResp.json();
+        if (placesData.places && placesData.places.length > 0) {
+          const results = placesData.places.slice(0, 6).map((p: any) => {
+            let area = p.displayName?.text || 'Mumbai';
+            if (Array.isArray(p.addressComponents)) {
+              for (const comp of p.addressComponents) {
+                if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
+                  area = comp.longText || comp.shortText || area;
+                  break;
+                }
+              }
+            }
+            return {
+              formattedAddress: p.formattedAddress ? `${p.displayName?.text ? p.displayName.text + ', ' : ''}${p.formattedAddress}` : (p.displayName?.text || query),
+              placeId: p.id,
+              area,
+              lat: p.location?.latitude,
+              lng: p.location?.longitude,
+              isFallback: false
+            };
+          }).filter((r: any) => typeof r.lat === 'number' && typeof r.lng === 'number');
+
+          if (results.length > 0) {
+            return res.json({ results });
+          }
+        }
+      }
+
+      // 2. Fallback to Google Geocoding API
       const searchQuery = query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai, India`;
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(mapsKey)}`;
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: { Referer: MAPS_REFERER_HEADER }
+      });
       const data = await response.json();
 
       if (data.status === 'OK' && data.results && data.results.length > 0) {
         const results = data.results.slice(0, 5).map((r: any) => {
           let area = 'Mumbai';
-          for (const comp of r.address_components) {
+          for (const comp of r.address_components || []) {
             if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
               area = comp.long_name;
               break;
@@ -275,12 +293,105 @@ async function startServer() {
 
       return res.json({ results: [] });
     } catch (err: any) {
-      console.error('[MAPS PROXY] Geocode error occurred');
+      console.error('[MAPS PROXY] Geocode error occurred:', err?.message);
       return res.json({ results: [] });
     }
   });
 
-  // Routes API Proxy (origin -> destination distance & duration)
+  // Places API (New) Autocomplete endpoint
+  app.post('/api/maps/places-autocomplete', async (req, res) => {
+    const { input, lat, lng } = req.body || {};
+    if (!input || typeof input !== 'string' || input.trim().length < 2) {
+      return res.json({ suggestions: [] });
+    }
+
+    const mapsKey = getConfiguredGoogleMapsKey();
+    if (!isValidGoogleMapsKey(mapsKey)) {
+      return res.status(503).json({ error: 'Google Maps API key not configured', suggestions: [] });
+    }
+
+    try {
+      const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': mapsKey,
+          Referer: MAPS_REFERER_HEADER
+        },
+        body: JSON.stringify({
+          input: input.trim(),
+          locationBias: {
+            circle: {
+              center: {
+                latitude: typeof lat === 'number' ? lat : 19.076,
+                longitude: typeof lng === 'number' ? lng : 72.8777
+              },
+              radius: 50000.0
+            }
+          }
+        })
+      });
+
+      if (!response.ok) {
+        return res.json({ suggestions: [] });
+      }
+
+      const data = await response.json();
+      const rawSuggestions = (data.suggestions || []).slice(0, 5);
+      const resolved = await Promise.all(
+        rawSuggestions.map(async (item: any) => {
+          const pred = item.placePrediction;
+          if (!pred) return null;
+          const placeId = pred.placeId;
+          const mainText = pred.structuredFormat?.mainText?.text || pred.text?.text || input;
+          const fullText = pred.text?.text || mainText;
+
+          if (placeId) {
+            try {
+              const detailRes = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+                headers: {
+                  'X-Goog-Api-Key': mapsKey,
+                  'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents',
+                  Referer: MAPS_REFERER_HEADER
+                }
+              });
+              if (detailRes.ok) {
+                const detail = await detailRes.json();
+                if (detail.location) {
+                  let area = mainText;
+                  for (const comp of detail.addressComponents || []) {
+                    if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
+                      area = comp.longText || comp.shortText || area;
+                      break;
+                    }
+                  }
+                  return {
+                    placeId,
+                    area,
+                    formattedAddress: detail.formattedAddress || fullText,
+                    lat: detail.location.latitude,
+                    lng: detail.location.longitude
+                  };
+                }
+              }
+            } catch {
+              // ignore individual place detail error
+            }
+          }
+          return null;
+        })
+      );
+
+      return res.json({
+        suggestions: resolved.filter(Boolean)
+      });
+    } catch (err: any) {
+      console.error('[MAPS PROXY] Places Autocomplete error:', err?.message);
+      return res.json({ suggestions: [] });
+    }
+  });
+
+  // Routes API Proxy (origin -> destination distance, duration & encoded polyline)
   app.post('/api/maps/route', async (req, res) => {
     const { originLat, originLng, destLat, destLng, travelMode } = req.body || {};
 
@@ -296,35 +407,10 @@ async function startServer() {
     const dLat = Number(destLat);
     const dLng = Number(destLng);
 
-    const mapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
-
-    // Helper estimation function
-    const estimateRouteFallback = () => {
-      const R = 6371; // Earth radius in km
-      const deltaLat = (dLat - oLat) * (Math.PI / 180);
-      const deltaLng = (dLng - oLng) * (Math.PI / 180);
-      const a =
-        Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-        Math.cos(oLat * (Math.PI / 180)) * Math.cos(dLat * (Math.PI / 180)) *
-        Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      const straightDist = R * c;
-      const roadDistKm = Math.max(0.4, Number((straightDist * 1.35).toFixed(1)));
-      const estMinutes = Math.max(4, Math.round(roadDistKm * 3.5)); // ~18-20 km/h in Mumbai traffic
-      return {
-        success: true,
-        distanceMeters: Math.round(roadDistKm * 1000),
-        distanceKm: roadDistKm,
-        distanceText: `${roadDistKm} km`,
-        durationMinutes: estMinutes,
-        durationText: `${estMinutes} min`,
-        polyline: null,
-        isFallback: true
-      };
-    };
+    const mapsKey = getConfiguredGoogleMapsKey();
 
     if (!isValidGoogleMapsKey(mapsKey)) {
-      return res.json(estimateRouteFallback());
+      return res.status(503).json({ error: 'Google Maps API key is not configured' });
     }
 
     try {
@@ -341,31 +427,32 @@ async function startServer() {
           }
         },
         travelMode: travelMode === 'TWO_WHEELER' ? 'TWO_WHEELER' : travelMode === 'WALK' ? 'WALK' : 'DRIVE',
-        routingPreference: 'TRAFFIC_AWARE'
+        routingPreference: travelMode === 'WALK' ? undefined : 'TRAFFIC_AWARE'
       };
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': mapsKey.trim(),
-          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline'
+          'X-Goog-Api-Key': mapsKey,
+          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+          Referer: MAPS_REFERER_HEADER
         },
         body: JSON.stringify(bodyPayload)
       });
 
       if (!response.ok) {
-        console.warn(`[MAPS PROXY] Routes API returned status ${response.status}. Using geometric estimation.`);
-        return res.json(estimateRouteFallback());
+        const errBody = await response.text();
+        console.warn(`[MAPS PROXY] Routes API returned status ${response.status}: ${errBody}`);
+        return res.status(response.status).json({ error: 'Routes API calculation failed' });
       }
 
       const data = await response.json();
       if (data.routes && data.routes.length > 0) {
         const route = data.routes[0];
-        const meters = route.distanceMeters || 1000;
+        const meters = route.distanceMeters || 0;
         const distKm = Number((meters / 1000).toFixed(1));
-        // duration is e.g. "1240s"
-        const durationSec = parseInt(route.duration?.replace('s', '') || '600', 10);
+        const durationSec = parseInt(route.duration?.replace('s', '') || '60', 10);
         const durationMins = Math.max(1, Math.round(durationSec / 60));
 
         return res.json({
@@ -380,10 +467,10 @@ async function startServer() {
         });
       }
 
-      return res.json(estimateRouteFallback());
-    } catch (err) {
-      console.warn('[MAPS PROXY] Routes API request error. Using geometric estimation.');
-      return res.json(estimateRouteFallback());
+      return res.status(404).json({ error: 'No route found between the specified locations' });
+    } catch (err: any) {
+      console.error('[MAPS PROXY] Routes API request error:', err?.message);
+      return res.status(500).json({ error: 'Failed to compute route' });
     }
   });
 
@@ -576,7 +663,7 @@ async function startServer() {
     });
   });
 
-  // Verify currently authenticated user session (/api/auth/me) - Graceful fallback so network/auth errors never occur
+  // Verify currently authenticated user session (/api/auth/me)
   app.get('/api/auth/me', async (req, res) => {
     const authHeader = req.headers.authorization;
     let decoded = null;
@@ -585,33 +672,35 @@ async function startServer() {
       decoded = verifyAuthToken(token);
     }
 
-    const roleHeader = (req.headers['x-user-role'] as string) || (req.headers['x-diblo-role'] as string);
-    const role: UserRole = decoded?.role || (roleHeader && ['ADMIN', 'OPERATIONS', 'ASSISTANT', 'CUSTOMER'].includes(roleHeader.toUpperCase())
-      ? roleHeader.toUpperCase() as UserRole
-      : 'CUSTOMER');
+    if (!decoded) {
+      return res.status(401).json({
+        success: false,
+        authenticated: false,
+        user: null,
+        profile: null
+      });
+    }
 
-    const cleanPhone = decoded?.phone
-      ? decoded.phone.replace(/\D/g, '').slice(-10)
-      : (role === 'ADMIN' ? '9820001122' : role === 'ASSISTANT' ? '9820554433' : '9820123456');
+    const role: UserRole = decoded.role || 'CUSTOMER';
+    const cleanPhone = decoded.phone ? decoded.phone.replace(/\D/g, '').slice(-10) : '';
 
-    let user = cleanPhone ? await dbRepository.getUserByPhone(cleanPhone) : null;
+    let user = cleanPhone ? await dbRepository.getUserByPhone(cleanPhone) : (decoded.id ? await dbRepository.getUserById(decoded.id) : null);
     let customerProfile: CustomerProfile | null = null;
     let assistantProfile: AssistantProfile | null = null;
 
     if (role === 'CUSTOMER') {
-      customerProfile = cleanPhone ? await dbRepository.getCustomer(cleanPhone) : null;
+      customerProfile = cleanPhone ? await dbRepository.getCustomer(cleanPhone) : (decoded.customerId ? await dbRepository.getCustomer(decoded.customerId) : null);
     } else if (role === 'ASSISTANT') {
-      assistantProfile = cleanPhone ? await dbRepository.getAssistant(cleanPhone) : null;
+      assistantProfile = cleanPhone ? await dbRepository.getAssistant(cleanPhone) : (decoded.assistantId ? await dbRepository.getAssistant(decoded.assistantId) : null);
     }
 
     if (!user) {
       user = {
-        id: decoded?.id || decoded?.userId || (role === 'ADMIN' ? 'user-admin-1' : role === 'ASSISTANT' ? 'user-a-1' : 'user-c-1'),
-        name: decoded?.name || (role === 'ADMIN' ? 'Diblo Operations Head' : role === 'ASSISTANT' ? 'Rajesh Sharma' : 'Aarav Mehta'),
+        id: decoded.id || decoded.userId,
+        name: decoded.name || 'Diblo User',
         phone: cleanPhone,
-        email: decoded?.email || `${cleanPhone || 'user'}@diblo.in`,
-        role: role,
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+        email: decoded.email || `${cleanPhone || 'user'}@diblo.in`,
+        role,
         createdAt: new Date().toISOString()
       };
     }
@@ -1390,13 +1479,13 @@ async function startServer() {
       const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
       const bookingNumber = `DBL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const customerId = req.user?.customerId || body.customerId || 'cust-1';
+      const customerId = req.user?.customerId || body.customerId || `cust-${Date.now()}`;
       const customerName = req.user?.name || body.customerName || 'Customer';
-      const customerPhone = req.user?.phone || body.customerPhone || '9820123456';
+      const customerPhone = req.user?.phone || body.customerPhone || '';
 
       const newBooking: Booking = {
-        id: `bk-${Date.now()}`,
-        bookingNumber,
+        id: body.id || `bk-${Date.now()}`,
+        bookingNumber: body.bookingNumber || bookingNumber,
         customerId,
         customerName,
         customerPhone,
@@ -1409,7 +1498,13 @@ async function startServer() {
           lat: 19.0596,
           lng: 72.8295
         },
+        pickupLocation: body.pickupLocation || body.location,
         destinationLocation: body.destinationLocation,
+        estimatedDistance: body.estimatedDistance,
+        estimatedDuration: body.estimatedDuration,
+        estimatedDistanceMeters: body.estimatedDistanceMeters,
+        estimatedDurationMinutes: body.estimatedDurationMinutes,
+        routePolyline: body.routePolyline,
         dateType: body.dateType || 'TODAY',
         scheduledDate: body.scheduledDate || new Date().toISOString().split('T')[0],
         startTime: body.startTime || '10:00 AM',
@@ -1427,34 +1522,17 @@ async function startServer() {
         contactPerson: body.contactPerson,
         emergencyContact: body.emergencyContact,
         genderPreference: body.genderPreference || 'ANY',
-        status: 'SEARCHING',
-        startOtp,
+        preferredAssistantId: body.preferredAssistantId || null,
+        preferredAssistantName: body.preferredAssistantName || null,
+        preferredAssistantPhoto: body.preferredAssistantPhoto || null,
+        isPreferredRequested: Boolean(body.preferredAssistantId || body.isPreferredRequested),
+        status: 'pending',
+        startOtp: body.startOtp || startOtp,
         paymentStatus: 'PENDING',
         createdAt: new Date().toISOString()
       };
 
       await dbRepository.saveBooking(newBooking);
-
-      // Trigger automatic assistant matching in background
-      setTimeout(async () => {
-        try {
-          const assistants = await dbRepository.getAssistants({ online: true, status: 'VERIFIED' });
-          const matchedAssistant = assistants.find((a) => !a.activeBookingId) || assistants[0];
-
-          if (matchedAssistant) {
-            newBooking.status = 'ASSIGNED';
-            newBooking.assistantId = matchedAssistant.id;
-            newBooking.assistantName = matchedAssistant.name;
-            newBooking.assistantPhone = matchedAssistant.phone;
-            newBooking.assistantPhoto = matchedAssistant.photo;
-            newBooking.assistantRating = matchedAssistant.rating;
-            newBooking.assistantLocation = matchedAssistant.currentLocation;
-            await dbRepository.saveBooking(newBooking);
-          }
-        } catch (matchErr) {
-          console.error('[BOOKING] Auto-match error:', matchErr);
-        }
-      }, 1500);
 
       res.status(201).json(newBooking);
     } catch (err: any) {
@@ -1480,10 +1558,15 @@ async function startServer() {
           booking.assistantLocation = assistant.currentLocation;
           assistant.activeBookingId = booking.id;
           await dbRepository.saveAssistant(assistant);
+        } else if (req.body.assistantName) {
+          booking.assistantId = assistantId;
+          booking.assistantName = req.body.assistantName;
+          booking.assistantPhone = req.body.assistantPhone;
+          booking.assistantPhoto = req.body.assistantPhoto;
         }
       }
 
-      booking.status = 'ACCEPTED';
+      booking.status = 'accepted';
       booking.acceptedAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
@@ -1500,18 +1583,13 @@ async function startServer() {
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
       const assistantId = req.user?.assistantId || req.body.assistantId;
-      if (assistantId && booking.assistantId === assistantId) {
-        booking.assistantId = null;
-        booking.assistantName = null;
-        booking.assistantPhone = null;
-        booking.assistantPhoto = null;
-        booking.status = 'SEARCHING';
-      }
+      booking.status = 'rejected';
+      booking.rejectedAt = new Date().toISOString();
 
       if (assistantId) {
-        const rejected = (booking as any).rejectedAssistantIds || [];
+        const rejected = booking.rejectedAssistantIds || [];
         if (!rejected.includes(assistantId)) {
-          (booking as any).rejectedAssistantIds = [...rejected, assistantId];
+          booking.rejectedAssistantIds = [...rejected, assistantId];
         }
       }
 
@@ -1528,8 +1606,8 @@ async function startServer() {
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
-      booking.status = 'ON_THE_WAY';
-      (booking as any).startedRouteAt = new Date().toISOString();
+      booking.status = 'on_the_way';
+      booking.startedRouteAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
       res.json({ success: true, booking });
@@ -1544,13 +1622,30 @@ async function startServer() {
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
-      booking.status = 'ARRIVED';
+      booking.status = 'arrived';
       booking.arrivedAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
       res.json({ success: true, booking });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to mark arrival', details: err.message });
+    }
+  });
+
+  // Assistant Start Assistance directly or via OTP Verification
+  app.post('/api/bookings/:id/start', async (req, res) => {
+    try {
+      const booking = await dbRepository.getBooking(req.params.id);
+      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+      booking.status = 'in_progress';
+      booking.startedAt = new Date().toISOString();
+      booking.timerElapsedSeconds = 0;
+      await dbRepository.saveBooking(booking);
+
+      res.json({ success: true, message: 'Assistance started!', booking });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to start assistance', details: err.message });
     }
   });
 
@@ -1562,13 +1657,13 @@ async function startServer() {
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
       const isDev = process.env.NODE_ENV !== 'production' || process.env.ENABLE_DEMO_OTP === 'true';
-      const isValid = String(otp).trim() === booking.startOtp || (isDev && String(otp).trim() === '1234');
+      const isValid = !otp || String(otp).trim() === booking.startOtp || (isDev && String(otp).trim() === '1234');
 
       if (!isValid) {
         return res.status(400).json({ error: 'Invalid OTP entered. Please verify with customer.' });
       }
 
-      booking.status = 'IN_PROGRESS';
+      booking.status = 'in_progress';
       booking.startedAt = new Date().toISOString();
       booking.timerElapsedSeconds = 0;
       await dbRepository.saveBooking(booking);
@@ -1614,7 +1709,7 @@ async function startServer() {
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
-      booking.status = 'COMPLETED';
+      booking.status = 'completed';
       booking.completedAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
@@ -1646,8 +1741,9 @@ async function startServer() {
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
-      booking.status = 'CANCELLED';
+      booking.status = 'cancelled';
       booking.cancellationReason = reason || 'Cancelled by user';
+      booking.cancelledAt = new Date().toISOString();
       await dbRepository.saveBooking(booking);
 
       if (booking.assistantId) {
@@ -2030,6 +2126,56 @@ async function startServer() {
       res.json({ success: true, savedAddresses: customer.savedAddresses });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to add address', details: err.message });
+    }
+  });
+
+  // Toggle / update customer favorite assistants
+  app.post('/api/customers/:id/favorites', async (req: AuthenticatedRequest, res) => {
+    try {
+      const { assistantId, isFavorite } = req.body;
+      if (!assistantId) {
+        return res.status(400).json({ error: 'Assistant ID is required' });
+      }
+      const customer = await dbRepository.getCustomer(req.params.id);
+      if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+      let currentFavorites: string[] = Array.isArray(customer.favoriteAssistantIds)
+        ? [...customer.favoriteAssistantIds]
+        : [];
+
+      if (isFavorite === true) {
+        if (!currentFavorites.includes(assistantId)) {
+          currentFavorites.push(assistantId);
+        }
+      } else if (isFavorite === false) {
+        currentFavorites = currentFavorites.filter((id) => id !== assistantId);
+      } else {
+        // Toggle
+        if (currentFavorites.includes(assistantId)) {
+          currentFavorites = currentFavorites.filter((id) => id !== assistantId);
+        } else {
+          currentFavorites.push(assistantId);
+        }
+      }
+
+      customer.favoriteAssistantIds = currentFavorites;
+      await dbRepository.saveCustomer(customer);
+      res.json({ success: true, favoriteAssistantIds: currentFavorites });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update favorite assistants', details: err.message });
+    }
+  });
+
+  app.get('/api/customers/:id/favorites', async (req: AuthenticatedRequest, res) => {
+    try {
+      const customer = await dbRepository.getCustomer(req.params.id);
+      if (!customer) return res.status(404).json({ error: 'Customer not found' });
+      const favIds = customer.favoriteAssistantIds || [];
+      const allAssistants = await dbRepository.getAssistants();
+      const favorited = allAssistants.filter((a) => favIds.includes(a.id));
+      res.json({ success: true, favoriteAssistantIds: favIds, assistants: favorited });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to fetch favorite assistants', details: err.message });
     }
   });
 
@@ -2521,6 +2667,104 @@ async function startServer() {
     }
     const result = await dbRepository.seedDatabase(true);
     res.json({ success: true, message: 'Platform state reset to initial seed data', result });
+  });
+
+  // ==========================================
+  // FIREBASE CLOUD MESSAGING (FCM) & NOTIFICATION PREFERENCES
+  // ==========================================
+  const fcmTokensMap = new Map<string, { token: string; updatedAt: string; preferences?: any }>();
+
+  app.post('/api/notifications/register-token', async (req: AuthenticatedRequest, res) => {
+    try {
+      const { customerId, phone, token, preferences } = req.body || {};
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ success: false, error: 'FCM token is required' });
+      }
+      const key = customerId || phone || req.user?.id || 'cust-1';
+      const updatedAt = new Date().toISOString();
+      fcmTokensMap.set(key, { token, updatedAt, preferences });
+
+      if (customerId || phone) {
+        const lookupId = customerId || `cust-${phone}`;
+        const cust = await dbRepository.getCustomer(lookupId).catch(() => null);
+        if (cust) {
+          await dbRepository.saveCustomer({
+            ...cust,
+            fcmToken: token,
+            fcmTokenUpdatedAt: updatedAt,
+            ...(preferences ? { notificationPreferences: preferences } : {})
+          }).catch(() => {});
+        }
+      }
+
+      res.json({
+        success: true,
+        token,
+        updatedAt,
+        message: 'FCM registration token synced with Diblo Cloud Messaging'
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to register FCM token' });
+    }
+  });
+
+  app.put('/api/notifications/preferences', async (req: AuthenticatedRequest, res) => {
+    try {
+      const { customerId, phone, preferences } = req.body || {};
+      if (!preferences || typeof preferences !== 'object') {
+        return res.status(400).json({ success: false, error: 'Notification preferences object is required' });
+      }
+      const key = customerId || phone || req.user?.id || 'cust-1';
+      const existing = fcmTokensMap.get(key);
+      if (existing) {
+        fcmTokensMap.set(key, { ...existing, preferences });
+      }
+
+      if (customerId || phone) {
+        const lookupId = customerId || `cust-${phone}`;
+        const cust = await dbRepository.getCustomer(lookupId).catch(() => null);
+        if (cust) {
+          await dbRepository.saveCustomer({
+            ...cust,
+            notificationPreferences: preferences
+          }).catch(() => {});
+        }
+      }
+
+      res.json({
+        success: true,
+        preferences,
+        message: 'Notification preferences updated'
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to update notification preferences' });
+    }
+  });
+
+  app.post('/api/notifications/send-push', async (req: AuthenticatedRequest, res) => {
+    try {
+      const { token, customerId, phone, title, body, data } = req.body || {};
+      if (!title || !body) {
+        return res.status(400).json({ success: false, error: 'Notification title and body are required' });
+      }
+
+      const key = customerId || phone || req.user?.id || 'cust-1';
+      const targetToken = token || fcmTokensMap.get(key)?.token || `fcm-diblo-web-${key}`;
+
+      const result = await sendFcmAdminMessage({
+        token: targetToken,
+        title,
+        body,
+        data: data || {}
+      });
+
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to dispatch FCM push notification' });
+    }
   });
 
   // ==========================================

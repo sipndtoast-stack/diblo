@@ -1,37 +1,35 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
 import {
-  Map,
-  AdvancedMarker,
-  useMap,
-  useMapsLibrary,
-  useApiLoadingStatus,
-  APILoadingStatus
-} from '@vis.gl/react-google-maps';
-import L from 'leaflet';
-import {
-  Search,
   MapPin,
   Crosshair,
-  Check,
+  Search,
   Loader2,
-  AlertCircle,
-  Building,
-  Info,
-  ExternalLink,
-  RefreshCw
+  CheckCircle2,
+  Navigation,
+  Sparkles,
+  Flag,
+  Route as RouteIcon,
+  Clock,
+  X
 } from 'lucide-react';
-import { useGoogleMaps } from './GoogleMapsProvider';
+import { useGoogleMapsConfig } from './GoogleMapsProvider';
 import { api } from '../../lib/api';
 
-export interface LocationPickerResult {
-  latitude: number;
-  longitude: number;
-  lat: number;
-  lng: number;
+export interface SelectedLocationData {
   address: string;
   area: string;
-  landmark?: string;
+  lat: number;
+  lng: number;
   placeId?: string;
+}
+
+export interface RouteCalculationSummary {
+  distanceText: string;
+  distanceKm: number;
+  durationText: string;
+  durationMinutes: number;
+  polyline?: string | null;
 }
 
 interface LocationPickerMapProps {
@@ -39,526 +37,743 @@ interface LocationPickerMapProps {
   initialLng?: number;
   initialAddress?: string;
   initialArea?: string;
-  initialPlaceId?: string;
-  onLocationSelected: (location: LocationPickerResult) => void;
+  onLocationSelect: (location: SelectedLocationData) => void;
+  destinationLocation?: SelectedLocationData | null;
+  onDestinationSelect?: (destination: SelectedLocationData | null, routeSummary?: RouteCalculationSummary | null) => void;
+  showDestinationInput?: boolean;
   height?: string;
-  showConfirmButton?: boolean;
-  onConfirm?: () => void;
 }
 
-// Inner component for controlling Google Map instance
-const GoogleMapController: React.FC<{
-  lat: number;
-  lng: number;
-  onMapClick: (lat: number, lng: number) => void;
-  onMarkerDragEnd: (lat: number, lng: number) => void;
-}> = ({ lat, lng, onMapClick, onMarkerDragEnd }) => {
+function decodeGooglePolyline(encoded: string): Array<{ lat: number; lng: number }> {
+  const poly: Array<{ lat: number; lng: number }> = [];
+  let index = 0;
+  const len = encoded.length;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < len) {
+    let b: number;
+    let shift = 0;
+    let result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    poly.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return poly;
+}
+
+const MapController: React.FC<{
+  pickupPos: { lat: number; lng: number };
+  destPos?: { lat: number; lng: number } | null;
+  encodedPolyline?: string | null;
+  shouldPan: boolean;
+  onPanComplete: () => void;
+}> = ({ pickupPos, destPos, encodedPolyline, shouldPan, onPanComplete }) => {
   const map = useMap();
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
 
   useEffect(() => {
-    if (map) {
-      map.panTo({ lat, lng });
-    }
-  }, [lat, lng, map]);
-
-  return (
-    <Map
-      defaultCenter={{ lat, lng }}
-      defaultZoom={15}
-      mapId="DEMO_MAP_ID"
-      gestureHandling="greedy"
-      disableDefaultUI={false}
-      zoomControl={true}
-      streetViewControl={false}
-      mapTypeControl={false}
-      fullscreenControl={false}
-      internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-      onClick={(e) => {
-        if (e.detail?.latLng) {
-          onMapClick(e.detail.latLng.lat, e.detail.latLng.lng);
+    if (map && shouldPan) {
+      if (destPos) {
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend(pickupPos);
+        bounds.extend(destPos);
+        map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
+      } else {
+        map.panTo(pickupPos);
+        if ((map.getZoom() || 14) < 15) {
+          map.setZoom(15);
         }
-      }}
-      className="w-full h-full"
-      style={{ width: '100%', height: '100%', minHeight: '260px' }}
-    >
-      <AdvancedMarker
-        position={{ lat, lng }}
-        draggable={true}
-        onDragEnd={(e) => {
-          if (e.latLng) {
-            onMarkerDragEnd(e.latLng.lat(), e.latLng.lng());
-          }
-        }}
-      >
-        <div className="relative flex flex-col items-center cursor-pointer group">
-          <div className="w-10 h-10 rounded-full bg-[#F42F73] text-white flex items-center justify-center border-2 border-white shadow-xl animate-bounce">
-            <MapPin className="w-5 h-5 text-white" />
-          </div>
-          <div className="w-2.5 h-2.5 bg-[#F42F73] rotate-45 -mt-1.5 shadow-md"></div>
-          <div className="mt-1 bg-[#14213D] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-            Service Location
-          </div>
-        </div>
-      </AdvancedMarker>
-    </Map>
-  );
-};
-
-// Leaflet fallback controller when Google Maps is not configured or restricted
-const LeafletLocationPickerController: React.FC<{
-  lat: number;
-  lng: number;
-  onMapClick: (lat: number, lng: number) => void;
-  onMarkerDragEnd: (lat: number, lng: number) => void;
-}> = ({ lat, lng, onMapClick, onMarkerDragEnd }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<L.Marker | null>(null);
+      }
+      onPanComplete();
+    }
+  }, [map, pickupPos, destPos, shouldPan, onPanComplete]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!map || typeof google === 'undefined') return;
 
-    if (!mapRef.current) {
-      const map = L.map(containerRef.current, {
-        zoomControl: true,
-        attributionControl: false
-      }).setView([lat, lng], 15);
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }).addTo(map);
-
-      const customIcon = L.divIcon({
-        className: 'custom-picker-pin',
-        html: `
-          <div class="relative flex flex-col items-center">
-            <div class="w-9 h-9 rounded-full bg-[#F42F73] text-white flex items-center justify-center border-2 border-white shadow-xl">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
-                <path fill-rule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
-              </svg>
-            </div>
-            <div class="w-2 h-2 bg-[#F42F73] rotate-45 -mt-1 shadow-md"></div>
-          </div>
-        `,
-        iconSize: [40, 48],
-        iconAnchor: [20, 24]
-      });
-
-      const marker = L.marker([lat, lng], { icon: customIcon, draggable: true }).addTo(map);
-      marker.on('dragend', (e) => {
-        const pos = e.target.getLatLng();
-        onMarkerDragEnd(pos.lat, pos.lng);
-      });
-
-      map.on('click', (e) => {
-        onMapClick(e.latlng.lat, e.latlng.lng);
-      });
-
-      markerRef.current = marker;
-      mapRef.current = map;
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
     }
-  }, []);
 
-  useEffect(() => {
-    if (mapRef.current && markerRef.current) {
-      markerRef.current.setLatLng([lat, lng]);
-      mapRef.current.setView([lat, lng]);
+    if (destPos) {
+      const path = encodedPolyline ? decodeGooglePolyline(encodedPolyline) : [pickupPos, destPos];
+      const line = new google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor: '#4F46E5',
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
+        map
+      });
+      polylineRef.current = line;
     }
-  }, [lat, lng]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+    return () => {
+      if (polylineRef.current) {
+        polylineRef.current.setMap(null);
+        polylineRef.current = null;
+      }
+    };
+  }, [map, pickupPos, destPos, encodedPolyline]);
+
+  return null;
 };
+
+interface PlaceSuggestionItem {
+  placeId: string;
+  mainText: string;
+  secondaryText: string;
+  description: string;
+  lat?: number;
+  lng?: number;
+}
 
 export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
-  initialLat = 19.0596,
-  initialLng = 72.8295,
-  initialAddress = 'Bandra West, Mumbai, Maharashtra',
+  initialLat = 19.0607,
+  initialLng = 72.8258,
+  initialAddress = '',
   initialArea = 'Bandra West',
-  initialPlaceId,
-  onLocationSelected,
-  height = '320px',
-  showConfirmButton = true,
-  onConfirm
+  onLocationSelect,
+  destinationLocation = null,
+  onDestinationSelect,
+  showDestinationInput = false,
+  height = '260px'
 }) => {
-  const { isConfigured, authError, authErrorDetails } = useGoogleMaps();
-  const apiStatus = useApiLoadingStatus();
-  const placesLib = useMapsLibrary('places');
+  const { isConfigured, isLoading: isConfigLoading } = useGoogleMapsConfig();
 
-  const [selectedLat, setSelectedLat] = useState<number>(initialLat);
-  const [selectedLng, setSelectedLng] = useState<number>(initialLng);
-  const [formattedAddress, setFormattedAddress] = useState<string>(initialAddress);
-  const [selectedArea, setSelectedArea] = useState<string>(initialArea);
-  const [placeId, setPlaceId] = useState<string | undefined>(initialPlaceId);
+  const [activePinMode, setActivePinMode] = useState<'PICKUP' | 'DESTINATION'>('PICKUP');
+  const [markerPos, setMarkerPos] = useState<{ lat: number; lng: number }>({
+    lat: initialLat || 19.0607,
+    lng: initialLng || 72.8258
+  });
+  const [destMarkerPos, setDestMarkerPos] = useState<{ lat: number; lng: number } | null>(
+    destinationLocation ? { lat: destinationLocation.lat, lng: destinationLocation.lng } : null
+  );
+  const [shouldPan, setShouldPan] = useState<boolean>(false);
 
-  // Search state
+  // Pickup Search & Reverse Geocode State
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<
-    Array<{
-      formattedAddress: string;
-      area: string;
-      lat: number;
-      lng: number;
-      placeId?: string;
-    }>
-  >([]);
+  const [searchResults, setSearchResults] = useState<PlaceSuggestionItem[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [showSearchResults, setShowSearchResults] = useState<boolean>(false);
 
-  // Geolocation state
-  const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
+  // Destination Search State
+  const [destQuery, setDestQuery] = useState<string>(destinationLocation?.address || '');
+  const [destResults, setDestResults] = useState<PlaceSuggestionItem[]>([]);
+  const [isSearchingDest, setIsSearchingDest] = useState<boolean>(false);
+
   const [isReverseGeocoding, setIsReverseGeocoding] = useState<boolean>(false);
+  const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
+  const [resolvedAddress, setResolvedAddress] = useState<string>(initialAddress);
+  const [resolvedArea, setResolvedArea] = useState<string>(initialArea);
+  const [destResolvedAddress, setDestResolvedAddress] = useState<string>(destinationLocation?.address || '');
+  const [destResolvedArea, setDestResolvedArea] = useState<string>(destinationLocation?.area || '');
 
-  // Reverse Geocoding handler
-  const handleLocationUpdate = useCallback(
-    async (lat: number, lng: number) => {
-      setSelectedLat(lat);
-      setSelectedLng(lng);
-      setIsReverseGeocoding(true);
-      setLocationError(null);
+  // Route State (Google Routes API)
+  const [routeSummary, setRouteSummary] = useState<RouteCalculationSummary | null>(null);
+  const [isCalculatingRoute, setIsCalculatingRoute] = useState<boolean>(false);
 
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const destTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (initialLat && initialLng && (Math.abs(initialLat - markerPos.lat) > 0.0001 || Math.abs(initialLng - markerPos.lng) > 0.0001)) {
+      setMarkerPos({ lat: initialLat, lng: initialLng });
+      setShouldPan(true);
+    }
+  }, [initialLat, initialLng]);
+
+  // Calculate real route via Google Routes API whenever both pickup and destination are set
+  const computeRouteBetweenPoints = useCallback(
+    async (
+      pickup: { lat: number; lng: number },
+      dest: { lat: number; lng: number; address: string; area: string; placeId?: string } | null
+    ) => {
+      if (!dest) {
+        setRouteSummary(null);
+        onDestinationSelect?.(null, null);
+        return;
+      }
+      setIsCalculatingRoute(true);
       try {
-        const res = await api.reverseGeocode(lat, lng);
-        if (res && res.formattedAddress) {
-          setFormattedAddress(res.formattedAddress);
-          const area = res.area || 'Mumbai';
-          setSelectedArea(area);
-          setPlaceId(res.placeId);
-          onLocationSelected({
-            latitude: lat,
-            longitude: lng,
-            lat,
-            lng,
-            address: res.formattedAddress,
-            area,
-            placeId: res.placeId
+        const res = await api.getRoute(pickup.lat, pickup.lng, dest.lat, dest.lng, 'DRIVE');
+        const summary: RouteCalculationSummary = {
+          distanceText: res.distanceText,
+          distanceKm: res.distanceKm,
+          durationText: res.durationText,
+          durationMinutes: res.durationMinutes,
+          polyline: res.polyline
+        };
+        setRouteSummary(summary);
+        onDestinationSelect?.(
+          {
+            address: dest.address,
+            area: dest.area,
+            lat: dest.lat,
+            lng: dest.lng,
+            placeId: dest.placeId
+          },
+          summary
+        );
+      } catch {
+        setRouteSummary(null);
+      } finally {
+        setIsCalculatingRoute(false);
+      }
+    },
+    [onDestinationSelect]
+  );
+
+  // Reverse geocode coordinates using Google Geocoding API
+  const fetchAddressForCoords = useCallback(
+    async (lat: number, lng: number, target: 'PICKUP' | 'DESTINATION' = 'PICKUP') => {
+      setIsReverseGeocoding(true);
+      try {
+        const data = await api.reverseGeocode(lat, lng);
+        if (target === 'PICKUP') {
+          setResolvedAddress(data.formattedAddress);
+          setResolvedArea(data.area);
+          onLocationSelect({
+            address: data.formattedAddress,
+            area: data.area,
+            lat: data.lat,
+            lng: data.lng,
+            placeId: data.placeId
+          });
+          if (destMarkerPos && destResolvedAddress) {
+            await computeRouteBetweenPoints(
+              { lat: data.lat, lng: data.lng },
+              {
+                lat: destMarkerPos.lat,
+                lng: destMarkerPos.lng,
+                address: destResolvedAddress,
+                area: destResolvedArea || 'Mumbai'
+              }
+            );
+          }
+        } else {
+          setDestResolvedAddress(data.formattedAddress);
+          setDestResolvedArea(data.area);
+          setDestQuery(data.formattedAddress);
+          await computeRouteBetweenPoints(markerPos, {
+            lat: data.lat,
+            lng: data.lng,
+            address: data.formattedAddress,
+            area: data.area,
+            placeId: data.placeId
           });
         }
-      } catch {
-        const fallbackAddr = `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E, Mumbai`;
-        setFormattedAddress(fallbackAddr);
-        onLocationSelected({
-          latitude: lat,
-          longitude: lng,
-          lat,
-          lng,
-          address: fallbackAddr,
-          area: selectedArea
-        });
+      } catch (err) {
+        console.error('Reverse geocode error:', err);
       } finally {
         setIsReverseGeocoding(false);
       }
     },
-    [onLocationSelected, selectedArea]
+    [onLocationSelect, destMarkerPos, destResolvedAddress, destResolvedArea, markerPos, computeRouteBetweenPoints]
   );
 
-  // Current GPS Location handler
-  const handleGetCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser.');
+  // Initial reverse geocode if address is empty
+  useEffect(() => {
+    if (!initialAddress && initialLat && initialLng) {
+      fetchAddressForCoords(initialLat, initialLng, 'PICKUP');
+    }
+  }, []);
+
+  // Search Places using Google Places API (New) Autocomplete + Geocoding fallback
+  const performPlacesSearch = async (
+    queryText: string,
+    setResults: React.Dispatch<React.SetStateAction<PlaceSuggestionItem[]>>,
+    setLoading: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
+    if (queryText.trim().length < 2) {
+      setResults([]);
       return;
     }
+    setLoading(true);
+    try {
+      const autoRes = await api.searchPlacesAutocomplete(queryText, markerPos.lat, markerPos.lng);
+      if (autoRes.suggestions && autoRes.suggestions.length > 0) {
+        setResults(autoRes.suggestions);
+        setLoading(false);
+        return;
+      }
 
-    setIsLocating(true);
-    setLocationError(null);
+      // Fallback to Geocoding API
+      const geoData = await api.geocodeAddress(queryText);
+      const mapped: PlaceSuggestionItem[] = (geoData.results || []).map((r, i) => ({
+        placeId: r.placeId || `geo-${i}`,
+        mainText: r.area || r.formattedAddress.split(',')[0],
+        secondaryText: r.formattedAddress,
+        description: r.formattedAddress,
+        lat: r.lat,
+        lng: r.lng
+      }));
+      setResults(mapped);
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        setIsLocating(false);
-        handleLocationUpdate(lat, lng);
-      },
-      (error) => {
-        setIsLocating(false);
-        if (error.code === error.PERMISSION_DENIED) {
-          setLocationError(
-            'Location permission is required to automatically detect your location. You can also search for an address manually.'
-          );
-        } else {
-          setLocationError('Could not retrieve GPS location. Please search for an address.');
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      performPlacesSearch(value, setSearchResults, setIsSearching);
+    }, 300);
+  };
+
+  const handleDestSearchChange = (value: string) => {
+    setDestQuery(value);
+    if (destTimeoutRef.current) clearTimeout(destTimeoutRef.current);
+    if (!value.trim()) {
+      setDestResults([]);
+      setDestMarkerPos(null);
+      setDestResolvedAddress('');
+      setDestResolvedArea('');
+      setRouteSummary(null);
+      onDestinationSelect?.(null, null);
+      return;
+    }
+    destTimeoutRef.current = setTimeout(() => {
+      performPlacesSearch(value, setDestResults, setIsSearchingDest);
+    }, 300);
+  };
+
+  const resolvePlaceSuggestion = async (item: PlaceSuggestionItem): Promise<SelectedLocationData | null> => {
+    if (item.lat !== undefined && item.lng !== undefined) {
+      return {
+        address: item.description,
+        area: item.mainText || 'Mumbai',
+        lat: item.lat,
+        lng: item.lng,
+        placeId: item.placeId
+      };
+    }
+    if (item.placeId && !item.placeId.startsWith('geo-')) {
+      const details = await api.getPlaceDetails(item.placeId);
+      if (details.success && details.lat !== undefined && details.lng !== undefined) {
+        return {
+          address: details.formattedAddress || item.description,
+          area: details.area || item.mainText || 'Mumbai',
+          lat: details.lat,
+          lng: details.lng,
+          placeId: details.placeId
+        };
+      }
+    }
+    const geo = await api.geocodeAddress(item.description);
+    if (geo.results && geo.results.length > 0) {
+      const first = geo.results[0];
+      return {
+        address: first.formattedAddress,
+        area: first.area,
+        lat: first.lat,
+        lng: first.lng,
+        placeId: first.placeId
+      };
+    }
+    return null;
+  };
+
+  const handleSelectPickupSuggestion = async (item: PlaceSuggestionItem) => {
+    setSearchResults([]);
+    setIsSearching(true);
+    const resolved = await resolvePlaceSuggestion(item);
+    setIsSearching(false);
+    if (!resolved) return;
+
+    setMarkerPos({ lat: resolved.lat, lng: resolved.lng });
+    setShouldPan(true);
+    setResolvedAddress(resolved.address);
+    setResolvedArea(resolved.area);
+    setSearchQuery('');
+    onLocationSelect(resolved);
+
+    if (destMarkerPos && destResolvedAddress) {
+      await computeRouteBetweenPoints(
+        { lat: resolved.lat, lng: resolved.lng },
+        {
+          lat: destMarkerPos.lat,
+          lng: destMarkerPos.lng,
+          address: destResolvedAddress,
+          area: destResolvedArea || 'Mumbai'
         }
+      );
+    }
+  };
+
+  const handleSelectDestSuggestion = async (item: PlaceSuggestionItem) => {
+    setDestResults([]);
+    setIsSearchingDest(true);
+    const resolved = await resolvePlaceSuggestion(item);
+    setIsSearchingDest(false);
+    if (!resolved) return;
+
+    setDestMarkerPos({ lat: resolved.lat, lng: resolved.lng });
+    setDestResolvedAddress(resolved.address);
+    setDestResolvedArea(resolved.area);
+    setDestQuery(resolved.address);
+    setShouldPan(true);
+
+    await computeRouteBetweenPoints(markerPos, resolved);
+  };
+
+  const handleClearDestination = () => {
+    setDestQuery('');
+    setDestResults([]);
+    setDestMarkerPos(null);
+    setDestResolvedAddress('');
+    setDestResolvedArea('');
+    setRouteSummary(null);
+    setActivePinMode('PICKUP');
+    onDestinationSelect?.(null, null);
+  };
+
+  const handleUseCurrentGps = () => {
+    if (!('geolocation' in navigator)) return;
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        setMarkerPos({ lat, lng });
+        setShouldPan(true);
+        await fetchAddressForCoords(lat, lng, 'PICKUP');
+        setIsLocatingGps(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      () => {
+        setIsLocatingGps(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
-  // Autocomplete search using Places API (New) or server proxy fallback
-  useEffect(() => {
-    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
-      setSearchResults([]);
-      setShowSearchResults(false);
-      return;
+  const handleMapClick = (e: any) => {
+    const latLng = e?.detail?.latLng;
+    if (latLng && typeof latLng.lat === 'number' && typeof latLng.lng === 'number') {
+      const lat = Number(latLng.lat.toFixed(6));
+      const lng = Number(latLng.lng.toFixed(6));
+      if (activePinMode === 'DESTINATION' && showDestinationInput) {
+        setDestMarkerPos({ lat, lng });
+        fetchAddressForCoords(lat, lng, 'DESTINATION');
+      } else {
+        setMarkerPos({ lat, lng });
+        fetchAddressForCoords(lat, lng, 'PICKUP');
+      }
     }
-
-    const timer = setTimeout(async () => {
-      setIsSearching(true);
-
-      // Attempt client-side Places API Autocomplete if loaded
-      if (placesLib) {
-        try {
-          // Places API (New) autocomplete suggestions
-          if ((placesLib as any).AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
-            const resp = await (placesLib as any).AutocompleteSuggestion.fetchAutocompleteSuggestions({
-              input: searchQuery.trim(),
-              locationBias: {
-                center: { lat: 19.0760, lng: 72.8777 },
-                radius: 50000
-              }
-            });
-
-            if (resp.suggestions && resp.suggestions.length > 0) {
-              const parsed = await Promise.all(
-                resp.suggestions.slice(0, 5).map(async (s: any) => {
-                  const placePred = s.placePrediction;
-                  const text = placePred?.text?.toString() || searchQuery;
-                  const mainText = placePred?.mainText?.toString() || text;
-                  const pid = placePred?.placeId;
-
-                  // Geocode selected prediction or resolve location
-                  try {
-                    const place = placePred?.toPlace ? placePred.toPlace() : null;
-                    if (place && place.fetchFields) {
-                      await place.fetchFields({ fields: ['location', 'formattedAddress'] });
-                      const loc = place.location;
-                      if (loc) {
-                        return {
-                          formattedAddress: place.formattedAddress || text,
-                          area: mainText,
-                          lat: loc.lat(),
-                          lng: loc.lng(),
-                          placeId: pid
-                        };
-                      }
-                    }
-                  } catch {
-                    // fallback
-                  }
-
-                  return {
-                    formattedAddress: text,
-                    area: mainText,
-                    lat: 19.0596,
-                    lng: 72.8295,
-                    placeId: pid
-                  };
-                })
-              );
-
-              setSearchResults(parsed);
-              setShowSearchResults(true);
-              setIsSearching(false);
-              return;
-            }
-          }
-        } catch {
-          // Fall through to server-side geocoding
-        }
-      }
-
-      // Server-side Geocoding & Places Proxy
-      try {
-        const data = await api.geocodeAddress(searchQuery.trim());
-        if (data && data.results && data.results.length > 0) {
-          setSearchResults(data.results);
-          setShowSearchResults(true);
-        } else {
-          setSearchResults([]);
-        }
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery, placesLib]);
-
-  const handleSelectSearchResult = (item: {
-    formattedAddress: string;
-    area: string;
-    lat: number;
-    lng: number;
-    placeId?: string;
-  }) => {
-    setSelectedLat(item.lat);
-    setSelectedLng(item.lng);
-    setFormattedAddress(item.formattedAddress);
-    setSelectedArea(item.area);
-    setPlaceId(item.placeId);
-    setShowSearchResults(false);
-    setSearchQuery('');
-    onLocationSelected({
-      latitude: item.lat,
-      longitude: item.lng,
-      lat: item.lat,
-      lng: item.lng,
-      address: item.formattedAddress,
-      area: item.area,
-      placeId: item.placeId
-    });
   };
-
-  const handleConfirmLocationClick = () => {
-    onLocationSelected({
-      latitude: selectedLat,
-      longitude: selectedLng,
-      lat: selectedLat,
-      lng: selectedLng,
-      address: formattedAddress,
-      area: selectedArea,
-      placeId
-    });
-    if (onConfirm) onConfirm();
-  };
-
-  const isMapLoaded = isConfigured && apiStatus === APILoadingStatus.LOADED && !authError;
 
   return (
-    <div className="w-full space-y-3">
-      {/* Title / Section Label */}
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-bold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
-          <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-          <span>Select Service Location</span>
-        </label>
-        {isReverseGeocoding && (
-          <span className="text-[11px] text-[#F42F73] flex items-center gap-1 font-semibold">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            <span>Updating pin...</span>
-          </span>
-        )}
-      </div>
+    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      {/* Pickup & Destination Search Header (Google Places API New) */}
+      <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+        <div className="flex flex-col sm:flex-row gap-2 relative">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-emerald-600 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onFocus={() => setActivePinMode('PICKUP')}
+              placeholder="Search pickup / current location on Google Places..."
+              className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            {isSearching && (
+              <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+            )}
+          </div>
 
-      {/* 1. Search Location Bar */}
-      <div className="relative">
-        <div className="relative">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onFocus={() => {
-              if (searchResults.length > 0) setShowSearchResults(true);
-            }}
-            placeholder="Search address, landmark, society or building in Mumbai..."
-            className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs sm:text-sm font-semibold text-[#14213D] focus:outline-none focus:border-[#F42F73] focus:bg-white min-h-[44px] transition-all shadow-xs"
-          />
-          {isSearching && (
-            <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
-          )}
+          <button
+            type="button"
+            onClick={handleUseCurrentGps}
+            disabled={isLocatingGps}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition shrink-0 border border-indigo-200/60"
+          >
+            {isLocatingGps ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Crosshair className="w-3.5 h-3.5" />
+            )}
+            <span>Use Live GPS</span>
+          </button>
         </div>
 
-        {/* Places Autocomplete Suggestions Dropdown */}
-        {showSearchResults && searchResults.length > 0 && (
-          <div className="absolute top-full left-0 right-0 z-50 mt-1.5 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden max-h-60 overflow-y-auto">
+        {/* Pickup Autocomplete Dropdown */}
+        {searchResults.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto z-30 relative">
             {searchResults.map((res, idx) => (
-              <div
-                key={idx}
-                onClick={() => handleSelectSearchResult(res)}
-                className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 flex items-start gap-2.5 transition-colors"
+              <button
+                key={`${res.placeId}-${idx}`}
+                type="button"
+                onClick={() => handleSelectPickupSuggestion(res)}
+                className="w-full text-left px-3 py-2.5 hover:bg-indigo-50/60 transition flex items-start gap-2.5"
               >
-                <Building className="w-4 h-4 text-[#F42F73] mt-0.5 shrink-0" />
-                <div className="flex-1 text-left">
-                  <div className="text-xs font-bold text-[#14213D]">{res.area}</div>
-                  <div className="text-[11px] text-gray-500 line-clamp-1">{res.formattedAddress}</div>
+                <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-900 truncate">{res.mainText}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{res.secondaryText || res.description}</p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
+
+        {/* Destination Search Input (Google Places API New) */}
+        {showDestinationInput && (
+          <div className="relative">
+            <Flag className="w-4 h-4 text-indigo-600 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={destQuery}
+              onChange={(e) => handleDestSearchChange(e.target.value)}
+              onFocus={() => setActivePinMode('DESTINATION')}
+              placeholder="Search destination location (optional - e.g. Hospital, Market, Bank)..."
+              className="w-full pl-9 pr-16 py-2 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {isSearchingDest && <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin" />}
+              {destQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearDestination}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
+                  title="Clear destination"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {destResults.length > 0 && (
+              <div className="mt-1 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto z-30 relative">
+                {destResults.map((res, idx) => (
+                  <button
+                    key={`dest-${res.placeId}-${idx}`}
+                    type="button"
+                    onClick={() => handleSelectDestSuggestion(res)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-indigo-50/60 transition flex items-start gap-2.5"
+                  >
+                    <Flag className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-900 truncate">{res.mainText}</p>
+                      <p className="text-[11px] text-slate-500 truncate">{res.secondaryText || res.description}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showDestinationInput && (
+          <div className="flex items-center justify-between pt-0.5">
+            <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+              <span>Map tap sets:</span>
+              <button
+                type="button"
+                onClick={() => setActivePinMode('PICKUP')}
+                className={`px-2 py-0.5 rounded-md font-bold transition ${
+                  activePinMode === 'PICKUP'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-200/70 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Pickup Pin
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivePinMode('DESTINATION')}
+                className={`px-2 py-0.5 rounded-md font-bold transition ${
+                  activePinMode === 'DESTINATION'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-200/70 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Destination Pin
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Geolocation Notice / Permission Error */}
-      {locationError && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 leading-relaxed">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div className="flex-1">{locationError}</div>
-        </div>
-      )}
-
-      {/* 2. Google Map Container */}
-      <div
-        className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
-        style={{ height }}
-      >
-        {authError && (
-          <div className="absolute top-2.5 left-2.5 right-2.5 z-[400] px-3 py-1.5 bg-white/95 backdrop-blur-md border border-amber-300 rounded-xl text-[11px] text-amber-900 flex items-center justify-between gap-2 shadow-sm">
-            <div className="flex items-center gap-1.5 truncate">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span className="truncate font-medium">Using OpenStreetMap for location selection</span>
-            </div>
+      {/* Real Interactive Google Map Canvas */}
+      <div className="relative w-full bg-slate-100" style={{ height }}>
+        {isConfigLoading ? (
+          <div className="w-full h-full flex items-center justify-center bg-slate-100">
+            <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
           </div>
-        )}
-
-        {isMapLoaded ? (
-          <GoogleMapController
-            lat={selectedLat}
-            lng={selectedLng}
-            onMapClick={handleLocationUpdate}
-            onMarkerDragEnd={handleLocationUpdate}
-          />
-        ) : (
-          <LeafletLocationPickerController
-            lat={selectedLat}
-            lng={selectedLng}
-            onMapClick={handleLocationUpdate}
-            onMarkerDragEnd={handleLocationUpdate}
-          />
-        )}
-
-        {/* Tip: Click or drag pin to position */}
-        <div className="absolute top-3 left-3 z-[401] bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-gray-100 flex items-center gap-1.5 text-[11px] font-medium text-[#14213D] pointer-events-none">
-          <MapPin className="w-3.5 h-3.5 text-[#F42F73]" />
-          <span>Drag pin or click map to adjust</span>
-        </div>
-      </div>
-
-      {/* 3. [ Use my current location ] Button */}
-      <button
-        type="button"
-        onClick={handleGetCurrentLocation}
-        disabled={isLocating}
-        className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 border border-gray-200 text-[#14213D] rounded-xl text-xs font-bold flex items-center justify-center gap-2 min-h-[44px] shadow-xs active:scale-[0.99] transition-all"
-      >
-        {isLocating ? (
-          <Loader2 className="w-4 h-4 text-[#F42F73] animate-spin" />
-        ) : (
-          <Crosshair className="w-4 h-4 text-[#F42F73]" />
-        )}
-        <span>Use my current location</span>
-      </button>
-
-      {/* 4. Selected Location Box & Confirm Button */}
-      <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white border border-gray-200 flex items-center justify-center shrink-0 shadow-xs mt-0.5">
-            <MapPin className="w-4 h-4 text-[#F42F73]" />
-          </div>
-          <div>
-            <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-              Selected Location
-            </div>
-            <div className="text-xs sm:text-sm font-bold text-[#14213D] leading-snug">
-              {formattedAddress}
-            </div>
-            <div className="text-[11px] text-gray-500 mt-0.5">
-              Area: <span className="font-semibold text-[#14213D]">{selectedArea}</span> &bull; Coordinates: {selectedLat.toFixed(4)}, {selectedLng.toFixed(4)}
-              {placeId && <span className="text-[10px] text-gray-400 ml-1">(Place ID verified)</span>}
-            </div>
-          </div>
-        </div>
-
-        {showConfirmButton && (
-          <button
-            type="button"
-            onClick={handleConfirmLocationClick}
-            className="w-full sm:w-auto px-5 py-2.5 bg-[#F42F73] hover:bg-[#D81B60] text-white font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-1.5 min-h-[44px] transition-all shrink-0 active:scale-95"
+        ) : isConfigured ? (
+          <Map
+            defaultCenter={markerPos}
+            defaultZoom={15}
+            mapId="DIBLO_LOCATION_PICKER_MAP"
+            gestureHandling="greedy"
+            disableDefaultUI={false}
+            streetViewControl={false}
+            mapTypeControl={false}
+            fullscreenControl={false}
+            onClick={handleMapClick}
+            className="w-full h-full"
           >
-            <Check className="w-4 h-4" />
-            <span>Confirm Location</span>
-          </button>
+            <MapController
+              pickupPos={markerPos}
+              destPos={destMarkerPos}
+              encodedPolyline={routeSummary?.polyline}
+              shouldPan={shouldPan}
+              onPanComplete={() => setShouldPan(false)}
+            />
+
+            {/* Pickup Location Marker */}
+            <AdvancedMarker
+              position={markerPos}
+              draggable={true}
+              onDragEnd={(e) => {
+                const latLng = e.latLng;
+                if (latLng) {
+                  const lat = Number(latLng.lat().toFixed(6));
+                  const lng = Number(latLng.lng().toFixed(6));
+                  setMarkerPos({ lat, lng });
+                  fetchAddressForCoords(lat, lng, 'PICKUP');
+                }
+              }}
+            >
+              <div className="flex flex-col items-center">
+                <div className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md mb-1 whitespace-nowrap">
+                  Pickup Location
+                </div>
+                <div className="w-9 h-9 rounded-full bg-emerald-600 border-2 border-white shadow-xl flex items-center justify-center text-white">
+                  <MapPin className="w-5 h-5" />
+                </div>
+              </div>
+            </AdvancedMarker>
+
+            {/* Destination Location Marker */}
+            {destMarkerPos && (
+              <AdvancedMarker
+                position={destMarkerPos}
+                draggable={true}
+                onDragEnd={(e) => {
+                  const latLng = e.latLng;
+                  if (latLng) {
+                    const lat = Number(latLng.lat().toFixed(6));
+                    const lng = Number(latLng.lng().toFixed(6));
+                    setDestMarkerPos({ lat, lng });
+                    fetchAddressForCoords(lat, lng, 'DESTINATION');
+                  }
+                }}
+              >
+                <div className="flex flex-col items-center">
+                  <div className="bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md mb-1 whitespace-nowrap">
+                    Destination
+                  </div>
+                  <div className="w-9 h-9 rounded-full bg-indigo-600 border-2 border-white shadow-xl flex items-center justify-center text-white">
+                    <Flag className="w-4 h-4" />
+                  </div>
+                </div>
+              </AdvancedMarker>
+            )}
+          </Map>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-slate-100 text-xs text-slate-500 p-4 text-center">
+            Loading Google Maps...
+          </div>
+        )}
+
+        {/* Live Google Maps Badge */}
+        <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-sm flex items-center gap-1.5 pointer-events-none">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+          <span className="text-[11px] font-bold text-slate-700">Google Maps Live</span>
+        </div>
+
+        {/* Route Distance & Travel Time Overlay when Destination is set */}
+        {(routeSummary || isCalculatingRoute) && (
+          <div className="absolute bottom-3 left-3 right-3 bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2 rounded-xl shadow-lg flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <RouteIcon className="w-4 h-4 text-indigo-400 shrink-0" />
+              <span className="text-xs font-semibold">
+                {isCalculatingRoute ? 'Calculating Google Route...' : `Route Distance: ${routeSummary?.distanceText}`}
+              </span>
+            </div>
+            {routeSummary && !isCalculatingRoute && (
+              <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Est. Travel: {routeSummary.durationText}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Selected Pickup & Destination Summary Footer */}
+      <div className="p-3 bg-white flex flex-col gap-2 border-t border-slate-100">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+              {isReverseGeocoding ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-900">Pickup: {resolvedArea || 'Mumbai'}</span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  ({markerPos.lat.toFixed(4)}, {markerPos.lng.toFixed(4)})
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 truncate">
+                {resolvedAddress || 'Tap on the Google Map or search above to pin pickup location'}
+              </p>
+            </div>
+          </div>
+          <div className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1">
+            <Navigation className="w-3 h-3" />
+            <span>Pin Locked</span>
+          </div>
+        </div>
+
+        {destMarkerPos && destResolvedAddress && (
+          <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-100">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 mt-0.5">
+                <Flag className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-900">Destination: {destResolvedArea || 'Mumbai'}</span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    ({destMarkerPos.lat.toFixed(4)}, {destMarkerPos.lng.toFixed(4)})
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 truncate">{destResolvedAddress}</p>
+              </div>
+            </div>
+            {routeSummary && (
+              <div className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg shrink-0">
+                {routeSummary.distanceText} • {routeSummary.durationText}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

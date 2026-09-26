@@ -26,6 +26,8 @@
         "phone": { "type": "string", "maxLength": 20 },
         "email": { "type": "string", "format": "email" },
         "avatar": { "type": "string" },
+        "fcmToken": { "type": "string" },
+        "fcmTokenUpdatedAt": { "type": "string" },
         "referralCode": { "type": "string" },
         "walletBalance": { "type": "number" },
         "createdAt": { "type": "string" }
@@ -72,13 +74,29 @@
         "hourlyRate": { "type": "number" },
         "baseAmount": { "type": "number" },
         "totalAmount": { "type": "number" },
-        "status": { "type": "string", "enum": ["SEARCHING", "ASSIGNED", "ACCEPTED", "ON_THE_WAY", "ARRIVED", "OTP_VERIFIED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+        "status": { "type": "string", "enum": ["PENDING", "SEARCHING", "SCHEDULED", "ASSIGNED", "ACCEPTED", "ON_THE_WAY", "ARRIVED", "OTP_VERIFIED", "IN_PROGRESS", "COMPLETED", "REJECTED", "CANCELLED", "pending", "scheduled", "accepted", "on_the_way", "arrived", "in_progress", "completed", "rejected", "cancelled"] },
         "assistantId": { "type": "string" },
         "startOtp": { "type": "string" },
         "paymentStatus": { "type": "string", "enum": ["PENDING", "PAID", "REFUNDED", "FAILED"] },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "bookingNumber", "customerId", "serviceId", "totalAmount", "status", "paymentStatus", "createdAt"]
+    },
+    "AssistantLiveLocation": {
+      "title": "AssistantLiveLocation",
+      "description": "Live assistant GPS location document under a booking",
+      "type": "object",
+      "properties": {
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "accuracy": { "type": "number" },
+        "heading": { "type": "number" },
+        "speed": { "type": "number" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["latitude", "longitude", "timestamp"]
     },
     "PricingConfig": {
       "title": "PricingConfig",
@@ -216,6 +234,10 @@
     "/bookings/{bookingId}": {
       "schema": "Booking",
       "description": "All customer bookings and lifecycle progress"
+    },
+    "/bookings/{bookingId}/assistantLocation/{locId}": {
+      "schema": "AssistantLiveLocation",
+      "description": "Real-time assistant GPS coordinates for an active booking"
     },
     "/pricing/{configId}": {
       "schema": "PricingConfig",

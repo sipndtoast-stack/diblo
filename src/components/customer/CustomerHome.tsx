@@ -20,15 +20,17 @@ import {
   Heart
 } from 'lucide-react';
 import { SERVICES, MOCK_ASSISTANTS } from '../../data/mockData';
-import { ServiceItem } from '../../types';
+import { ServiceItem, AssistantProfile } from '../../types';
 import { IconHelper } from '../common/IconHelper';
 import { PromotionalCarousel } from './PromotionalCarousel';
+import { useAuth } from '../../context/AuthContext';
 
 interface CustomerHomeProps {
   onSelectService: (service: ServiceItem) => void;
   onOpenBooking: () => void;
   onOpenLegal: (page: string) => void;
-  onSelectTab: (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => void;
+  onSelectTab: (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'FAVORITES' | 'PROFILE' | 'SUPPORT') => void;
+  onRequestBookingWithAssistant?: (assistant: AssistantProfile) => void;
 }
 
 const FAVORITES_STORAGE_KEY = 'diblo_favorite_services';
@@ -37,8 +39,31 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   onSelectService,
   onOpenBooking,
   onOpenLegal,
-  onSelectTab
+  onSelectTab,
+  onRequestBookingWithAssistant
 }) => {
+  const { favoriteAssistantIds, toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  };
+
+  const handleToggleAssistantFavorite = async (asst: AssistantProfile, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const isNowFav = await toggleFavoriteAssistant(asst.id);
+    if (isNowFav) {
+      showToast(`Added ${asst.name} to your Saved Helpers list.`);
+    } else {
+      showToast(`Removed ${asst.name} from your Saved Helpers.`);
+    }
+  };
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [faqOpenIndex, setFaqOpenIndex] = useState<number | null>(0);
 
@@ -125,7 +150,15 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-[#fcfcfc] text-[#14213D] pb-24 md:pb-16 overflow-x-hidden">
+    <div className="min-h-screen bg-[#fcfcfc] text-[#14213D] pb-24 md:pb-16 overflow-x-hidden relative">
+      {/* Realtime Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-18 right-4 sm:right-8 z-50 bg-[#14213D] text-white px-4 py-3 rounded-2xl shadow-xl border border-gray-700 text-xs sm:text-sm font-semibold flex items-center gap-2 animate-in slide-in-from-top-3">
+          <Heart className="w-4 h-4 text-[#F42F73] fill-[#F42F73] shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Hero Section */}
       <section className="relative overflow-hidden bg-gradient-to-b from-[#FFF0F5]/80 via-white to-[#fcfcfc] pt-6 pb-10 sm:pt-12 sm:pb-16 border-b border-gray-100">
         <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -190,6 +223,79 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         onSelectService={onSelectService}
         onOpenBooking={onOpenBooking}
       />
+
+      {/* Preferred / Saved Helpers Quick Access (if customer has saved helpers) */}
+      {favoriteAssistantIds.length > 0 && (
+        <section className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
+          <div className="bg-gradient-to-r from-[#FFF0F5] to-pink-50/50 rounded-3xl p-4 sm:p-6 border border-[#F42F73]/20 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#F42F73] text-white flex items-center justify-center shadow-xs">
+                  <Heart className="w-4 h-4 fill-white" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#14213D] flex items-center gap-1.5">
+                    <span>Your Saved Helpers</span>
+                    <span className="text-[10px] bg-[#F42F73] text-white px-2 py-0.2 rounded-full font-black">
+                      {favoriteAssistantIds.length}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-gray-500">Quickly request your trusted Mumbai assistants</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onSelectTab('FAVORITES')}
+                className="text-xs font-bold text-[#F42F73] hover:underline flex items-center gap-0.5 cursor-pointer"
+              >
+                <span>View all helpers</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {MOCK_ASSISTANTS.filter((a) => favoriteAssistantIds.includes(a.id)).slice(0, 3).map((asst) => (
+                <div
+                  key={asst.id}
+                  className="bg-white rounded-2xl p-3 sm:p-3.5 border border-pink-100 shadow-2xs hover:shadow-xs transition-all flex items-center justify-between gap-3 group"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative shrink-0">
+                      <img
+                        src={asst.photo}
+                        alt={asst.name}
+                        className="w-11 h-11 rounded-xl object-cover border border-emerald-400 shrink-0"
+                      />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border border-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs sm:text-sm text-[#14213D] truncate flex items-center gap-1">
+                        <span>{asst.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px] text-amber-500 font-extrabold">
+                        <Star className="w-3 h-3 fill-amber-400" />
+                        <span>{asst.rating}</span>
+                        <span className="text-gray-400 font-normal truncate">• {asst.serviceArea[0]}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onRequestBookingWithAssistant ? onRequestBookingWithAssistant(asst) : onOpenBooking()
+                    }
+                    className="shrink-0 py-1.5 px-3 bg-[#F42F73] hover:bg-[#D81B60] text-white text-[11px] font-extrabold rounded-xl transition-all shadow-xs cursor-pointer active:scale-95"
+                  >
+                    Request
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Service Categories & Grid Section */}
       <section className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-12">
@@ -461,29 +567,81 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
             {/* Verified Assistants Spotlight Cards */}
             <div className="lg:col-span-5 space-y-3">
-              <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Top Verified Mumbai Assistants</div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Top Verified Mumbai Assistants</span>
+                <button
+                  type="button"
+                  onClick={() => onSelectTab('FAVORITES')}
+                  className="text-xs text-[#F42F73] font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  <span>Saved list ({favoriteAssistantIds.length})</span>
+                </button>
+              </div>
+
               <div className="space-y-2.5">
-                {MOCK_ASSISTANTS.slice(0, 3).map((asst) => (
-                  <div key={asst.id} className="bg-white/10 backdrop-blur-md p-3.5 rounded-2xl border border-white/10 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <img src={asst.photo} alt={asst.name} className="w-11 h-11 rounded-full object-cover border border-white/20 shrink-0" />
-                      <div>
-                        <div className="font-bold text-sm text-white flex items-center gap-1.5 flex-wrap">
-                          <span>{asst.name}</span>
-                          <span className="bg-emerald-500/30 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded font-bold border border-emerald-500/40">✓ Verified</span>
+                {MOCK_ASSISTANTS.slice(0, 3).map((asst) => {
+                  const isFav = isAssistantFavorited(asst.id);
+                  return (
+                    <div
+                      key={asst.id}
+                      className="bg-white/10 backdrop-blur-md p-3.5 rounded-2xl border border-white/10 flex items-center justify-between gap-3 hover:bg-white/15 transition-all"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative shrink-0">
+                          <img
+                            src={asst.photo}
+                            alt={asst.name}
+                            className="w-11 h-11 rounded-full object-cover border border-white/20"
+                          />
+                          {isFav && (
+                            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#F42F73] flex items-center justify-center">
+                              <Heart className="w-2.5 h-2.5 text-white fill-white" />
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[11px] text-gray-300">{asst.serviceArea.slice(0, 2).join(', ')} • {asst.completedTasksCount}+ tasks</div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm text-white flex items-center gap-1.5 flex-wrap">
+                            <span className="truncate">{asst.name}</span>
+                            <span className="bg-emerald-500/30 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded font-bold border border-emerald-500/40">
+                              ✓ Verified
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-gray-300 truncate">
+                            {asst.serviceArea.slice(0, 2).join(', ')} • {asst.completedTasksCount}+ tasks
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Favorite button */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleAssistantFavorite(asst, e)}
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                            isFav
+                              ? 'bg-[#F42F73] text-white shadow-xs'
+                              : 'bg-white/10 text-gray-300 hover:text-white hover:bg-white/20'
+                          }`}
+                          title={isFav ? 'Remove from Saved Helpers' : 'Save to Preferred Helpers'}
+                          aria-label={isFav ? `Remove ${asst.name} from favorites` : `Add ${asst.name} to favorites`}
+                        >
+                          <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-white' : ''}`} />
+                        </button>
+
+                        {/* Request button */}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onRequestBookingWithAssistant ? onRequestBookingWithAssistant(asst) : onOpenBooking()
+                          }
+                          className="py-1.5 px-3 rounded-xl bg-white text-[#14213D] hover:bg-gray-100 text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+                        >
+                          Request
+                        </button>
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="flex items-center gap-1 text-amber-400 font-bold text-xs">
-                        <Star className="w-3.5 h-3.5 fill-amber-400 shrink-0" />
-                        <span>{asst.rating}</span>
-                      </div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">₹149/hr</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -514,7 +672,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               stars: 5
             },
             {
-              name: 'Aarav Mehta',
+              name: 'Rohan Kulkarni',
               area: 'Carter Road, Bandra',
               service: 'Senior Citizen Care',
               comment: 'Rajesh is exceptionally punctual. Takes my father for his evening strolls along the promenade. Great patience with seniors. The flat ₹149/hr price is completely transparent.',

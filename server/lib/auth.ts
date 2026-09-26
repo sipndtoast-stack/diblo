@@ -48,11 +48,11 @@ export function authenticateUser(req: AuthenticatedRequest, res: Response, next:
   if (demoRole && ['ADMIN', 'OPERATIONS', 'ASSISTANT', 'CUSTOMER'].includes(demoRole.toUpperCase())) {
     const validRole = demoRole.toUpperCase() as UserRole;
     req.user = {
-      id: validRole === 'ADMIN' ? 'user-admin-1' : validRole === 'ASSISTANT' ? 'user-a-1' : 'user-c-1',
-      userId: validRole === 'ADMIN' ? 'user-admin-1' : validRole === 'ASSISTANT' ? 'user-a-1' : 'user-c-1',
-      phone: validRole === 'ADMIN' ? '9820001122' : validRole === 'ASSISTANT' ? '9820554433' : '9820123456',
+      id: validRole === 'ADMIN' ? 'user-admin-1' : validRole === 'ASSISTANT' ? 'user-a-1' : 'customer',
+      userId: validRole === 'ADMIN' ? 'user-admin-1' : validRole === 'ASSISTANT' ? 'user-a-1' : 'customer',
+      phone: validRole === 'ADMIN' ? '9820001122' : validRole === 'ASSISTANT' ? '9820554433' : '',
       role: validRole,
-      name: validRole === 'ADMIN' ? 'Diblo Operations Head' : validRole === 'ASSISTANT' ? 'Rajesh Sharma' : 'Aarav Mehta'
+      name: validRole === 'ADMIN' ? 'Diblo Operations Head' : validRole === 'ASSISTANT' ? 'Rajesh Sharma' : 'Customer'
     };
   }
 

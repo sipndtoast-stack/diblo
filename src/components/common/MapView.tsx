@@ -1,427 +1,383 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  Map,
-  AdvancedMarker,
-  useMap,
-  useMapsLibrary,
-  useApiLoadingStatus,
-  APILoadingStatus
-} from '@vis.gl/react-google-maps';
-import L from 'leaflet';
-import { Navigation, Compass, MapPin, Star, User } from 'lucide-react';
-import { useGoogleMaps } from '../maps/GoogleMapsProvider';
+import React, { useState, useEffect, useRef } from 'react';
+import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import { MapPin, Navigation, ShieldCheck, LocateFixed, Sparkles, Flag } from 'lucide-react';
+import { AssistantProfile, BookingStatus } from '../../types';
+import { useGoogleMapsConfig } from '../maps/GoogleMapsProvider';
+import { api } from '../../lib/api';
 
 interface MapViewProps {
-  assistantLocation?: { lat: number; lng: number; address?: string };
-  customerLocation?: { lat: number; lng: number; address?: string };
-  allAssistants?: {
-    id: string;
-    name: string;
-    photo?: string;
-    rating?: number;
-    lat: number;
-    lng: number;
-    isOnline: boolean;
-    activeBookingId?: string | null;
-    serviceArea?: string[];
-  }[];
-  height?: string;
-  showRoute?: boolean;
+  customerLocation?: { lat: number; lng: number; address?: string; area?: string };
+  assistantLocation?: { lat: number; lng: number; address?: string; area?: string } | null;
+  destinationLocation?: { lat: number; lng: number; address?: string; area?: string } | null;
+  assistants?: AssistantProfile[];
   etaMinutes?: number;
   distanceKm?: number;
-  onAssistantClick?: (assistantId: string) => void;
+  bookingStatus?: BookingStatus | string;
+  assistantName?: string;
   interactive?: boolean;
+  onSelectLocation?: (loc: { lat: number; lng: number; area: string; address: string }) => void;
+  height?: string;
 }
 
-// ============================================================
-// GOOGLE MAPS IMPLEMENTATION
-// ============================================================
-const GoogleMapViewInner: React.FC<MapViewProps> = ({
-  assistantLocation,
-  customerLocation,
-  allAssistants = [],
-  showRoute = true,
-  onAssistantClick,
-  interactive = true
-}) => {
+function decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
+  const poly: Array<{ lat: number; lng: number }> = [];
+  let index = 0;
+  const len = encoded.length;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < len) {
+    let b: number;
+    let shift = 0;
+    let result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    poly.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return poly;
+}
+
+const CommonMapRouteController: React.FC<{
+  customerPos: { lat: number; lng: number };
+  assistantPos?: { lat: number; lng: number } | null;
+  destPos?: { lat: number; lng: number } | null;
+  encodedPolyline: string | null;
+}> = ({ customerPos, assistantPos, destPos, encodedPolyline }) => {
   const map = useMap();
-  const routesLib = useMapsLibrary('routes');
-  const [selectedAssistant, setSelectedAssistant] = useState<string | null>(null);
-
-  // Auto-fit bounds on markers change
-  useEffect(() => {
-    if (!map) return;
-
-    const bounds = new google.maps.LatLngBounds();
-    let count = 0;
-
-    if (customerLocation) {
-      bounds.extend({ lat: customerLocation.lat, lng: customerLocation.lng });
-      count++;
-    }
-
-    if (assistantLocation) {
-      bounds.extend({ lat: assistantLocation.lat, lng: assistantLocation.lng });
-      count++;
-    }
-
-    if (allAssistants.length > 0) {
-      allAssistants.forEach((a) => {
-        bounds.extend({ lat: a.lat, lng: a.lng });
-        count++;
-      });
-    }
-
-    if (count > 1) {
-      map.fitBounds(bounds, 60);
-    } else if (count === 1) {
-      const center = customerLocation || assistantLocation || { lat: allAssistants[0].lat, lng: allAssistants[0].lng };
-      map.setCenter(center);
-      map.setZoom(15);
-    }
-  }, [map, customerLocation, assistantLocation, allAssistants]);
-
-  const defaultCenter = customerLocation || assistantLocation || { lat: 19.0596, lng: 72.8295 };
-
-  return (
-    <Map
-      defaultCenter={{ lat: defaultCenter.lat, lng: defaultCenter.lng }}
-      defaultZoom={14}
-      mapId="DEMO_MAP_ID"
-      gestureHandling={interactive ? 'greedy' : 'none'}
-      disableDefaultUI={!interactive}
-      zoomControl={interactive}
-      streetViewControl={false}
-      mapTypeControl={false}
-      fullscreenControl={false}
-      internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-      className="w-full h-full"
-    >
-      {/* 1. Customer Pickup Location Marker */}
-      {customerLocation && (
-        <AdvancedMarker position={{ lat: customerLocation.lat, lng: customerLocation.lng }}>
-          <div className="relative flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full bg-[#14213D] text-white flex items-center justify-center border-2 border-white shadow-xl">
-              <MapPin className="w-4 h-4 text-[#F42F73]" />
-            </div>
-            <div className="w-2 h-2 bg-[#14213D] rotate-45 -mt-1 shadow"></div>
-            <div className="mt-1 bg-white border border-gray-200 text-[#14213D] text-[10px] font-bold px-2 py-0.5 rounded-md shadow-md whitespace-nowrap">
-              Your Location
-            </div>
-          </div>
-        </AdvancedMarker>
-      )}
-
-      {/* 2. Single Active Assistant Marker with Radar Pulse */}
-      {assistantLocation && (
-        <AdvancedMarker position={{ lat: assistantLocation.lat, lng: assistantLocation.lng }}>
-          <div className="relative flex items-center justify-center">
-            <div className="absolute w-12 h-12 rounded-full bg-[#F42F73]/30 animate-ping" />
-            <div className="relative z-10 w-10 h-10 rounded-full bg-[#F42F73] text-white flex items-center justify-center border-2 border-white shadow-2xl">
-              <User className="w-5 h-5 text-white" />
-            </div>
-            <div className="absolute -top-7 bg-[#14213D] text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow whitespace-nowrap">
-              Diblo Assistant
-            </div>
-          </div>
-        </AdvancedMarker>
-      )}
-
-      {/* 3. Multiple Assistants Radar Pins */}
-      {allAssistants.map((asst) => {
-        const isBusy = !!asst.activeBookingId;
-        const color = isBusy ? '#F59E0B' : asst.isOnline ? '#10B981' : '#94A3B8';
-        const isSelected = selectedAssistant === asst.id;
-
-        return (
-          <AdvancedMarker
-            key={asst.id}
-            position={{ lat: asst.lat, lng: asst.lng }}
-            onClick={() => {
-              setSelectedAssistant(asst.id);
-              if (onAssistantClick) onAssistantClick(asst.id);
-            }}
-          >
-            <div className="relative flex flex-col items-center cursor-pointer group">
-              <div
-                className="w-10 h-10 rounded-full border-2 border-white shadow-lg flex items-center justify-center overflow-hidden transition-transform group-hover:scale-110"
-                style={{ backgroundColor: color }}
-              >
-                {asst.photo ? (
-                  <img src={asst.photo} alt={asst.name} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-white text-xs font-bold">{asst.name.charAt(0)}</span>
-                )}
-              </div>
-              <div
-                className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white flex items-center justify-center text-[9px] text-white shadow-xs"
-                style={{ backgroundColor: color }}
-              >
-                ★
-              </div>
-
-              {isSelected && (
-                <div className="absolute bottom-full mb-2 bg-[#14213D] text-white p-2.5 rounded-xl shadow-xl min-w-[150px] z-50 text-left">
-                  <div className="font-bold text-xs">{asst.name}</div>
-                  <div className="text-[10px] text-gray-300">{asst.serviceArea?.slice(0, 2).join(', ') || 'Mumbai'}</div>
-                  <div className="mt-1 flex items-center justify-between text-[10px]">
-                    <span style={{ color }}>{isBusy ? 'On Task' : asst.isOnline ? 'Online' : 'Offline'}</span>
-                    <span className="text-amber-400 font-bold">★ {asst.rating || 4.9}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </AdvancedMarker>
-        );
-      })}
-    </Map>
-  );
-};
-
-// ============================================================
-// LEAFLET FALLBACK ENGINE (WHEN API KEY NOT YET SET)
-// ============================================================
-const LeafletMapViewInner: React.FC<MapViewProps> = ({
-  assistantLocation,
-  customerLocation,
-  allAssistants = [],
-  showRoute = true,
-  onAssistantClick,
-  interactive = true
-}) => {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
-  const polylineRef = useRef<L.Polyline | null>(null);
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
 
   useEffect(() => {
-    if (!mapContainerRef.current) return;
+    if (!map || typeof google === 'undefined') return;
 
-    const initialLat = customerLocation?.lat || assistantLocation?.lat || 19.0596;
-    const initialLng = customerLocation?.lng || assistantLocation?.lng || 72.8295;
-
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        center: [initialLat, initialLng],
-        zoom: 14,
-        zoomControl: false,
-        attributionControl: false,
-        dragging: interactive,
-        scrollWheelZoom: interactive,
-        touchZoom: interactive
-      });
-
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd'
-      }).addTo(map);
-
-      if (interactive) {
-        L.control.zoom({ position: 'topright' }).addTo(map);
-      }
-
-      markersRef.current = L.layerGroup().addTo(map);
-      mapInstanceRef.current = map;
-    }
-
-    return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    const markers = markersRef.current;
-    if (!map || !markers) return;
-
-    markers.clearLayers();
     if (polylineRef.current) {
-      polylineRef.current.remove();
+      polylineRef.current.setMap(null);
       polylineRef.current = null;
     }
 
-    const bounds: [number, number][] = [];
+    const startPt = assistantPos || customerPos;
+    const endPt = assistantPos ? customerPos : destPos;
 
-    if (allAssistants.length > 0) {
-      allAssistants.forEach((asst) => {
-        const isBusy = !!asst.activeBookingId;
-        const color = isBusy ? '#F59E0B' : asst.isOnline ? '#10B981' : '#94A3B8';
+    if (startPt && endPt) {
+      const path = encodedPolyline ? decodePolyline(encodedPolyline) : [startPt, endPt];
+      const line = new google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor: '#4F46E5',
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
+        map
+      });
+      polylineRef.current = line;
+    }
 
-        const customIcon = L.divIcon({
-          className: 'custom-assistant-pin',
-          html: `
-            <div class="relative flex items-center justify-center cursor-pointer group">
-              <div class="w-10 h-10 rounded-full border-2 border-white shadow-lg flex items-center justify-center overflow-hidden" style="background-color: ${color};">
-                ${
-                  asst.photo
-                    ? `<img src="${asst.photo}" class="w-full h-full object-cover" />`
-                    : `<span class="text-white text-xs font-bold">${asst.name.charAt(0)}</span>`
-                }
-              </div>
-              <div class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white flex items-center justify-center text-[9px] text-white" style="background-color: ${color}">
-                ★
-              </div>
-            </div>
-          `,
-          iconSize: [40, 40],
-          iconAnchor: [20, 20]
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(customerPos);
+    if (assistantPos) bounds.extend(assistantPos);
+    if (destPos) bounds.extend(destPos);
+
+    if (assistantPos || destPos) {
+      map.fitBounds(bounds, { top: 55, right: 55, bottom: 55, left: 55 });
+    } else {
+      map.panTo(customerPos);
+    }
+
+    return () => {
+      if (polylineRef.current) {
+        polylineRef.current.setMap(null);
+        polylineRef.current = null;
+      }
+    };
+  }, [
+    map,
+    customerPos.lat,
+    customerPos.lng,
+    assistantPos?.lat,
+    assistantPos?.lng,
+    destPos?.lat,
+    destPos?.lng,
+    encodedPolyline
+  ]);
+
+  return null;
+};
+
+export const MapView: React.FC<MapViewProps> = ({
+  customerLocation = { lat: 19.0607, lng: 72.8258, address: 'Bandra West, Mumbai', area: 'Bandra West' },
+  assistantLocation,
+  destinationLocation,
+  assistants = [],
+  etaMinutes,
+  distanceKm,
+  bookingStatus,
+  assistantName = 'Rajesh Sharma',
+  interactive = false,
+  onSelectLocation,
+  height = 'h-72'
+}) => {
+  const { isConfigured } = useGoogleMapsConfig();
+  const [selectedLoc, setSelectedLoc] = useState(customerLocation);
+  const [routeData, setRouteData] = useState<{
+    distanceText: string;
+    durationText: string;
+    polyline: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (customerLocation?.lat && customerLocation?.lng) {
+      setSelectedLoc(customerLocation);
+    }
+  }, [customerLocation?.lat, customerLocation?.lng, customerLocation?.address]);
+
+  const validAssistantPos =
+    assistantLocation && assistantLocation.lat && assistantLocation.lng
+      ? { lat: assistantLocation.lat, lng: assistantLocation.lng }
+      : null;
+
+  const validDestPos =
+    destinationLocation && destinationLocation.lat && destinationLocation.lng
+      ? { lat: destinationLocation.lat, lng: destinationLocation.lng }
+      : null;
+
+  const normStatus = String(bookingStatus || '').toUpperCase();
+  const isTrackingActive =
+    normStatus === 'ON_THE_WAY' ||
+    normStatus === 'ARRIVED' ||
+    normStatus === 'IN_PROGRESS' ||
+    normStatus === 'ASSIGNED' ||
+    normStatus === 'ACCEPTED';
+
+  useEffect(() => {
+    let mounted = true;
+    const startPt = validAssistantPos || { lat: selectedLoc.lat, lng: selectedLoc.lng };
+    const endPt = validAssistantPos ? { lat: selectedLoc.lat, lng: selectedLoc.lng } : validDestPos;
+
+    if (!endPt) {
+      setRouteData(null);
+      return;
+    }
+
+    api
+      .getRoute(startPt.lat, startPt.lng, endPt.lat, endPt.lng, 'TWO_WHEELER')
+      .then((res) => {
+        if (!mounted) return;
+        setRouteData({
+          distanceText: res.distanceText,
+          durationText: res.durationText,
+          polyline: res.polyline
         });
+      })
+      .catch(() => {});
 
-        const marker = L.marker([asst.lat, asst.lng], { icon: customIcon }).addTo(markers);
-        marker.bindPopup(`
-          <div class="p-2 min-w-[160px] text-left">
-            <div class="font-bold text-sm text-[#14213D]">${asst.name}</div>
-            <div class="text-xs text-gray-500">${asst.serviceArea?.slice(0, 2).join(', ') || 'Mumbai'}</div>
-            <div class="mt-1 flex items-center justify-between text-xs">
-              <span class="font-semibold" style="color: ${color}">${isBusy ? 'On Booking' : asst.isOnline ? 'Available' : 'Offline'}</span>
-              <span class="text-amber-500 font-bold">★ ${asst.rating || 4.9}</span>
-            </div>
-          </div>
-        `);
+    return () => {
+      mounted = false;
+    };
+  }, [
+    validAssistantPos?.lat,
+    validAssistantPos?.lng,
+    selectedLoc.lat,
+    selectedLoc.lng,
+    validDestPos?.lat,
+    validDestPos?.lng
+  ]);
 
-        if (onAssistantClick) {
-          marker.on('click', () => onAssistantClick(asst.id));
-        }
-
-        bounds.push([asst.lat, asst.lng]);
-      });
+  const handleMapClick = async (e: any) => {
+    if (!interactive) return;
+    const latLng = e?.detail?.latLng;
+    if (latLng && typeof latLng.lat === 'number' && typeof latLng.lng === 'number') {
+      const lat = Number(latLng.lat.toFixed(6));
+      const lng = Number(latLng.lng.toFixed(6));
+      const geo = await api.reverseGeocode(lat, lng);
+      const updated = {
+        lat: geo.lat,
+        lng: geo.lng,
+        area: geo.area,
+        address: geo.formattedAddress
+      };
+      setSelectedLoc(updated);
+      onSelectLocation?.(updated);
     }
+  };
 
-    if (assistantLocation) {
-      const assistantIcon = L.divIcon({
-        className: 'custom-pulse-pin',
-        html: `
-          <div class="relative flex items-center justify-center">
-            <div class="absolute w-12 h-12 rounded-full bg-[#F42F73]/30 pulse-animation"></div>
-            <div class="relative z-10 w-9 h-9 rounded-full bg-[#F42F73] text-white flex items-center justify-center border-2 border-white shadow-xl">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-            </div>
-            <div class="absolute -top-7 bg-[#14213D] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow whitespace-nowrap">
-              Diblo Assistant
-            </div>
-          </div>
-        `,
-        iconSize: [44, 44],
-        iconAnchor: [22, 22]
-      });
-
-      L.marker([assistantLocation.lat, assistantLocation.lng], { icon: assistantIcon }).addTo(markers);
-      bounds.push([assistantLocation.lat, assistantLocation.lng]);
-    }
-
-    if (customerLocation) {
-      const customerIcon = L.divIcon({
-        className: 'custom-customer-pin',
-        html: `
-          <div class="relative flex flex-col items-center">
-            <div class="w-8 h-8 rounded-full bg-[#14213D] text-white flex items-center justify-center border-2 border-white shadow-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-[#F42F73]" viewBox="0 0 24 24" fill="currentColor">
-                <path fill-rule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
-              </svg>
-            </div>
-            <div class="w-2 h-2 bg-[#14213D] rotate-45 -mt-1 shadow"></div>
-            <div class="mt-1 bg-white border border-gray-200 text-[#14213D] text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-              Your Location
-            </div>
-          </div>
-        `,
-        iconSize: [36, 48],
-        iconAnchor: [18, 32]
-      });
-
-      L.marker([customerLocation.lat, customerLocation.lng], { icon: customerIcon }).addTo(markers);
-      bounds.push([customerLocation.lat, customerLocation.lng]);
-    }
-
-    if (showRoute && assistantLocation && customerLocation) {
-      const routePoints: [number, number][] = [
-        [assistantLocation.lat, assistantLocation.lng],
-        [(assistantLocation.lat + customerLocation.lat) / 2 + 0.001, (assistantLocation.lng + customerLocation.lng) / 2 - 0.0015],
-        [customerLocation.lat, customerLocation.lng]
-      ];
-
-      polylineRef.current = L.polyline(routePoints, {
-        color: '#F42F73',
-        weight: 4,
-        opacity: 0.85,
-        dashArray: '8, 8',
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(map);
-    }
-
-    if (bounds.length > 1) {
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
-    } else if (bounds.length === 1) {
-      map.setView(bounds[0], 15);
-    }
-  }, [assistantLocation, customerLocation, allAssistants, showRoute]);
-
-  return <div ref={mapContainerRef} className="w-full h-full" />;
-};
-
-// ============================================================
-// GOOGLE MAPS CONDITIONAL WRAPPER (ONLY MOUNTED UNDER APIPROVIDER)
-// ============================================================
-const GoogleMapViewConditional: React.FC<MapViewProps> = (props) => {
-  const apiStatus = useApiLoadingStatus();
-  if (apiStatus === APILoadingStatus.LOADED) {
-    return <GoogleMapViewInner {...props} />;
-  }
-  return <LeafletMapViewInner {...props} />;
-};
-
-// ============================================================
-// MAIN COMPONENT EXPORT
-// ============================================================
-export const MapView: React.FC<MapViewProps> = (props) => {
-  const { isConfigured } = useGoogleMaps();
-
-  const {
-    height = '320px',
-    etaMinutes,
-    distanceKm,
-    customerLocation,
-    assistantLocation
-  } = props;
+  const handleUseCurrentGps = () => {
+    if (!('geolocation' in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const geo = await api.reverseGeocode(lat, lng);
+        const updated = {
+          lat: geo.lat,
+          lng: geo.lng,
+          area: geo.area,
+          address: geo.formattedAddress
+        };
+        setSelectedLoc(updated);
+        onSelectLocation?.(updated);
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   return (
-    <div
-      className="relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"
-      style={{ height }}
-    >
+    <div className={`relative w-full ${height} rounded-2xl overflow-hidden border border-slate-200/80 shadow-inner bg-slate-100 select-none`}>
       {isConfigured ? (
-        <GoogleMapViewConditional {...props} />
-      ) : (
-        <LeafletMapViewInner {...props} />
-      )}
+        <Map
+          defaultCenter={{ lat: selectedLoc.lat || 19.0607, lng: selectedLoc.lng || 72.8258 }}
+          defaultZoom={14}
+          mapId="DIBLO_COMMON_LIVE_MAP"
+          gestureHandling="greedy"
+          disableDefaultUI={false}
+          streetViewControl={false}
+          mapTypeControl={false}
+          fullscreenControl={false}
+          onClick={handleMapClick}
+          className="w-full h-full"
+        >
+          <CommonMapRouteController
+            customerPos={{ lat: selectedLoc.lat || 19.0607, lng: selectedLoc.lng || 72.8258 }}
+            assistantPos={validAssistantPos}
+            destPos={validDestPos}
+            encodedPolyline={routeData?.polyline || null}
+          />
 
-      {/* Realtime Live Floating Arrival Badge */}
-      {etaMinutes !== undefined && (
-        <div className="absolute top-3 left-3 z-[400] bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl shadow-md border border-gray-100 flex items-center gap-2.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#10B981] animate-pulse" />
-          <div>
-            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Arriving in</div>
-            <div className="text-sm font-bold text-[#14213D] flex items-baseline gap-1">
-              <span>{etaMinutes} mins</span>
-              {distanceKm !== undefined && (
-                <span className="text-xs text-gray-500 font-normal">({distanceKm} km away)</span>
-              )}
+          {/* Customer Pickup Location Marker */}
+          <AdvancedMarker position={{ lat: selectedLoc.lat || 19.0607, lng: selectedLoc.lng || 72.8258 }}>
+            <div className="flex flex-col items-center">
+              <div className="bg-slate-900 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-lg flex items-center gap-1 whitespace-nowrap mb-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {selectedLoc.area || 'Pickup Location'}
+              </div>
+              <div className="w-9 h-9 rounded-full bg-slate-900 border-2 border-white shadow-xl flex items-center justify-center text-white">
+                <MapPin className="w-4 h-4 text-amber-400" />
+              </div>
             </div>
-          </div>
+          </AdvancedMarker>
+
+          {/* Destination Marker if provided */}
+          {validDestPos && (
+            <AdvancedMarker position={validDestPos}>
+              <div className="flex flex-col items-center">
+                <div className="bg-indigo-700 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap mb-1">
+                  Destination: {destinationLocation?.area || 'Drop'}
+                </div>
+                <div className="w-9 h-9 rounded-full bg-indigo-600 border-2 border-white shadow-xl flex items-center justify-center text-white">
+                  <Flag className="w-4 h-4" />
+                </div>
+              </div>
+            </AdvancedMarker>
+          )}
+
+          {/* Online Assistants Markers when browsing */}
+          {!isTrackingActive &&
+            assistants
+              .filter((a) => a.isOnline && a.currentLocation?.lat && a.currentLocation?.lng)
+              .map((asst) => (
+                <AdvancedMarker
+                  key={asst.id}
+                  position={{ lat: asst.currentLocation.lat, lng: asst.currentLocation.lng }}
+                >
+                  <div className="flex flex-col items-center group">
+                    <div className="bg-indigo-950/90 text-white text-[10px] font-medium px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1">
+                      {asst.name.split(' ')[0]} ★{asst.rating}
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-indigo-600 border-2 border-white shadow-md flex items-center justify-center text-white">
+                      <ShieldCheck className="w-4 h-4" />
+                    </div>
+                  </div>
+                </AdvancedMarker>
+              ))}
+
+          {/* Active Assistant Live GPS Marker */}
+          {validAssistantPos && (
+            <AdvancedMarker position={validAssistantPos}>
+              <div className="flex flex-col items-center">
+                <div className="bg-indigo-600 text-white text-[11px] font-semibold px-2.5 py-1 rounded-full shadow-lg flex items-center gap-1.5 whitespace-nowrap mb-1 border border-indigo-400">
+                  <Navigation className="w-3 h-3 text-amber-300" />
+                  <span>{assistantName}</span>
+                  {(routeData?.durationText || etaMinutes) && (
+                    <span className="bg-indigo-800 px-1.5 py-0.2 rounded text-[10px] text-amber-300">
+                      {routeData?.durationText || `${etaMinutes} min`}
+                    </span>
+                  )}
+                </div>
+                <div className="w-10 h-10 rounded-full bg-indigo-600 border-2 border-white shadow-xl flex items-center justify-center text-white">
+                  <LocateFixed className="w-5 h-5" />
+                </div>
+              </div>
+            </AdvancedMarker>
+          )}
+        </Map>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-slate-100 text-xs text-slate-500">
+          Loading Google Maps...
         </div>
       )}
 
-      {/* Google Maps Platform Live Status Tag */}
-      <div className="absolute bottom-3 left-3 z-[400] bg-white/90 backdrop-blur-sm px-2.5 py-1 rounded-lg text-[10px] text-gray-600 font-medium border border-gray-100 flex items-center gap-1 shadow-sm">
-        <MapPin className="w-3 h-3 text-[#F42F73]" />
-        <span>Mumbai Urban Transit Engine</span>
+      {/* Top Overlay Controls */}
+      <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
+        <div className="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-sm border border-slate-200/80 flex items-center gap-2 pointer-events-auto">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+          <span className="text-xs font-semibold text-slate-700">
+            {isTrackingActive ? 'Google Maps • Live Assistant Tracking' : 'Google Maps • Real-Time Dispatch'}
+          </span>
+        </div>
+
+        {(routeData || (etaMinutes !== undefined && etaMinutes > 0)) && (
+          <div className="bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-1.5 rounded-xl shadow-md flex items-center gap-3 pointer-events-auto">
+            <div className="flex items-center gap-1.5">
+              <Navigation className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-bold">
+                {normStatus === 'ARRIVED'
+                  ? 'Arrived at Pickup'
+                  : `ETA: ${routeData?.durationText || `${etaMinutes} mins`}`}
+              </span>
+            </div>
+            {(routeData?.distanceText || distanceKm) && (
+              <>
+                <div className="h-3 w-px bg-slate-700" />
+                <span className="text-[11px] text-slate-300 font-medium">
+                  {routeData?.distanceText || `${distanceKm} km`}
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Interactive GPS Button */}
+      {interactive && (
+        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 z-20 pointer-events-none">
+          <div className="bg-white/95 backdrop-blur-md px-3 py-2 rounded-xl shadow-sm border border-slate-200/80 text-xs text-slate-600 truncate max-w-[70%] pointer-events-auto">
+            <span className="font-semibold text-slate-900">Selected: </span>
+            {selectedLoc.address || `${selectedLoc.area || 'Mumbai'}`}
+          </div>
+          <button
+            type="button"
+            onClick={handleUseCurrentGps}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-md flex items-center gap-1.5 transition pointer-events-auto"
+          >
+            <LocateFixed className="w-3.5 h-3.5" />
+            Use Current GPS
+          </button>
+        </div>
+      )}
     </div>
   );
 };

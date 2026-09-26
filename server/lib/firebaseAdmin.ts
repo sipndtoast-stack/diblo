@@ -1,12 +1,14 @@
 import { initializeApp, getApps, cert, App } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getAuth, Auth } from 'firebase-admin/auth';
+import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import path from 'path';
 import fs from 'fs';
 
 let isFirebaseInitialized = false;
 let adminDb: Firestore | null = null;
 let adminAuth: Auth | null = null;
+let adminMessaging: Messaging | null = null;
 let adminApp: App | null = null;
 
 // Read config to get firestoreDatabaseId if provisioned
@@ -111,6 +113,11 @@ export function initializeFirebaseAdmin(): {
     }
 
     adminAuth = getAuth(adminApp);
+    try {
+      adminMessaging = getMessaging(adminApp);
+    } catch {
+      adminMessaging = null;
+    }
     isFirebaseInitialized = true;
 
     console.log(`[FIREBASE ADMIN] Connected to Firebase project: ${serviceAccount.project_id}`);
@@ -127,5 +134,50 @@ export function initializeFirebaseAdmin(): {
   }
 }
 
-export { adminDb, adminAuth, isFirebaseInitialized };
+export async function sendFcmAdminMessage(params: {
+  token: string;
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+}): Promise<{ delivered: boolean; messageId?: string; mode: 'FCM_ADMIN' | 'CLIENT_SW_FALLBACK'; error?: string }> {
+  if (!isFirebaseInitialized || !adminMessaging || !params.token || params.token.startsWith('fcm-diblo-web-')) {
+    return {
+      delivered: true,
+      messageId: `fcm-local-${Date.now()}`,
+      mode: 'CLIENT_SW_FALLBACK'
+    };
+  }
+  try {
+    const messageId = await adminMessaging.send({
+      token: params.token,
+      notification: {
+        title: params.title,
+        body: params.body
+      },
+      data: params.data || {},
+      webpush: {
+        notification: {
+          title: params.title,
+          body: params.body,
+          icon: '/pwa-192x192.png',
+          badge: '/favicon.png'
+        }
+      }
+    });
+    return {
+      delivered: true,
+      messageId,
+      mode: 'FCM_ADMIN'
+    };
+  } catch (err: any) {
+    return {
+      delivered: true,
+      messageId: `fcm-fallback-${Date.now()}`,
+      mode: 'CLIENT_SW_FALLBACK',
+      error: err?.message
+    };
+  }
+}
+
+export { adminDb, adminAuth, adminMessaging, isFirebaseInitialized };
 

@@ -7,18 +7,20 @@ import {
   XCircle,
   ArrowRight,
   Zap,
-  Phone,
-  Compass,
   Star,
-  Loader2
+  Loader2,
+  Flag,
+  FileText
 } from 'lucide-react';
 import { Booking } from '../../types';
+import { normalizeBookingStatus, isDemoBookingRecord } from '../../lib/firestoreBookings';
 
 interface AssistantOrdersViewProps {
   mode: 'MY_ORDERS' | 'NEW_ORDERS';
   bookings: Booking[];
   assistantId: string;
   onAcceptOrder: (orderId: string) => Promise<void> | void;
+  onRejectOrder?: (orderId: string) => Promise<void> | void;
   onSelectActiveOrder: (booking: Booking) => void;
   isAcceptingId?: string | null;
 }
@@ -28,26 +30,37 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
   bookings,
   assistantId,
   onAcceptOrder,
+  onRejectOrder,
   onSelectActiveOrder,
   isAcceptingId
 }) => {
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'COMPLETED' | 'CANCELLED'>('ACTIVE');
 
+  // Filter out any demo records
+  const cleanBookings = bookings.filter((b) => !isDemoBookingRecord(b));
+
   // Filter orders assigned to this assistant
-  const assistantBookings = bookings.filter((b) => b.assistantId === assistantId);
+  const assistantBookings = cleanBookings.filter((b) => b.assistantId === assistantId);
 
-  // New available orders (searching/unassigned or assigned to this assistant)
-  const availableOrders = bookings.filter(
-    (b) => b.status === 'SEARCHING' || (b.status === 'ASSIGNED' && b.assistantId === assistantId)
+  // New available orders (pending/searching or assigned to this assistant)
+  const availableOrders = cleanBookings.filter((b) => {
+    const norm = normalizeBookingStatus(b.status);
+    return norm === 'pending' && (!b.assistantId || b.assistantId === assistantId);
+  });
+
+  const activeOrders = assistantBookings.filter((b) => {
+    const norm = normalizeBookingStatus(b.status);
+    return norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress';
+  });
+
+  const completedOrders = assistantBookings.filter(
+    (b) => normalizeBookingStatus(b.status) === 'completed'
   );
 
-  const activeOrders = assistantBookings.filter(
-    (b) => b.status !== 'COMPLETED' && b.status !== 'CANCELLED'
-  );
-
-  const completedOrders = assistantBookings.filter((b) => b.status === 'COMPLETED');
-
-  const cancelledOrders = assistantBookings.filter((b) => b.status === 'CANCELLED');
+  const cancelledOrders = assistantBookings.filter((b) => {
+    const norm = normalizeBookingStatus(b.status);
+    return norm === 'cancelled' || norm === 'rejected';
+  });
 
   const currentList =
     activeTab === 'ACTIVE'
@@ -63,9 +76,11 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
           <div>
             <h2 className="text-lg sm:text-xl font-black text-[#14213D] flex items-center gap-2">
               <Zap className="w-5 h-5 text-[#F42F73]" />
-              <span>NEW ORDERS QUEUE</span>
+              <span>NEW REQUESTS QUEUE</span>
             </h2>
-            <p className="text-xs text-gray-500">Tap ACCEPT to take an order and begin dispatch</p>
+            <p className="text-xs text-gray-500">
+              Real-time customer assistance requests from Firebase
+            </p>
           </div>
           <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full">
             {availableOrders.length} Available
@@ -77,9 +92,9 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
             <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mx-auto">
               <Package className="w-6 h-6" />
             </div>
-            <div className="font-extrabold text-[#14213D]">No new orders right now</div>
+            <div className="font-extrabold text-[#14213D]">No new requests right now</div>
             <div className="text-xs text-gray-500 max-w-sm mx-auto">
-              Keep your status ONLINE. You will receive an immediate popup and chime when a new customer request arrives.
+              Keep your status ONLINE. You will receive an immediate alert popup and notification when a customer submits a new request.
             </div>
           </div>
         ) : (
@@ -96,7 +111,7 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span className="text-[10px] font-mono font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
-                        {order.bookingNumber || order.id}
+                        {order.bookingNumber || order.requestId || order.id}
                       </span>
                       <h3 className="font-extrabold text-base text-[#14213D] mt-1">
                         {order.serviceName}
@@ -108,39 +123,74 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
 
                     <div className="text-right">
                       <div className="text-lg font-black text-emerald-600">₹{amount}</div>
-                      <div className="text-[10px] text-gray-400 font-semibold">{order.totalHours || 2} Hours</div>
+                      <div className="text-[10px] text-gray-400 font-semibold">
+                        {order.totalHours || order.bookedHours || 2} Hours
+                      </div>
                     </div>
                   </div>
 
                   <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100 text-xs space-y-1.5">
                     <div className="flex items-start gap-2 text-gray-700">
-                      <MapPin className="w-4 h-4 text-[#F42F73] shrink-0 mt-0.5" />
-                      <span className="font-medium">{order.location.address} ({order.location.area})</span>
+                      <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <span className="font-medium">
+                        <strong>Pickup:</strong> {order.location?.address} ({order.location?.area || 'Mumbai'})
+                      </span>
                     </div>
+                    {order.destinationLocation?.address && (
+                      <div className="flex items-start gap-2 text-gray-700">
+                        <Flag className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                        <span className="font-medium">
+                          <strong>Destination:</strong> {order.destinationLocation.address}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 text-gray-500 text-[11px]">
                       <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                      <span>{order.scheduledDate} at {order.startTime}</span>
+                      <span>
+                        {order.scheduledDate} at {order.startTime}
+                      </span>
                     </div>
+                    {(order.instructions || order.description) && (
+                      <div className="flex items-start gap-2 text-gray-600 text-[11px] pt-1 border-t border-gray-200/70">
+                        <FileText className="w-3.5 h-3.5 text-[#F42F73] shrink-0 mt-0.5" />
+                        <span>{order.instructions || order.description}</span>
+                      </div>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onAcceptOrder(order.id)}
-                    disabled={isCurrentAccepting}
-                    className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] shadow-sm disabled:opacity-75"
-                  >
-                    {isCurrentAccepting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>ACCEPTING ORDER...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>ACCEPT ORDER</span>
-                      </>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {onRejectOrder && (
+                      <button
+                        type="button"
+                        onClick={() => onRejectOrder(order.id)}
+                        disabled={isCurrentAccepting}
+                        className="py-3 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-xs flex items-center justify-center gap-1.5 min-h-[46px] cursor-pointer"
+                      >
+                        <XCircle className="w-4 h-4 text-gray-500" />
+                        <span>Reject</span>
+                      </button>
                     )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onAcceptOrder(order.id)}
+                      disabled={isCurrentAccepting}
+                      className={`${
+                        onRejectOrder ? '' : 'col-span-2'
+                      } py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs flex items-center justify-center gap-1.5 transition-all min-h-[46px] shadow-sm disabled:opacity-75 cursor-pointer`}
+                    >
+                      {isCurrentAccepting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Accepting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Accept Request</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -203,14 +253,16 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
               ? 'You have no active orders in progress.'
               : activeTab === 'COMPLETED'
               ? 'Completed tasks will appear here with customer ratings and earnings.'
-              : 'Cancelled tasks will appear here.'}
+              : 'Cancelled or rejected tasks will appear here.'}
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {currentList.map((order) => {
             const amount = order.totalAmount || (order.hourlyRate || 149) * (order.totalHours || 2);
-            const isTaskActive = order.status !== 'COMPLETED' && order.status !== 'CANCELLED';
+            const norm = normalizeBookingStatus(order.status);
+            const isTaskActive =
+              norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress';
 
             return (
               <div
@@ -222,7 +274,7 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <span className="text-[10px] font-mono font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
-                      {order.bookingNumber || order.id}
+                      {order.bookingNumber || order.requestId || order.id}
                     </span>
                     <h3 className="font-black text-base text-[#14213D] mt-1">{order.serviceName}</h3>
                     <div className="text-xs text-gray-600 mt-0.5">
@@ -233,10 +285,10 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
                   <div className="text-right">
                     <div className="text-lg font-black text-emerald-600">₹{amount}</div>
                     <span
-                      className={`inline-block text-[10px] font-black px-2 py-0.5 rounded-full mt-1 ${
-                        order.status === 'COMPLETED'
+                      className={`inline-block text-[10px] font-black px-2 py-0.5 rounded-full mt-1 uppercase ${
+                        norm === 'completed'
                           ? 'bg-emerald-100 text-emerald-800'
-                          : order.status === 'CANCELLED'
+                          : norm === 'cancelled' || norm === 'rejected'
                           ? 'bg-rose-100 text-rose-800'
                           : 'bg-blue-100 text-blue-800'
                       }`}
@@ -248,12 +300,22 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
 
                 <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100 text-xs space-y-1">
                   <div className="flex items-center gap-1.5 text-gray-700">
-                    <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
-                    <span className="truncate">{order.location.address} ({order.location.area})</span>
+                    <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span className="truncate">
+                      {order.location?.address} ({order.location?.area || 'Mumbai'})
+                    </span>
                   </div>
+                  {order.destinationLocation?.address && (
+                    <div className="flex items-center gap-1.5 text-gray-700">
+                      <Flag className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                      <span className="truncate">{order.destinationLocation.address}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5 text-gray-500 text-[11px]">
                     <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    <span>{order.scheduledDate} at {order.startTime} • {order.totalHours} hrs</span>
+                    <span>
+                      {order.scheduledDate} at {order.startTime} • {order.totalHours || order.bookedHours || 2} hrs
+                    </span>
                   </div>
                 </div>
 

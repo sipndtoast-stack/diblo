@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useBooking } from '../../context/BookingContext';
+import { useAuth } from '../../context/AuthContext';
 import { Booking } from '../../types';
 
 export interface RatingModalProps {
@@ -60,6 +61,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
   bookingNumber: propBookingNumber
 }) => {
   const { bookings, rateBooking } = useBooking();
+  const { toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
 
   // Resolve target booking
   const targetBooking =
@@ -285,6 +287,45 @@ export const RatingModal: React.FC<RatingModalProps> = ({
                     </p>
                   </div>
                 </div>
+
+                {/* Save Assistant to Favorites Prompt */}
+                {targetBooking?.assistantId && (
+                  <div className="flex items-center justify-between p-3 bg-rose-50/70 border border-rose-200/80 rounded-2xl text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                      <div className="w-8 h-8 rounded-xl bg-white border border-rose-200 flex items-center justify-center shrink-0 text-[#F42F73]">
+                        <Heart
+                          className={`w-4 h-4 ${
+                            isAssistantFavorited(targetBooking.assistantId)
+                              ? 'fill-[#F42F73]'
+                              : ''
+                          }`}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-[#14213D] truncate">
+                          {isAssistantFavorited(targetBooking.assistantId)
+                            ? `${effectiveAssistantName} is a Saved Helper`
+                            : `Save ${effectiveAssistantName} to Helpers?`}
+                        </div>
+                        <div className="text-[11px] text-gray-500 truncate">
+                          Request for future errands with 1-click priority
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleFavoriteAssistant(targetBooking.assistantId!)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 active:scale-95 ${
+                        isAssistantFavorited(targetBooking.assistantId)
+                          ? 'bg-rose-100 text-[#F42F73] border border-rose-200'
+                          : 'bg-[#F42F73] text-white hover:bg-[#D81B60] shadow-xs'
+                      }`}
+                    >
+                      {isAssistantFavorited(targetBooking.assistantId) ? 'Saved ✓' : '+ Save'}
+                    </button>
+                  </div>
+                )}
 
                 {/* Section 1: Star Rating */}
                 <div id="feedback-stars-section" className="text-center space-y-2.5">

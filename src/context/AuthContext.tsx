@@ -1,19 +1,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChanged, signOut, signInAnonymously, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
-import { MOCK_CUSTOMERS, MOCK_ASSISTANTS } from '../data/mockData';
-import { auth, isFirebaseConfigured } from '../lib/firebase';
+import { MOCK_ASSISTANTS } from '../data/mockData';
+import { auth, isFirebaseConfigured, ensureFirebaseAuthSession } from '../lib/firebase';
 
 const DEFAULT_USERS: Record<UserRole, User> = {
   CUSTOMER: {
-    id: 'user-c-1',
-    name: 'Aarav Mehta',
-    phone: '9820123456',
-    email: 'aarav.mehta@gmail.com',
+    id: '',
+    name: 'Customer',
+    phone: '',
+    email: '',
     role: 'CUSTOMER',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
-    createdAt: '2026-01-10T10:00:00Z'
+    avatar: '',
+    createdAt: new Date().toISOString()
   },
   ASSISTANT: {
     id: 'user-a-1',
@@ -44,8 +44,15 @@ const DEFAULT_USERS: Record<UserRole, User> = {
   }
 };
 
-const DEFAULT_CUSTOMER_PROFILE: CustomerProfile = MOCK_CUSTOMERS[0];
 const DEFAULT_ASSISTANT_PROFILE: AssistantProfile = MOCK_ASSISTANTS[0];
+
+function isStaleDemoCustomer(obj: any): boolean {
+  if (!obj) return true;
+  if (obj.id === 'cust-1' || obj.id === 'user-c-1' || obj.userId === 'user-c-1') return true;
+  if (typeof obj.name === 'string' && obj.name.trim().toLowerCase() === 'aarav mehta') return true;
+  if (obj.phone === '9820123456') return true;
+  return false;
+}
 
 export interface AuthContextType {
   currentUser: User;
@@ -62,6 +69,9 @@ export interface AuthContextType {
   switchRole: (role: UserRole) => Promise<void>;
   updateCustomerProfile: (profile: Partial<CustomerProfile>) => void;
   updateAssistantProfile: (profile: Partial<AssistantProfile>) => void;
+  favoriteAssistantIds: string[];
+  toggleFavoriteAssistant: (assistantId: string) => Promise<boolean>;
+  isAssistantFavorited: (assistantId: string) => boolean;
   loginStaff: (mobileNumber: string, password: string) => Promise<{ success: boolean; role?: 'Assistant' | 'Admin'; message?: string; code?: string; eplId?: string; name?: string; number?: string; email?: string }>;
   logoutStaff: () => Promise<void>;
   logoutCustomer: () => Promise<void>;
@@ -86,12 +96,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [staffUser, setStaffUser] = useState<StaffSession | null>(() => staffSessionStorage.getSession());
   const initialRole = tokenStorage.getActiveRole() || 'CUSTOMER';
   const [currentRole, setCurrentRole] = useState<UserRole>(initialRole);
-  const [currentUser, setCurrentUser] = useState<User>(DEFAULT_USERS[initialRole] || DEFAULT_USERS.CUSTOMER);
-  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(DEFAULT_CUSTOMER_PROFILE);
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const savedCust = localStorage.getItem('diblo_customer_profile');
+      if (savedCust) {
+        const parsed = JSON.parse(savedCust);
+        if (isStaleDemoCustomer(parsed)) {
+          localStorage.removeItem('diblo_customer_profile');
+        } else if (initialRole === 'CUSTOMER') {
+          return {
+            id: parsed.userId || parsed.id || '',
+            name: parsed.name || 'Customer',
+            phone: parsed.phone || '',
+            email: parsed.email || '',
+            role: 'CUSTOMER',
+            avatar: parsed.avatar || '',
+            createdAt: parsed.createdAt || new Date().toISOString()
+          };
+        }
+      }
+    } catch {}
+    return DEFAULT_USERS[initialRole] || DEFAULT_USERS.CUSTOMER;
+  });
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('diblo_customer_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (isStaleDemoCustomer(parsed)) {
+          localStorage.removeItem('diblo_customer_profile');
+          return null;
+        }
+        return parsed;
+      }
+    } catch {}
+    return null;
+  });
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(DEFAULT_ASSISTANT_PROFILE);
   const [isLoading] = useState<boolean>(false);
   const [firebaseCustomer, setFirebaseCustomer] = useState<FirebaseUser | null>(() => auth.currentUser);
-  const [isCustomerAuthenticated, setIsCustomerAuthenticated] = useState<boolean>(() => Boolean(auth.currentUser));
+  const [isCustomerAuthenticated, setIsCustomerAuthenticated] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('diblo_customer_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (!isStaleDemoCustomer(parsed) && parsed.phone) return true;
+      }
+    } catch {}
+    return Boolean(auth.currentUser && !auth.currentUser.email?.startsWith('diblo.assistant.') && !auth.currentUser.email?.startsWith('diblo.admin.'));
+  });
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   // Restore Firebase Authentication for Customer automatically on load
@@ -99,20 +152,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (!isMounted) return;
-      if (fbUser) {
+      const isStaffAuthAccount =
+        fbUser?.email?.startsWith('diblo.assistant.') ||
+        fbUser?.email?.startsWith('diblo.admin.') ||
+        fbUser?.email?.startsWith('diblo.operations.');
+
+      if (fbUser && !isStaffAuthAccount) {
         setFirebaseCustomer(fbUser);
         setIsCustomerAuthenticated(true);
         const rawPhone = fbUser.phoneNumber || '';
-        const cleanPhone = rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10);
+        const emailMatch = fbUser.email?.match(/^diblo\.customer\.(\d{10})@/);
+        const cleanPhone = (rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10)) || (emailMatch ? emailMatch[1] : '') || customerProfile?.phone || '';
 
         let cust: CustomerProfile | null = null;
         if (cleanPhone) {
           cust = await api.getCustomer(cleanPhone).catch(() => null);
+          if (cust && isStaleDemoCustomer(cust)) cust = null;
           if (!cust) {
             cust = await api.createCustomerProfile({
               id: `cust-${cleanPhone}`,
               userId: fbUser.uid,
-              name: fbUser.displayName || 'Customer',
+              name: fbUser.displayName || customerProfile?.name || `Customer ${cleanPhone.slice(-4)}`,
               phone: cleanPhone,
               email: fbUser.email || `${cleanPhone}@diblo.in`,
               walletBalance: 100
@@ -121,25 +181,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (isMounted) {
-          if (cust) {
+          if (cust && !isStaleDemoCustomer(cust)) {
             setCustomerProfile(cust);
+            try {
+              localStorage.setItem('diblo_customer_profile', JSON.stringify(cust));
+            } catch {}
           }
           if (currentRole === 'CUSTOMER') {
             setCurrentUser({
               id: fbUser.uid,
-              name: cust?.name || fbUser.displayName || 'Customer',
-              phone: cleanPhone || '9820000000',
-              email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : 'customer@diblo.in'),
+              name: cust?.name || fbUser.displayName || customerProfile?.name || 'Customer',
+              phone: cleanPhone || cust?.phone || customerProfile?.phone || '',
+              email: cust?.email || fbUser.email || customerProfile?.email || '',
               role: 'CUSTOMER',
-              avatar: fbUser.photoURL || cust?.avatar || DEFAULT_USERS.CUSTOMER.avatar,
+              avatar: fbUser.photoURL || cust?.avatar || '',
               createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
             });
           }
           setIsAuthLoading(false);
         }
       } else {
-        setFirebaseCustomer(null);
-        setIsCustomerAuthenticated(false);
+        if (!isStaffAuthAccount) {
+          setFirebaseCustomer(null);
+          if (!customerProfile || isStaleDemoCustomer(customerProfile)) {
+            setIsCustomerAuthenticated(false);
+          }
+        }
         setIsAuthLoading(false);
       }
     });
@@ -164,10 +231,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 authenticated: true,
                 eplId: verified.eplId,
                 name: verified.name || cached.name,
+                number: verified.number || cached.number,
+                email: verified.email || cached.email,
                 role: verified.role
               };
               setStaffUser(updatedSession);
               staffSessionStorage.setSession(updatedSession);
+              await ensureFirebaseAuthSession({
+                id: updatedSession.eplId,
+                name: updatedSession.name,
+                phone: updatedSession.number,
+                role: updatedSession.role === 'Admin' ? 'ADMIN' : 'ASSISTANT',
+                assistantId: updatedSession.eplId
+              });
             } else {
               setStaffUser(null);
               staffSessionStorage.clear();
@@ -190,9 +266,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async function loadActiveProfile() {
       try {
         if (currentRole === 'CUSTOMER') {
-          const cust = await api.getCustomer(currentUser.phone || '9820123456').catch(() => null);
-          if (cust && isMounted) {
-            setCustomerProfile(cust);
+          if (currentUser.phone && currentUser.phone !== '9820123456') {
+            const cust = await api.getCustomer(currentUser.phone).catch(() => null);
+            if (cust && !isStaleDemoCustomer(cust) && isMounted) {
+              setCustomerProfile(cust);
+            }
           }
         } else if (currentRole === 'ASSISTANT') {
           const asst = await api.getAssistant(currentUser.phone || '9820554433').catch(() => null);
@@ -218,11 +296,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       if (newRole === 'CUSTOMER') {
-        const cust = await api.getCustomer(userForRole.phone).catch(() => null);
-        if (cust) setCustomerProfile(cust);
+        if (customerProfile && !isStaleDemoCustomer(customerProfile)) {
+          setCurrentUser({
+            id: customerProfile.userId || customerProfile.id,
+            name: customerProfile.name,
+            phone: customerProfile.phone,
+            email: customerProfile.email,
+            role: 'CUSTOMER',
+            avatar: customerProfile.avatar || '',
+            createdAt: customerProfile.createdAt
+          });
+          await ensureFirebaseAuthSession({
+            id: customerProfile.phone || customerProfile.id,
+            name: customerProfile.name,
+            phone: customerProfile.phone,
+            role: 'CUSTOMER',
+            customerId: customerProfile.id
+          });
+        }
       } else if (newRole === 'ASSISTANT') {
         const asst = await api.getAssistant(userForRole.phone).catch(() => null);
         if (asst) setAssistantProfile(asst);
+        await ensureFirebaseAuthSession({
+          id: asst?.id || userForRole.id || 'asst-1',
+          name: asst?.name || userForRole.name,
+          phone: asst?.phone || userForRole.phone,
+          role: 'ASSISTANT',
+          assistantId: asst?.id || 'asst-1'
+        });
+      } else {
+        await ensureFirebaseAuthSession({
+          id: userForRole.id,
+          name: userForRole.name,
+          phone: userForRole.phone,
+          role: newRole
+        });
       }
     } catch {
       // Role switch fallback
@@ -231,7 +339,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateCustomerProfile = (updated: Partial<CustomerProfile>) => {
     if (customerProfile) {
-      setCustomerProfile({ ...customerProfile, ...updated });
+      const merged = { ...customerProfile, ...updated };
+      setCustomerProfile(merged);
+      setCurrentUser((prev) => ({
+        ...prev,
+        name: updated.name ?? prev.name,
+        email: updated.email ?? prev.email,
+        phone: updated.phone ?? prev.phone,
+        avatar: updated.avatar ?? prev.avatar
+      }));
+      try {
+        localStorage.setItem('diblo_customer_profile', JSON.stringify(merged));
+      } catch (err) {
+        console.warn('Failed to save customer profile to localStorage:', err);
+      }
     }
   };
 
@@ -239,6 +360,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (assistantProfile) {
       setAssistantProfile({ ...assistantProfile, ...updated });
     }
+  };
+
+  // Customer's Favorite / Saved Assistants
+  const favoriteAssistantIds: string[] = customerProfile?.favoriteAssistantIds || [];
+
+  const isAssistantFavorited = (assistantId: string): boolean => {
+    return favoriteAssistantIds.includes(assistantId);
+  };
+
+  const toggleFavoriteAssistant = async (assistantId: string): Promise<boolean> => {
+    const isCurrentlyFav = favoriteAssistantIds.includes(assistantId);
+    const updated = isCurrentlyFav
+      ? favoriteAssistantIds.filter((id) => id !== assistantId)
+      : [...favoriteAssistantIds, assistantId];
+
+    if (customerProfile) {
+      updateCustomerProfile({ favoriteAssistantIds: updated });
+    }
+
+    try {
+      localStorage.setItem('diblo_customer_favorites', JSON.stringify(updated));
+    } catch {}
+
+    // Synchronize to backend if customer ID exists
+    const custId = customerProfile?.id;
+    if (custId) {
+      try {
+        api.toggleFavoriteAssistant(custId, assistantId, !isCurrentlyFav);
+      } catch (e) {
+        console.warn('Failed to sync favorite assistant with server', e);
+      }
+    }
+
+    return !isCurrentlyFav;
   };
 
   // Staff Login using Mobile Number and Password verified against Google Sheet
@@ -264,12 +419,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: session.name,
           phone: session.number || DEFAULT_USERS.ADMIN.phone
         });
+        await ensureFirebaseAuthSession({
+          id: session.eplId,
+          name: session.name,
+          phone: session.number,
+          role: 'ADMIN'
+        });
       } else {
         setCurrentRole('ASSISTANT');
         setCurrentUser({
           ...DEFAULT_USERS.ASSISTANT,
           name: session.name,
           phone: session.number || DEFAULT_USERS.ASSISTANT.phone
+        });
+        await ensureFirebaseAuthSession({
+          id: session.eplId || session.number || 'asst-1',
+          name: session.name,
+          phone: session.number,
+          role: 'ASSISTANT',
+          assistantId: session.eplId || 'asst-1'
         });
       }
     }
@@ -296,6 +464,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.warn('[Diblo Auth] Firebase signOut notice:', err);
     }
+    try {
+      localStorage.removeItem('diblo_customer_profile');
+      tokenStorage.clear();
+    } catch {}
     setFirebaseCustomer(null);
     setIsCustomerAuthenticated(false);
     setCustomerProfile(null);
@@ -316,11 +488,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let cust: CustomerProfile | null = null;
     if (cleanPhone) {
       cust = await api.getCustomer(cleanPhone).catch(() => null);
+      if (cust && isStaleDemoCustomer(cust)) cust = null;
       if (!cust) {
         cust = await api.createCustomerProfile({
           id: `cust-${cleanPhone}`,
           userId: fbUser.uid,
-          name: fbUser.displayName || 'Customer',
+          name: fbUser.displayName || `Customer ${cleanPhone.slice(-4)}`,
           phone: cleanPhone,
           email: fbUser.email || `${cleanPhone}@diblo.in`,
           walletBalance: 100
@@ -328,17 +501,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    if (cust) {
+    if (cust && !isStaleDemoCustomer(cust)) {
       setCustomerProfile(cust);
+      try {
+        localStorage.setItem('diblo_customer_profile', JSON.stringify(cust));
+      } catch {}
     }
     setCurrentRole('CUSTOMER');
     setCurrentUser({
       id: fbUser.uid,
       name: cust?.name || fbUser.displayName || 'Customer',
-      phone: cleanPhone || '9820000000',
-      email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : 'customer@diblo.in'),
+      phone: cleanPhone || cust?.phone || '',
+      email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : ''),
       role: 'CUSTOMER',
-      avatar: fbUser.photoURL || cust?.avatar || DEFAULT_USERS.CUSTOMER.avatar,
+      avatar: fbUser.photoURL || cust?.avatar || '',
       createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
     });
   };
@@ -346,29 +522,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync Customer by verified phone (handles direct backend OTP verification and preserves Firebase auth state)
   const syncCustomerByPhone = async (phone: string, name?: string) => {
     const cleanPhone = phone.replace('+91', '').replace(/\D/g, '').slice(-10);
+    const custId = `cust-${cleanPhone}`;
+    const displayName = name || `Customer ${cleanPhone.slice(-4)}`;
 
-    // Ensure Firebase has an active authenticated session (anonymous if not already signed in)
-    // so that Firestore security rules (request.auth != null) continue to permit operations
-    let currentFbUser = auth.currentUser;
-    if (!currentFbUser && isFirebaseConfigured()) {
-      try {
-        const anonCred = await signInAnonymously(auth);
-        currentFbUser = anonCred.user;
-        setFirebaseCustomer(currentFbUser);
-      } catch (err) {
-        console.warn('[Diblo Auth] Anonymous Firebase sign-in notice:', err);
-      }
+    const fbUid = await ensureFirebaseAuthSession({
+      id: cleanPhone,
+      name: displayName,
+      phone: cleanPhone,
+      role: 'CUSTOMER',
+      customerId: custId
+    });
+
+    if (auth.currentUser) {
+      setFirebaseCustomer(auth.currentUser);
     }
 
     setIsCustomerAuthenticated(true);
     let cust: CustomerProfile | null = null;
     if (cleanPhone) {
       cust = await api.getCustomer(cleanPhone).catch(() => null);
+      if (cust && isStaleDemoCustomer(cust)) cust = null;
       if (!cust) {
         cust = await api.createCustomerProfile({
-          id: `cust-${cleanPhone}`,
-          userId: currentFbUser?.uid || `user-c-${cleanPhone}`,
-          name: name || `Customer ${cleanPhone.slice(-4)}`,
+          id: custId,
+          userId: fbUid || `user-c-${cleanPhone}`,
+          name: displayName,
           phone: cleanPhone,
           email: `${cleanPhone}@diblo.in`,
           walletBalance: 100
@@ -376,17 +554,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    if (cust) {
+    if (cust && !isStaleDemoCustomer(cust)) {
       setCustomerProfile(cust);
+      try {
+        localStorage.setItem('diblo_customer_profile', JSON.stringify(cust));
+      } catch {}
     }
     setCurrentRole('CUSTOMER');
     setCurrentUser({
-      id: currentFbUser?.uid || `user-c-${cleanPhone}`,
-      name: cust?.name || name || `Customer ${cleanPhone.slice(-4)}`,
-      phone: cleanPhone || '9820000000',
+      id: fbUid || `user-c-${cleanPhone}`,
+      name: cust?.name || displayName,
+      phone: cleanPhone,
       email: cust?.email || `${cleanPhone}@diblo.in`,
       role: 'CUSTOMER',
-      avatar: DEFAULT_USERS.CUSTOMER.avatar,
+      avatar: cust?.avatar || '',
       createdAt: new Date().toISOString()
     });
   };
@@ -431,6 +612,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switchRole,
         updateCustomerProfile,
         updateAssistantProfile,
+        favoriteAssistantIds,
+        toggleFavoriteAssistant,
+        isAssistantFavorited,
         loginStaff,
         logoutStaff,
         logoutCustomer,

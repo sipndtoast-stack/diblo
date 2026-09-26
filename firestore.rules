@@ -8,9 +8,6 @@ service cloud.firestore {
     }
 
     // Helper functions
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
     function incoming() {
       return request.resource.data;
     }
@@ -24,49 +21,101 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
     function isAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email != null && (
+          request.auth.token.email.matches('^diblo\\.admin\\..*') ||
+          request.auth.token.email.matches('^diblo\\.operations\\..*')
+        ))
+      );
+    }
+    function isAssistant() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.matches('^diblo\\.assistant\\..*')) ||
+        isAdmin()
+      );
+    }
+    function isValidBookingStatus(status) {
+      return status in [
+        'pending', 'accepted', 'on_the_way', 'arrived', 'in_progress', 'completed', 'rejected', 'cancelled', 'scheduled',
+        'PENDING', 'SEARCHING', 'ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'OTP_VERIFIED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED', 'SCHEDULED'
+      ];
     }
 
     // Users Collection
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && incoming().id == userId && incoming().keys().hasAll(['id', 'name', 'phone', 'role', 'createdAt']);
-      allow update: if (isOwner(userId) || isAdmin()) && incoming().id == existing().id;
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
     }
 
     // Customers Collection
     match /customers/{customerId} {
-      allow read: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && (incoming().userId == request.auth.uid || isAdmin());
-      allow update: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
     // Assistants Collection
     match /assistants/{assistantId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && (incoming().userId == request.auth.uid || isAdmin());
-      allow update: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow read: if true;
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
     // Bookings Collection
     match /bookings/{bookingId} {
+      // Customers can read their own bookings; Assistants can read pending requests and bookings assigned to them; Admins can read all
       allow read: if isSignedIn() && (
+        isAdmin() ||
+        isAssistant() ||
         resource.data.customerId == request.auth.uid ||
-        resource.data.assistantId == request.auth.uid ||
-        isAdmin()
+        resource.data.customerUid == request.auth.uid ||
+        !('customerUid' in resource.data)
       );
-      allow create: if isSignedIn() && (
-        incoming().customerId == request.auth.uid || isAdmin()
-      );
-      allow update: if isSignedIn() && (
-        existing().customerId == request.auth.uid ||
-        existing().assistantId == request.auth.uid ||
-        isAdmin()
-      );
+
+      // Customers can create bookings with valid status
+      allow create: if isSignedIn() && isValidBookingStatus(incoming().status);
+
+      // Validate updates:
+      // 1. Status must be valid
+      // 2. Customers cannot overwrite assistantLocation once an assistant is assigned
+      // 3. Assistants cannot hijack another assistant's active accepted booking
+      allow update: if isSignedIn() &&
+        isValidBookingStatus(incoming().status) &&
+        (
+          isAdmin() ||
+          (
+            isAssistant() && (
+              !('assistantUid' in existing()) ||
+              existing().assistantUid == null ||
+              existing().assistantUid == '' ||
+              existing().assistantUid == request.auth.uid ||
+              existing().status in ['pending', 'PENDING', 'SEARCHING', 'ASSIGNED', 'rejected', 'REJECTED']
+            )
+          ) ||
+          (
+            !isAssistant() &&
+            (existing().customerId == request.auth.uid || existing().customerUid == request.auth.uid || !('customerUid' in existing())) &&
+            !incoming().diff(existing()).affectedKeys().hasAny(['assistantLocation'])
+          )
+        );
+
       allow delete: if isAdmin();
+
+      // Live Assistant Location Subcollection: /bookings/{bookingId}/assistantLocation/{docId}
+      match /assistantLocation/{docId} {
+        allow read: if isSignedIn();
+        // Customers must not be able to modify assistant location; only assistants or admins can write
+        allow create, update: if isSignedIn() && (isAssistant() || isAdmin());
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Services Collection
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Pricing Collection
@@ -78,14 +127,13 @@ service cloud.firestore {
     // Coupons Collection
     match /coupons/{couponId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isSignedIn();
     }
 
     // Referrals Collection
     match /referrals/{referralId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() || isAdmin();
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
@@ -97,24 +145,30 @@ service cloud.firestore {
 
     // Support Tickets Collection
     match /supportTickets/{ticketId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow update: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
     // Payments Collection
     match /payments/{paymentId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if isAdmin();
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Assistant Applications Collection
+    match /assistantApplications/{appId} {
+      allow read: if isSignedIn();
+      allow create: if true;
+      allow update, delete: if isAdmin();
     }
 
     // Emergency Alerts Collection
     match /emergencyAlerts/{alertId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow update: if isAdmin();
+      allow read, create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
   }
 }
+

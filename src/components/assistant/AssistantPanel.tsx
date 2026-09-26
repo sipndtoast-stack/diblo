@@ -7,30 +7,19 @@ import {
   MapPin,
   Clock,
   CheckCircle2,
-  DollarSign,
   Star,
   Navigation,
   Key,
   Phone,
-  MessageSquare,
   AlertTriangle,
-  TrendingUp,
   LogOut,
   Car,
   RefreshCw,
-  Loader2,
   ExternalLink,
-  Compass,
-  Sparkles,
-  Zap,
-  Package,
-  CreditCard,
-  Bell,
-  User,
-  FileText,
-  HelpCircle,
   XCircle,
-  Radio
+  Radio,
+  Flag,
+  FileText
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
@@ -50,6 +39,7 @@ import {
   hasOrderBeenAlerted,
   requestNotificationPermission
 } from '../../lib/assistantAlertService';
+import { normalizeBookingStatus, isDemoBookingRecord } from '../../lib/firestoreBookings';
 import { Booking } from '../../types';
 
 export interface EstimatedRouteDetails {
@@ -66,17 +56,21 @@ export interface EstimatedRouteDetails {
 }
 
 export const AssistantPanel: React.FC = () => {
-  const { assistantProfile, updateAssistantProfile, logoutStaff } = useAuth();
+  const { assistantProfile, staffUser, updateAssistantProfile, logoutStaff } = useAuth();
   const {
     bookings,
     refreshBookings,
+    acceptBooking,
+    rejectBooking,
+    startAssistance,
+    updateAssistantLiveLocation,
     verifyStartOtp,
     completeBooking,
     notifications,
     markNotificationRead
   } = useBooking();
 
-  const assistantId = assistantProfile?.id || 'asst-1';
+  const assistantId = staffUser?.eplId || assistantProfile?.id || 'asst-1';
 
   // Navigation & Drawer State
   const [currentSection, setCurrentSection] = useState<AssistantSection>('HOME');
@@ -101,41 +95,61 @@ export const AssistantPanel: React.FC = () => {
   const [assistantGpsCoords, setAssistantGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsPermissionStatus, setGpsPermissionStatus] = useState<'granted' | 'prompt' | 'denied'>('prompt');
   const [isRefreshingGps, setIsRefreshingGps] = useState<boolean>(false);
+  const [isLiveTrackingActive, setIsLiveTrackingActive] = useState<boolean>(false);
   const [routeEstimate, setRouteEstimate] = useState<EstimatedRouteDetails | null>(null);
   const [isCalculatingRoute, setIsCalculatingRoute] = useState<boolean>(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [mapFocusTrigger, setMapFocusTrigger] = useState<number>(0);
 
+  const watchIdRef = useRef<number | null>(null);
+
+  // Filter out any demo records
+  const realBookings = bookings.filter((b) => !isDemoBookingRecord(b));
+
   // Identify current active task assigned to this assistant
-  const activeTask = bookings.find(
-    (b) =>
+  const activeTask = realBookings.find((b) => {
+    const norm = normalizeBookingStatus(b.status);
+    return (
       b.assistantId === assistantId &&
-      b.status !== 'COMPLETED' &&
-      b.status !== 'CANCELLED'
-  );
+      (norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress')
+    );
+  });
 
-  const activeTaskHourlyRate = activeTask?.hourlyRate || 149;
-  const activeTaskEstimatedDuration = activeTask?.totalHours || activeTask?.bookedHours || 2;
-  const activeTaskEstimatedEarnings =
-    activeTask?.totalAmount || activeTaskHourlyRate * activeTaskEstimatedDuration;
+  const activeTaskNormStatus = normalizeBookingStatus(activeTask?.status);
+  const isAssistanceInProgress =
+    activeTaskNormStatus === 'in_progress' ||
+    activeTaskNormStatus === 'on_the_way' ||
+    activeTaskNormStatus === 'arrived';
 
-  // Available new incoming requests in Mumbai West queue
-  const incomingRequests = bookings.filter(
-    (b) =>
+  // Available new incoming requests in real time from Firebase
+  const incomingRequests = realBookings.filter((b) => {
+    const norm = normalizeBookingStatus(b.status);
+    return (
       !rejectedOrderIds.has(b.id) &&
-      (b.status === 'SEARCHING' || (b.status === 'ASSIGNED' && b.assistantId === assistantId))
-  );
+      norm === 'pending' &&
+      (!b.assistantId || b.assistantId === assistantId)
+    );
+  });
 
-  // Fetch / update live GPS location
-  const refreshGpsLocation = useCallback(async (): Promise<{ lat: number; lng: number }> => {
+  // Stop active Geolocation watch helper
+  const stopLiveGpsTracking = useCallback(() => {
+    if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setIsLiveTrackingActive(false);
+  }, []);
+
+  // Fetch single GPS snapshot (only when explicitly requested or when active assistance starts)
+  const refreshGpsLocation = useCallback(async (): Promise<{ lat: number; lng: number } | null> => {
     setIsRefreshingGps(true);
     try {
       if (typeof navigator !== 'undefined' && navigator.geolocation) {
         const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
             enableHighAccuracy: true,
-            timeout: 7000,
-            maximumAge: 30000
+            timeout: 10000,
+            maximumAge: 10000
           });
         });
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -143,24 +157,83 @@ export const AssistantPanel: React.FC = () => {
         setGpsPermissionStatus('granted');
         return coords;
       }
-    } catch {
-      setGpsPermissionStatus('denied');
+    } catch (err: any) {
+      if (err?.code === 1) {
+        setGpsPermissionStatus('denied');
+      }
     } finally {
       setIsRefreshingGps(false);
     }
-    const fallback = {
-      lat: assistantProfile?.currentLocation?.lat || 19.0596,
-      lng: assistantProfile?.currentLocation?.lng || 72.8295
-    };
-    setAssistantGpsCoords(fallback);
-    return fallback;
-  }, [assistantProfile?.currentLocation?.lat, assistantProfile?.currentLocation?.lng]);
+    return null;
+  }, []);
 
-  // Initial location and notification permission setup
+  // Request browser notification permission on mount (do NOT auto-start GPS tracking until assistance starts)
   useEffect(() => {
-    refreshGpsLocation();
     requestNotificationPermission().catch(() => {});
-  }, [refreshGpsLocation]);
+    return () => {
+      stopLiveGpsTracking();
+    };
+  }, [stopLiveGpsTracking]);
+
+  // Start / Stop real live location tracking ONLY when assistance is in_progress
+  useEffect(() => {
+    if (!activeTask || !isAssistanceInProgress) {
+      stopLiveGpsTracking();
+      return;
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGpsPermissionStatus('denied');
+      return;
+    }
+
+    // Clear any previous watch before starting for activeTask.id
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    setIsLiveTrackingActive(true);
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setGpsPermissionStatus('granted');
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setAssistantGpsCoords({ lat, lng });
+
+        updateAssistantLiveLocation(activeTask.id, {
+          latitude: lat,
+          longitude: lng,
+          accuracy: pos.coords.accuracy,
+          heading: pos.coords.heading,
+          speed: pos.coords.speed
+        }).catch((e) => {
+          console.debug('Live location update error:', e);
+        });
+      },
+      (err) => {
+        if (err.code === 1) {
+          setGpsPermissionStatus('denied');
+          setIsLiveTrackingActive(false);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 5000,
+        timeout: 15000
+      }
+    );
+
+    watchIdRef.current = watchId;
+
+    return () => {
+      if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [activeTask?.id, isAssistanceInProgress, stopLiveGpsTracking, updateAssistantLiveLocation]);
 
   // Close drawer on Escape key press
   useEffect(() => {
@@ -173,9 +246,8 @@ export const AssistantPanel: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isDrawerOpen]);
 
-  // Auto-detect New Order for Popup & Sound Alert
+  // Auto-detect New Order from Firebase for Popup & Sound/Browser/Vibration Alert
   useEffect(() => {
-    // Only trigger new order alert if assistant is ONLINE and has no active task in progress
     if (!isOnline || activeTask) {
       if (popupOrder) {
         stopAlert();
@@ -184,13 +256,11 @@ export const AssistantPanel: React.FC = () => {
       return;
     }
 
-    // Find the first unassigned or assigned new order not rejected
     const newCandidate = incomingRequests.find((b) => !rejectedOrderIds.has(b.id));
 
     if (newCandidate) {
       if (!popupOrder || popupOrder.id !== newCandidate.id) {
         setPopupOrder(newCandidate);
-        // Trigger alert service (chime sound, vibration, PWA notification)
         if (!hasOrderBeenAlerted(newCandidate.id)) {
           startNewOrderAlert({
             id: newCandidate.id,
@@ -218,22 +288,17 @@ export const AssistantPanel: React.FC = () => {
       setRouteError(null);
 
       try {
-        let originLat = assistantGpsCoords?.lat || assistantProfile?.currentLocation?.lat || 19.0596;
-        let originLng = assistantGpsCoords?.lng || assistantProfile?.currentLocation?.lng || 72.8295;
-
-        // Try getting fresh coordinates if not yet acquired
-        if (!assistantGpsCoords) {
-          const fresh = await refreshGpsLocation();
-          originLat = fresh.lat;
-          originLng = fresh.lng;
-        }
+        let originLat = assistantGpsCoords?.lat || assistantProfile?.currentLocation?.lat;
+        let originLng = assistantGpsCoords?.lng || assistantProfile?.currentLocation?.lng;
 
         const destLat =
           targetLocation?.lat ??
+          activeTask?.pickupLocation?.lat ??
           activeTask?.location?.latitude ??
           activeTask?.location?.lat;
         const destLng =
           targetLocation?.lng ??
+          activeTask?.pickupLocation?.lng ??
           activeTask?.location?.longitude ??
           activeTask?.location?.lng;
 
@@ -243,7 +308,37 @@ export const AssistantPanel: React.FC = () => {
           isNaN(destLat) ||
           isNaN(destLng)
         ) {
-          setRouteError('Customer service coordinates are not available.');
+          setRouteError('Customer pickup coordinates are not available.');
+          return null;
+        }
+
+        // If assistant doesn't have live GPS yet, calculate route between pickup and destination if destination exists
+        if (typeof originLat !== 'number' || typeof originLng !== 'number') {
+          if (activeTask?.destinationLocation?.lat && activeTask?.destinationLocation?.lng) {
+            const route = await api.getRoute(
+              destLat,
+              destLng,
+              activeTask.destinationLocation.lat,
+              activeTask.destinationLocation.lng,
+              'DRIVE'
+            );
+            if (route && route.success) {
+              const estimate: EstimatedRouteDetails = {
+                distanceText: route.distanceText,
+                distanceKm: route.distanceKm,
+                durationText: route.durationText,
+                durationMinutes: route.durationMinutes,
+                originLat: destLat,
+                originLng: destLng,
+                destLat: activeTask.destinationLocation.lat,
+                destLng: activeTask.destinationLocation.lng,
+                calculatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isFallback: route.isFallback
+              };
+              setRouteEstimate(estimate);
+              return estimate;
+            }
+          }
           return null;
         }
 
@@ -280,32 +375,35 @@ export const AssistantPanel: React.FC = () => {
       assistantGpsCoords,
       assistantProfile?.currentLocation?.lat,
       assistantProfile?.currentLocation?.lng,
+      activeTask?.pickupLocation?.lat,
+      activeTask?.pickupLocation?.lng,
       activeTask?.location?.latitude,
       activeTask?.location?.lat,
       activeTask?.location?.longitude,
       activeTask?.location?.lng,
-      refreshGpsLocation
+      activeTask?.destinationLocation?.lat,
+      activeTask?.destinationLocation?.lng
     ]
   );
 
-  // Automatically calculate route whenever active task appears
+  // Automatically calculate route whenever active task or GPS changes
   useEffect(() => {
     if (activeTask) {
-      const destLat = activeTask.location?.latitude || activeTask.location?.lat;
-      const destLng = activeTask.location?.longitude || activeTask.location?.lng;
+      const destLat =
+        activeTask.pickupLocation?.lat ||
+        activeTask.location?.latitude ||
+        activeTask.location?.lat;
+      const destLng =
+        activeTask.pickupLocation?.lng ||
+        activeTask.location?.longitude ||
+        activeTask.location?.lng;
       if (typeof destLat === 'number' && typeof destLng === 'number') {
-        if (
-          !routeEstimate ||
-          routeEstimate.destLat !== destLat ||
-          routeEstimate.destLng !== destLng
-        ) {
-          calculateRouteToCustomer({ lat: destLat, lng: destLng });
-        }
+        calculateRouteToCustomer({ lat: destLat, lng: destLng });
       }
     } else {
       setRouteEstimate(null);
     }
-  }, [activeTask?.id, activeTask?.status, calculateRouteToCustomer]);
+  }, [activeTask?.id, activeTask?.status, assistantGpsCoords?.lat, assistantGpsCoords?.lng, calculateRouteToCustomer]);
 
   // Handle Online / Offline Switch
   const handleToggleOnline = async () => {
@@ -326,26 +424,22 @@ export const AssistantPanel: React.FC = () => {
     }
   };
 
-  // Handle Order Accept (from Popup or List)
+  // Handle Order Accept (from Popup or List) -> updates Firebase status = 'accepted'
   const handleAcceptOrder = async (orderId: string) => {
     setIsAcceptingOrder(true);
     stopAlert();
     try {
-      const targetBooking = bookings.find((b) => b.id === orderId);
-      await api.acceptBooking(orderId, assistantId);
-      await refreshBookings();
+      await acceptBooking(orderId, assistantId, {
+        assistantName: staffUser?.name || assistantProfile?.name || 'Rajesh Sharma',
+        assistantPhone: staffUser?.number || assistantProfile?.phone || '9820554433',
+        assistantPhoto:
+          assistantProfile?.photo ||
+          'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+        assistantRating: assistantProfile?.rating || 4.95
+      });
 
       setPopupOrder(null);
-      setCurrentSection('HOME'); // Take assistant directly to active order workflow
-
-      // Trigger route calculation
-      const targetLat = targetBooking?.location?.latitude || targetBooking?.location?.lat;
-      const targetLng = targetBooking?.location?.longitude || targetBooking?.location?.lng;
-      if (typeof targetLat === 'number' && typeof targetLng === 'number') {
-        await calculateRouteToCustomer({ lat: targetLat, lng: targetLng });
-      } else {
-        await calculateRouteToCustomer();
-      }
+      setCurrentSection('HOME');
     } catch (e) {
       console.error('Failed to accept order:', e);
     } finally {
@@ -353,43 +447,36 @@ export const AssistantPanel: React.FC = () => {
     }
   };
 
-  // Handle Order Reject
+  // Handle Order Reject -> updates Firebase status = 'rejected'
   const handleRejectOrder = async (orderId: string) => {
     stopAlert();
     setPopupOrder(null);
     setRejectedOrderIds((prev) => new Set([...prev, orderId]));
     try {
-      await api.rejectBooking(orderId, assistantId);
-      await refreshBookings();
+      await rejectBooking(orderId, assistantId);
     } catch (e) {
       console.debug('Reject booking sync error:', e);
     }
   };
 
-  // Step 1 Action: Go to Customer / Start Route
-  const handleStartRoute = async (orderId: string) => {
+  // Start Assistance -> updates Firebase status = 'in_progress' and starts live location tracking
+  const handleStartAssistance = async (orderId: string) => {
     try {
-      await api.startRouteBooking(orderId);
-      await refreshBookings();
-      // Recalculate route as assistant starts travelling
-      calculateRouteToCustomer();
+      // Request browser location permission and push initial coordinates when starting assistance
+      const coords = await refreshGpsLocation();
+      await startAssistance(orderId);
+      if (coords) {
+        await updateAssistantLiveLocation(orderId, {
+          latitude: coords.lat,
+          longitude: coords.lng
+        });
+      }
     } catch (e) {
-      console.error('Failed to start route:', e);
+      console.error('Failed to start assistance:', e);
     }
   };
 
-  // Step 2 Action: Mark Arrived
-  const handleArrived = async (orderId: string) => {
-    try {
-      await api.arriveBooking(orderId);
-      await refreshBookings();
-      setShowOtpModal(true);
-    } catch (e) {
-      console.error('Failed to mark arrival:', e);
-    }
-  };
-
-  // Step 3 Action: Verify Customer Start OTP
+  // Optional OTP verification modal handler
   const handleVerifyOtpSubmit = async () => {
     if (!activeTask || !enteredOtp) return;
     setIsVerifying(true);
@@ -399,22 +486,28 @@ export const AssistantPanel: React.FC = () => {
       if (success) {
         setShowOtpModal(false);
         setEnteredOtp('');
-        await refreshBookings();
+        const coords = await refreshGpsLocation();
+        if (coords) {
+          await updateAssistantLiveLocation(activeTask.id, {
+            latitude: coords.lat,
+            longitude: coords.lng
+          });
+        }
       } else {
         setOtpError('Invalid OTP. Please ask customer for the 4-digit code.');
       }
-    } catch (e) {
+    } catch {
       setOtpError('Verification failed. Please check network.');
     } finally {
       setIsVerifying(false);
     }
   };
 
-  // Step 4 Action: Complete Task
+  // Complete Request -> updates Firebase status = 'completed' and stops active location tracking
   const handleCompleteTask = async (orderId: string) => {
     try {
+      stopLiveGpsTracking();
       await completeBooking(orderId);
-      await refreshBookings();
     } catch (e) {
       console.error('Failed to complete booking:', e);
     }
@@ -437,13 +530,17 @@ export const AssistantPanel: React.FC = () => {
         onLogout={() => logoutStaff()}
       />
 
-      {/* New Order Popup Alert Modal (Primary Feature) */}
+      {/* New Assistance Request Popup Alert Modal */}
       <NewOrderModal
         order={popupOrder}
         onAccept={handleAcceptOrder}
         onReject={handleRejectOrder}
         isAccepting={isAcceptingOrder}
-        distanceText={routeEstimate?.distanceText || '1.8 km'}
+        distanceText={
+          popupOrder?.estimatedDistance ||
+          routeEstimate?.distanceText ||
+          'Nearby'
+        }
       />
 
       {/* Top Assistant Header with Hamburger & Online/Offline Control */}
@@ -466,7 +563,10 @@ export const AssistantPanel: React.FC = () => {
                 <Menu className="w-5 h-5 text-[#14213D]" />
               )}
               {unreadNotificationsCount > 0 && !isDrawerOpen && (
-                <span id="assistant-drawer-unread-badge" className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />
+                <span
+                  id="assistant-drawer-unread-badge"
+                  className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"
+                />
               )}
             </button>
 
@@ -491,10 +591,16 @@ export const AssistantPanel: React.FC = () => {
 
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span id="assistant-header-name" className="font-extrabold text-sm sm:text-base text-[#14213D] leading-tight">
-                    {assistantProfile?.name || 'Rajesh Sharma'}
+                  <span
+                    id="assistant-header-name"
+                    className="font-extrabold text-sm sm:text-base text-[#14213D] leading-tight"
+                  >
+                    {staffUser?.name || assistantProfile?.name || 'Rajesh Sharma'}
                   </span>
-                  <span id="assistant-header-verified-pill" className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-1.5 py-0.2 rounded flex items-center gap-0.5">
+                  <span
+                    id="assistant-header-verified-pill"
+                    className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-1.5 py-0.2 rounded flex items-center gap-0.5"
+                  >
                     <ShieldCheck className="w-3 h-3 text-emerald-600" />
                     <span className="hidden sm:inline">Police Verified</span>
                   </span>
@@ -521,9 +627,13 @@ export const AssistantPanel: React.FC = () => {
             >
               <Power className={`w-4 h-4 ${isOnline ? 'text-emerald-200' : 'text-gray-500'}`} />
               <div className="text-left leading-tight">
-                <div>{isOnline ? 'ONLINE' : 'OFFLINE'}</div>
+                <div>{isAssistanceInProgress ? 'Assistance in Progress' : isOnline ? "You're Online" : 'OFFLINE'}</div>
                 <div className="text-[9px] font-medium opacity-90 hidden sm:block">
-                  {isOnline ? 'Receiving Orders' : 'Orders Paused'}
+                  {isAssistanceInProgress
+                    ? 'Live GPS Tracking Active'
+                    : isOnline
+                    ? 'Receiving Requests'
+                    : 'Requests Paused'}
                 </div>
               </div>
             </button>
@@ -548,10 +658,11 @@ export const AssistantPanel: React.FC = () => {
         {currentSection === 'MY_ORDERS' && (
           <AssistantOrdersView
             mode="MY_ORDERS"
-            bookings={bookings}
+            bookings={realBookings}
             assistantId={assistantId}
             onAcceptOrder={handleAcceptOrder}
-            onSelectActiveOrder={(order) => {
+            onRejectOrder={handleRejectOrder}
+            onSelectActiveOrder={() => {
               setCurrentSection('HOME');
             }}
             isAcceptingId={isAcceptingOrder ? popupOrder?.id : null}
@@ -561,10 +672,11 @@ export const AssistantPanel: React.FC = () => {
         {currentSection === 'NEW_ORDERS' && (
           <AssistantOrdersView
             mode="NEW_ORDERS"
-            bookings={bookings}
+            bookings={realBookings}
             assistantId={assistantId}
             onAcceptOrder={handleAcceptOrder}
-            onSelectActiveOrder={(order) => {
+            onRejectOrder={handleRejectOrder}
+            onSelectActiveOrder={() => {
               setCurrentSection('HOME');
             }}
             isAcceptingId={isAcceptingOrder ? popupOrder?.id : null}
@@ -575,7 +687,7 @@ export const AssistantPanel: React.FC = () => {
           <AssistantEarningsView
             mode="EARNINGS"
             assistantProfile={assistantProfile}
-            bookings={bookings}
+            bookings={realBookings}
           />
         )}
 
@@ -583,7 +695,7 @@ export const AssistantPanel: React.FC = () => {
           <AssistantEarningsView
             mode="PAYMENTS"
             assistantProfile={assistantProfile}
-            bookings={bookings}
+            bookings={realBookings}
           />
         )}
 
@@ -603,36 +715,38 @@ export const AssistantPanel: React.FC = () => {
             onRefreshLocation={refreshGpsLocation}
             isRefreshing={isRefreshingGps}
             permissionStatus={gpsPermissionStatus}
-            address={activeTask?.location?.address || assistantProfile?.currentLocation?.address || 'Carter Road, Bandra West'}
-            area={activeTask?.location?.area || assistantProfile?.currentLocation?.area || 'Bandra West, Mumbai'}
+            address={
+              activeTask?.location?.address ||
+              assistantProfile?.currentLocation?.address ||
+              'Carter Road, Bandra West'
+            }
+            area={
+              activeTask?.location?.area ||
+              assistantProfile?.currentLocation?.area ||
+              'Bandra West, Mumbai'
+            }
           />
         )}
 
         {currentSection === 'MY_PROFILE' && (
-          <AssistantProfileView
-            mode="MY_PROFILE"
-            assistantProfile={assistantProfile}
-          />
+          <AssistantProfileView mode="MY_PROFILE" assistantProfile={assistantProfile} />
         )}
 
         {currentSection === 'DOCUMENTS' && (
-          <AssistantProfileView
-            mode="DOCUMENTS"
-            assistantProfile={assistantProfile}
-          />
+          <AssistantProfileView mode="DOCUMENTS" assistantProfile={assistantProfile} />
         )}
 
-        {currentSection === 'HELP_SUPPORT' && (
-          <AssistantSupportView />
-        )}
+        {currentSection === 'HELP_SUPPORT' && <AssistantSupportView />}
 
         {/* HOME SECTION (DEFAULT) */}
         {currentSection === 'HOME' && (
           <div className="space-y-6">
-            {/* Status / Duty Indicator Banner */}
+            {/* Status / Duty Indicator Banner (Section 10: "You're Online" vs "Assistance in Progress") */}
             <div
               className={`p-4 rounded-3xl border flex items-center justify-between gap-3 ${
-                isOnline
+                isAssistanceInProgress
+                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-md'
+                  : isOnline
                   ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
                   : 'bg-gray-100/80 border-gray-200 text-gray-800'
               }`}
@@ -640,38 +754,77 @@ export const AssistantPanel: React.FC = () => {
               <div className="flex items-center gap-3">
                 <div
                   className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                    isOnline ? 'bg-emerald-500 text-white' : 'bg-gray-400 text-white'
+                    isAssistanceInProgress
+                      ? 'bg-white/20 text-white'
+                      : isOnline
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-gray-400 text-white'
                   }`}
                 >
-                  <Radio className={`w-5 h-5 ${isOnline ? 'animate-pulse' : ''}`} />
+                  <Radio className={`w-5 h-5 ${isOnline || isAssistanceInProgress ? 'animate-pulse' : ''}`} />
                 </div>
                 <div>
-                  <div className="font-black text-sm">
-                    {isOnline ? 'ONLINE • You can receive orders' : 'OFFLINE • New orders are paused'}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-0.5">
-                    {activeTask
-                      ? 'Active order in progress below. Complete current assignment safely.'
+                  <div className="font-black text-sm sm:text-base">
+                    {isAssistanceInProgress
+                      ? 'Assistance in Progress'
                       : isOnline
-                      ? 'Radar active in Bandra & Mumbai West. New orders will alert automatically.'
-                      : 'Switch to ONLINE whenever you are ready to accept customer bookings.'}
+                      ? "You're Online"
+                      : 'OFFLINE • New requests are paused'}
+                  </div>
+                  <div
+                    className={`text-xs mt-0.5 ${
+                      isAssistanceInProgress ? 'text-emerald-100' : 'text-gray-500'
+                    }`}
+                  >
+                    {isAssistanceInProgress
+                      ? isLiveTrackingActive
+                        ? 'Live GPS location tracking is active and syncing to the customer map in real time.'
+                        : 'Active request in progress. Enable location access to broadcast live GPS.'
+                      : activeTask
+                      ? 'Request accepted. Click "Start Assistance" below when ready to begin live tracking.'
+                      : isOnline
+                      ? 'Connected to Firebase real-time dispatch. New customer requests will alert immediately.'
+                      : 'Switch to Online whenever you are ready to accept customer requests.'}
                   </div>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleToggleOnline}
-                className="hidden sm:inline-flex px-3.5 py-1.5 rounded-xl bg-white border border-gray-200 text-xs font-bold text-[#14213D] shadow-2xs hover:bg-gray-50"
-              >
-                Change Status
-              </button>
+              {!activeTask && (
+                <button
+                  type="button"
+                  onClick={handleToggleOnline}
+                  className="hidden sm:inline-flex px-3.5 py-1.5 rounded-xl bg-white border border-gray-200 text-xs font-bold text-[#14213D] shadow-2xs hover:bg-gray-50"
+                >
+                  Change Status
+                </button>
+              )}
             </div>
+
+            {/* Location Permission Denied Warning (Section 16) */}
+            {gpsPermissionStatus === 'denied' && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs sm:text-sm font-bold leading-relaxed">
+                    Location permission is required to provide live tracking. Please enable location access in your browser/device settings.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={refreshGpsLocation}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shrink-0 self-start sm:self-auto"
+                >
+                  Retry Location Access
+                </button>
+              </div>
+            )}
 
             {/* Quick Metrics Banner */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Today's Earnings</div>
+                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+                  Today's Earnings
+                </div>
                 <div className="text-xl sm:text-2xl font-black text-emerald-600">
                   ₹{assistantProfile?.earnings?.today || 1490}
                 </div>
@@ -679,7 +832,9 @@ export const AssistantPanel: React.FC = () => {
               </div>
 
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Completed Tasks</div>
+                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+                  Completed Tasks
+                </div>
                 <div className="text-xl sm:text-2xl font-black text-[#14213D]">
                   {assistantProfile?.completedTasksCount || 342}
                 </div>
@@ -687,7 +842,9 @@ export const AssistantPanel: React.FC = () => {
               </div>
 
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Customer Rating</div>
+                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+                  Customer Rating
+                </div>
                 <div className="text-xl sm:text-2xl font-black text-amber-500 flex items-center gap-1">
                   <span>{assistantProfile?.rating || 4.9}</span>
                   <Star className="w-4 h-4 fill-amber-500" />
@@ -696,7 +853,9 @@ export const AssistantPanel: React.FC = () => {
               </div>
 
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">Weekly Payout</div>
+                <div className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+                  Weekly Payout
+                </div>
                 <div className="text-xl sm:text-2xl font-black text-[#14213D]">
                   ₹{assistantProfile?.earnings?.week || 8450}
                 </div>
@@ -711,33 +870,39 @@ export const AssistantPanel: React.FC = () => {
                 <div className="border-b border-gray-100 pb-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="bg-[#FFF0F5] text-[#F42F73] text-xs font-black px-3 py-1 rounded-full uppercase inline-block border border-[#F42F73]/20">
-                      CURRENT STATUS: {activeTask.status.replace(/_/g, ' ')}
+                      STATUS: {activeTaskNormStatus === 'in_progress' ? 'IN PROGRESS' : activeTask.status.toUpperCase()}
                     </span>
                     <span className="text-xs font-mono font-bold text-gray-400">
-                      {activeTask.bookingNumber || activeTask.id}
+                      {activeTask.bookingNumber || activeTask.requestId || activeTask.id}
                     </span>
                   </div>
 
-                  {/* Flow Progress Steps: NEW -> ACCEPTED -> ON THE WAY -> ARRIVED -> SERVICE STARTED -> COMPLETED */}
+                  {/* Flow Progress Steps: PENDING -> ACCEPTED -> IN PROGRESS -> COMPLETED */}
                   <div className="hidden sm:flex items-center justify-between text-[11px] font-bold pt-2 px-1 text-gray-400">
-                    <div className={['ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(activeTask.status) ? 'text-emerald-600' : ''}>
+                    <div
+                      className={
+                        ['accepted', 'on_the_way', 'arrived', 'in_progress', 'completed'].includes(
+                          activeTaskNormStatus
+                        )
+                          ? 'text-emerald-600'
+                          : ''
+                      }
+                    >
                       1. ACCEPTED
                     </div>
                     <span>&rarr;</span>
-                    <div className={['ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(activeTask.status) ? 'text-emerald-600' : ''}>
-                      2. ON THE WAY
+                    <div
+                      className={
+                        ['in_progress', 'on_the_way', 'arrived', 'completed'].includes(activeTaskNormStatus)
+                          ? 'text-emerald-600'
+                          : ''
+                      }
+                    >
+                      2. ASSISTANCE IN PROGRESS (LIVE GPS)
                     </div>
                     <span>&rarr;</span>
-                    <div className={['ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(activeTask.status) ? 'text-emerald-600' : ''}>
-                      3. ARRIVED
-                    </div>
-                    <span>&rarr;</span>
-                    <div className={['IN_PROGRESS', 'COMPLETED'].includes(activeTask.status) ? 'text-emerald-600' : ''}>
-                      4. SERVICE STARTED
-                    </div>
-                    <span>&rarr;</span>
-                    <div className={activeTask.status === 'COMPLETED' ? 'text-emerald-600' : ''}>
-                      5. COMPLETED
+                    <div className={activeTaskNormStatus === 'completed' ? 'text-emerald-600' : ''}>
+                      3. COMPLETED
                     </div>
                   </div>
 
@@ -746,88 +911,118 @@ export const AssistantPanel: React.FC = () => {
                   </h3>
                 </div>
 
-                {/* Primary Single Next Action Banner (Clean & Obvious) */}
+                {/* Primary Action Controls for Booking Status Lifecycle */}
                 <div className="bg-emerald-50 border-2 border-emerald-500 rounded-3xl p-5 space-y-3 shadow-sm">
-                  <div className="text-[11px] font-black text-emerald-800 uppercase tracking-wider">
-                    Primary Next Action Step
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-emerald-800 uppercase tracking-wider">
+                      {activeTaskNormStatus === 'accepted'
+                        ? 'Step 1: Start Assistance & Live Tracking'
+                        : 'Step 2: Assistance in Progress'}
+                    </span>
+                    {isLiveTrackingActive && (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                        Broadcasting Live GPS
+                      </span>
+                    )}
                   </div>
 
-                  {/* Action 1: If ACCEPTED -> GO TO CUSTOMER */}
-                  {activeTask.status === 'ACCEPTED' && (
-                    <button
-                      type="button"
-                      onClick={() => handleStartRoute(activeTask.id)}
-                      className="w-full py-4 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all min-h-[56px]"
-                    >
-                      <Navigation className="w-5 h-5" />
-                      <span>GO TO CUSTOMER</span>
-                    </button>
+                  {/* Action 1: When status === 'accepted' -> Start Assistance (sets status = 'in_progress' & starts live GPS) */}
+                  {activeTaskNormStatus === 'accepted' && (
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleStartAssistance(activeTask.id)}
+                        className="flex-1 py-4 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all min-h-[54px] cursor-pointer"
+                      >
+                        <Navigation className="w-5 h-5" />
+                        <span>START ASSISTANCE (BEGIN LIVE TRACKING)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowOtpModal(true)}
+                        className="py-4 px-5 rounded-2xl bg-white hover:bg-gray-50 text-[#14213D] border border-emerald-300 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[54px] cursor-pointer"
+                      >
+                        <Key className="w-4 h-4 text-[#F42F73]" />
+                        <span>Verify Start OTP</span>
+                      </button>
+                    </div>
                   )}
 
-                  {/* Action 2: If ON_THE_WAY -> I HAVE ARRIVED */}
-                  {activeTask.status === 'ON_THE_WAY' && (
-                    <button
-                      type="button"
-                      onClick={() => handleArrived(activeTask.id)}
-                      className="w-full py-4 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-amber-500/30 transition-all min-h-[56px]"
-                    >
-                      <MapPin className="w-5 h-5" />
-                      <span>I HAVE ARRIVED</span>
-                    </button>
-                  )}
-
-                  {/* Action 3: If ARRIVED -> START SERVICE */}
-                  {activeTask.status === 'ARRIVED' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowOtpModal(true)}
-                      className="w-full py-4 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all min-h-[56px]"
-                    >
-                      <Key className="w-5 h-5" />
-                      <span>START SERVICE (ENTER OTP)</span>
-                    </button>
-                  )}
-
-                  {/* Action 4: If IN_PROGRESS -> COMPLETE ORDER */}
-                  {activeTask.status === 'IN_PROGRESS' && (
+                  {/* Action 2: When status === 'in_progress' (or on_the_way / arrived) -> Complete Request */}
+                  {isAssistanceInProgress && (
                     <button
                       type="button"
                       onClick={() => handleCompleteTask(activeTask.id)}
-                      className="w-full py-4 px-6 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] active:bg-black text-white font-black text-base flex items-center justify-center gap-2 shadow-lg transition-all min-h-[56px]"
+                      className="w-full py-4 px-6 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] active:bg-black text-white font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition-all min-h-[54px] cursor-pointer"
                     >
                       <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                      <span>COMPLETE ORDER</span>
+                      <span>COMPLETE REQUEST</span>
                     </button>
                   )}
                 </div>
 
-                {/* Customer Details Box with Large Call Button */}
-                <div className="bg-gray-50 p-4 sm:p-5 rounded-2xl border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Customer Details</div>
-                    <div className="text-base font-extrabold text-[#14213D] mt-0.5">
-                      {activeTask.customerName}
+                {/* Customer Details Box with Pickup, Destination, Instructions & Call Button */}
+                <div className="bg-gray-50 p-4 sm:p-5 rounded-2xl border border-gray-200 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                  <div className="space-y-2 flex-1">
+                    <div>
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Assigned Request Details
+                      </div>
+                      <div className="text-base font-extrabold text-[#14213D] mt-0.5">
+                        {activeTask.customerName}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        Mobile: +91 {activeTask.customerPhone} • Scheduled: {activeTask.scheduledDate} at{' '}
+                        {activeTask.startTime}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-600 mt-0.5">
-                      Contact: +91 {activeTask.customerPhone}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+                      <div className="bg-white p-2.5 rounded-xl border border-gray-200/80 flex items-start gap-2">
+                        <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold text-[#14213D] block">Pickup Location:</span>
+                          <span className="text-gray-600">
+                            {activeTask.pickupLocation?.address || activeTask.location?.address}
+                          </span>
+                        </div>
+                      </div>
+
+                      {activeTask.destinationLocation?.address && (
+                        <div className="bg-white p-2.5 rounded-xl border border-gray-200/80 flex items-start gap-2">
+                          <Flag className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold text-[#14213D] block">Destination:</span>
+                            <span className="text-gray-600">{activeTask.destinationLocation.address}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {activeTask.instructions && (
-                      <div className="text-xs text-[#F42F73] font-semibold mt-2 bg-[#FFF0F5] p-2.5 rounded-xl border border-[#F42F73]/20">
-                        Customer Note: "{activeTask.instructions}"
+
+                    {(activeTask.instructions || activeTask.description) && (
+                      <div className="text-xs text-[#F42F73] font-semibold bg-[#FFF0F5] p-2.5 rounded-xl border border-[#F42F73]/20 flex items-start gap-2">
+                        <FileText className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>
+                          Customer Instructions: "{activeTask.instructions || activeTask.description}"
+                        </span>
                       </div>
                     )}
                   </div>
 
-                  <a
-                    href={`tel:${activeTask.customerPhone}`}
-                    className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] active:bg-black text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 min-h-[48px] shadow-sm"
-                  >
-                    <Phone className="w-4 h-4 text-emerald-400" />
-                    <span>CALL CUSTOMER</span>
-                  </a>
+                  {activeTask.customerPhone && (
+                    <a
+                      href={`tel:${activeTask.customerPhone}`}
+                      className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] active:bg-black text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 min-h-[48px] shadow-sm shrink-0"
+                    >
+                      <Phone className="w-4 h-4 text-emerald-400" />
+                      <span>CALL CUSTOMER</span>
+                    </a>
+                  )}
                 </div>
 
-                {/* Service Location & Google Routes Estimate */}
+                {/* Real Google Map & Google Routes Navigation */}
                 <div className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-200 shadow-xs space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
                     <div className="flex items-center gap-2.5">
@@ -836,10 +1031,10 @@ export const AssistantPanel: React.FC = () => {
                       </div>
                       <div>
                         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                          Google Routes Distance & Time
+                          Real-Time Google Map & Route Navigation
                         </div>
                         <h4 className="text-sm font-bold text-[#14213D]">
-                          {activeTask.location.address} ({activeTask.location.area || 'Mumbai'})
+                          {activeTask.location?.address} ({activeTask.location?.area || 'Mumbai'})
                         </h4>
                       </div>
                     </div>
@@ -851,49 +1046,86 @@ export const AssistantPanel: React.FC = () => {
                         disabled={isCalculatingRoute}
                         className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-[#14213D] rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[36px]"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 text-[#F42F73] ${isCalculatingRoute ? 'animate-spin' : ''}`} />
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 text-[#F42F73] ${isCalculatingRoute ? 'animate-spin' : ''}`}
+                        />
                         <span>Recalculate</span>
                       </button>
 
-                      {routeEstimate && (
-                        <a
-                          href={`https://www.google.com/maps/dir/?api=1&origin=${routeEstimate.originLat},${routeEstimate.originLng}&destination=${routeEstimate.destLat},${routeEstimate.destLng}&travelmode=driving`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 bg-[#14213D] hover:bg-[#1E293B] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[36px]"
-                        >
-                          <span>NAVIGATE</span>
-                          <ExternalLink className="w-3 h-3 text-[#F42F73]" />
-                        </a>
-                      )}
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${
+                          activeTask.location?.latitude || activeTask.location?.lat || 19.0596
+                        },${
+                          activeTask.location?.longitude || activeTask.location?.lng || 72.8295
+                        }&travelmode=driving`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-[#14213D] hover:bg-[#1E293B] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[36px]"
+                      >
+                        <span>START NAVIGATION</span>
+                        <ExternalLink className="w-3 h-3 text-[#F42F73]" />
+                      </a>
                     </div>
                   </div>
 
-                  {routeEstimate && (
+                  {(routeEstimate || activeTask.estimatedDistance) && (
                     <div className="grid grid-cols-2 gap-3">
                       <div className="bg-[#FFF0F5] p-3 rounded-xl border border-[#F42F73]/20">
-                        <div className="text-[10px] font-bold text-gray-500 uppercase">Driving Distance</div>
-                        <div className="text-lg font-black text-[#14213D]">{routeEstimate.distanceText}</div>
+                        <div className="text-[10px] font-bold text-gray-500 uppercase">Route Distance</div>
+                        <div className="text-lg font-black text-[#14213D]">
+                          {routeEstimate?.distanceText || activeTask.estimatedDistance}
+                        </div>
                       </div>
                       <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
                         <div className="text-[10px] font-bold text-gray-500 uppercase">Est. Travel Time</div>
-                        <div className="text-lg font-black text-[#14213D]">{routeEstimate.durationText}</div>
+                        <div className="text-lg font-black text-[#14213D]">
+                          {routeEstimate?.durationText || activeTask.estimatedDuration || '12 mins'}
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Interactive Map */}
+                  {routeError && (
+                    <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-xl border border-amber-200">
+                      {routeError}
+                    </div>
+                  )}
+
+                  {/* Interactive Real Google Map */}
                   <AssistantTaskMap
+                    assistantLocation={
+                      assistantGpsCoords
+                        ? {
+                            lat: assistantGpsCoords.lat,
+                            lng: assistantGpsCoords.lng,
+                            address: 'Your Live GPS Position',
+                            area: activeTask.location?.area || 'Mumbai'
+                          }
+                        : null
+                    }
                     customerLocation={{
-                      lat: activeTask.location.latitude || activeTask.location.lat || 19.0596,
-                      lng: activeTask.location.longitude || activeTask.location.lng || 72.8295,
-                      address: activeTask.location.address,
-                      area: activeTask.location.area,
-                      landmark: activeTask.location.landmark
+                      lat: activeTask.location?.latitude || activeTask.location?.lat || 19.0596,
+                      lng: activeTask.location?.longitude || activeTask.location?.lng || 72.8295,
+                      address: activeTask.location?.address || 'Pickup Location',
+                      area: activeTask.location?.area || 'Mumbai',
+                      landmark: activeTask.location?.landmark
                     }}
+                    destinationLocation={
+                      activeTask.destinationLocation?.address
+                        ? {
+                            lat: activeTask.destinationLocation.lat || 19.055,
+                            lng: activeTask.destinationLocation.lng || 72.831,
+                            address: activeTask.destinationLocation.address,
+                            area: activeTask.destinationLocation.area || 'Mumbai'
+                          }
+                        : null
+                    }
+                    customerName={activeTask.customerName}
+                    assistantName={staffUser?.name || assistantProfile?.name || 'Assistant'}
                     serviceName={activeTask.serviceName}
-                    bookingNumber={activeTask.bookingNumber}
-                    height="260px"
+                    bookingNumber={activeTask.bookingNumber || activeTask.requestId}
+                    bookingStatus={activeTask.status}
+                    height="280px"
                     externalRouteInfo={
                       routeEstimate
                         ? {
@@ -903,11 +1135,7 @@ export const AssistantPanel: React.FC = () => {
                           }
                         : null
                     }
-                    assistantCoordinates={
-                      routeEstimate
-                        ? { lat: routeEstimate.originLat, lng: routeEstimate.originLng }
-                        : assistantGpsCoords
-                    }
+                    assistantCoordinates={assistantGpsCoords}
                     focusTrigger={mapFocusTrigger}
                     onFocusMap={() => setMapFocusTrigger(Date.now())}
                   />
@@ -915,25 +1143,29 @@ export const AssistantPanel: React.FC = () => {
               </div>
             ) : null}
 
-            {/* Nearby Assistance Requests Feed (Available to accept) */}
+            {/* Nearby Assistance Requests Feed (Available to accept in real time) */}
             <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-extrabold text-[#14213D]">Nearby Assistance Requests</h3>
-                  <p className="text-xs text-gray-500">Tap ACCEPT to pick up the booking and report to location</p>
+                  <h3 className="text-base font-extrabold text-[#14213D]">
+                    New Customer Assistance Requests
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Real-time pending requests from Firebase — no page refresh needed
+                  </p>
                 </div>
                 <span className="bg-emerald-100 text-emerald-800 text-xs font-black px-2.5 py-1 rounded-full">
-                  {incomingRequests.length} Available
+                  {incomingRequests.length} Pending
                 </span>
               </div>
 
               {incomingRequests.length === 0 ? (
                 <div className="py-8 text-center text-xs text-gray-400 space-y-1">
-                  <div>No new requests waiting in your queue right now.</div>
-                  <div>Stay ONLINE to receive automated dispatch alerts!</div>
+                  <div>No pending customer requests waiting in the queue right now.</div>
+                  <div>New bookings created in the Customer Portal will appear here automatically in real time.</div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {incomingRequests.map((req) => (
                     <div
                       key={req.id}
@@ -941,34 +1173,76 @@ export const AssistantPanel: React.FC = () => {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <span className="text-[10px] font-bold text-gray-400 font-mono">{req.bookingNumber}</span>
-                          <h4 className="font-bold text-sm text-[#14213D] mt-0.5">{req.serviceName}</h4>
+                          <span className="text-[10px] font-bold text-gray-400 font-mono">
+                            {req.bookingNumber || req.requestId || req.id}
+                          </span>
+                          <h4 className="font-bold text-sm sm:text-base text-[#14213D] mt-0.5">
+                            {req.serviceName}
+                          </h4>
+                          <div className="text-xs text-gray-600 mt-0.5">
+                            Customer: <strong className="text-[#14213D]">{req.customerName}</strong>
+                            {req.customerPhone ? ` (+91 ${req.customerPhone})` : ''}
+                          </div>
                         </div>
                         <div className="text-right">
                           <div className="text-base font-black text-emerald-600">₹{req.totalAmount}</div>
-                          <div className="text-[10px] text-gray-400">{req.totalHours} hrs</div>
+                          <div className="text-[10px] text-gray-400">
+                            {req.totalHours || req.bookedHours || 2} hrs
+                          </div>
                         </div>
                       </div>
 
-                      <div className="text-xs text-gray-600 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
-                          <span className="truncate">{req.location.address} ({req.location.area})</span>
+                      <div className="text-xs text-gray-600 space-y-1.5 bg-white p-3 rounded-2xl border border-gray-200/70">
+                        <div className="flex items-start gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Pickup:</strong> {req.location?.address} ({req.location?.area || 'Mumbai'})
+                          </span>
                         </div>
+                        {req.destinationLocation?.address && (
+                          <div className="flex items-start gap-1.5">
+                            <Flag className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>Destination:</strong> {req.destinationLocation.address}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5">
                           <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span>{req.scheduledDate} at {req.startTime}</span>
+                          <span>
+                            <strong>Date & Time:</strong> {req.scheduledDate} at {req.startTime}
+                          </span>
                         </div>
+                        {(req.instructions || req.description) && (
+                          <div className="flex items-start gap-1.5 pt-1 border-t border-gray-100">
+                            <FileText className="w-3.5 h-3.5 text-[#F42F73] shrink-0 mt-0.5" />
+                            <span>
+                              <strong>Request Details:</strong> {req.instructions || req.description}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
-                      <button
-                        onClick={() => handleAcceptOrder(req.id)}
-                        disabled={isAcceptingOrder}
-                        className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-sm min-h-[46px] disabled:opacity-75"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>ACCEPT ORDER</span>
-                      </button>
+                      <div className="grid grid-cols-2 gap-2.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleRejectOrder(req.id)}
+                          disabled={isAcceptingOrder}
+                          className="py-3 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-black transition-colors flex items-center justify-center gap-1.5 min-h-[46px] cursor-pointer"
+                        >
+                          <XCircle className="w-4 h-4 text-gray-500" />
+                          <span>Reject</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptOrder(req.id)}
+                          disabled={isAcceptingOrder}
+                          className="py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-sm min-h-[46px] disabled:opacity-75 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Accept Request</span>
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1004,9 +1278,7 @@ export const AssistantPanel: React.FC = () => {
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-center text-2xl font-mono font-bold tracking-widest text-[#14213D] focus:outline-none focus:border-[#F42F73]"
             />
 
-            {otpError && (
-              <div className="text-xs text-red-500 font-semibold">{otpError}</div>
-            )}
+            {otpError && <div className="text-xs text-red-500 font-semibold">{otpError}</div>}
 
             <div className="flex gap-2 pt-2">
               <button
@@ -1015,12 +1287,15 @@ export const AssistantPanel: React.FC = () => {
                 disabled={isVerifying || enteredOtp.length < 4}
                 className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md transition-all min-h-[48px] disabled:opacity-50"
               >
-                {isVerifying ? 'Verifying...' : 'Verify & Start Task'}
+                {isVerifying ? 'Verifying...' : 'Verify & Start'}
               </button>
               <button
                 type="button"
-                onClick={() => setShowOtpModal(false)}
-                className="px-4 py-3.5 rounded-2xl bg-gray-100 text-gray-700 font-bold text-xs min-h-[48px]"
+                onClick={() => {
+                  setShowOtpModal(false);
+                  setOtpError('');
+                }}
+                className="px-5 py-3.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold min-h-[48px]"
               >
                 Cancel
               </button>

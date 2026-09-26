@@ -59,10 +59,10 @@ export const ReferAFriendSection: React.FC<ReferAFriendSectionProps> = ({
   const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
 
   // Calculate unique referral code & share link
-  const cleanName = (customerProfile?.name || currentUser?.name || 'AARAV')
+  const cleanName = (customerProfile?.name || currentUser?.name || 'MEMBER')
     .toUpperCase()
     .replace(/[^A-Z]/g, '')
-    .slice(0, 6) || 'AARAV';
+    .slice(0, 6) || 'MEMBER';
   const referralCode = customerProfile?.referralCode || `DIBLO-${cleanName}100`;
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://diblo.in';
@@ -72,9 +72,9 @@ export const ReferAFriendSection: React.FC<ReferAFriendSectionProps> = ({
   const loadReferralData = async () => {
     setIsLoading(true);
     try {
-      const customerId = customerProfile?.id || 'cust-1';
+      const customerId = customerProfile?.id || currentUser?.id || '';
       const [refList, allCoupons] = await Promise.all([
-        api.getReferrals(customerId),
+        customerId ? api.getReferrals(customerId) : Promise.resolve([]),
         api.getCoupons()
       ]);
 
@@ -215,8 +215,8 @@ export const ReferAFriendSection: React.FC<ReferAFriendSectionProps> = ({
       const res = await api.createReferral({
         friendName: inviteFriendName.trim(),
         friendPhone: cleanPhone.slice(-10),
-        customerId: customerProfile?.id || 'cust-1',
-        referrerName: customerProfile?.name || currentUser?.name || 'Aarav Mehta'
+        customerId: customerProfile?.id || currentUser?.id || 'customer',
+        referrerName: customerProfile?.name || currentUser?.name || 'Customer'
       });
 
       if (res.success && res.referral) {

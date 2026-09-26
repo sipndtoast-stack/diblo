@@ -1,116 +1,113 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   ShieldCheck,
   Phone,
-  MessageSquare,
   Clock,
   MapPin,
   CheckCircle2,
-  AlertTriangle,
-  Plus,
-  Star,
+  KeyRound,
+  PlusCircle,
   FileText,
+  Star,
+  ArrowLeft,
   Navigation,
-  Loader2,
-  ChevronRight,
-  X
+  Heart,
+  Sparkles,
+  Flag,
+  Route as RouteIcon
 } from 'lucide-react';
 import { useBooking } from '../../context/BookingContext';
-import { MapView } from '../common/MapView';
+import { useAuth } from '../../context/AuthContext';
+import { AssistantTaskMap } from '../maps/AssistantTaskMap';
 import { InvoiceModal } from '../common/InvoiceModal';
 import { RatingModal } from './RatingModal';
-import { Booking } from '../../types';
+import { normalizeBookingStatus } from '../../lib/firestoreBookings';
 
 interface ActiveBookingViewProps {
-  onOpenBooking: () => void;
-  onSelectTab: (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => void;
+  onBack?: () => void;
+  onOpenBooking?: () => void;
+  onSelectTab?: (tab: any) => void;
 }
 
-export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBooking, onSelectTab }) => {
+export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
+  onBack,
+  onOpenBooking,
+  onSelectTab
+}) => {
+  const handleBack = () => {
+    if (onBack) {
+      onBack();
+    } else if (onSelectTab) {
+      onSelectTab('HOME');
+    }
+  };
   const {
     activeBooking,
     liveEtaMinutes,
     liveDistanceKm,
     liveAssistantCoords,
     extendBooking,
-    cancelBooking,
-    completeBooking
+    cancelBooking
   } = useBooking();
+  const { toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
 
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('Change of schedule');
   const [isExtending, setIsExtending] = useState(false);
-  const [isCompleting, setIsCompleting] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<string[]>([
-    'Hello! I am on my way to your location in Bandra.',
-    'I have arrived at the society gate. Standing near Tower B.'
-  ]);
-  const [newMsg, setNewMsg] = useState('');
-
-  // Auto-open feedback modal when active booking is marked as Completed
-  useEffect(() => {
-    if (activeBooking && activeBooking.status === 'COMPLETED' && !activeBooking.rating) {
-      setShowRatingModal(true);
-    }
-  }, [activeBooking?.status, activeBooking?.id, activeBooking?.rating]);
-
-  const handleCompleteTask = async () => {
-    if (!activeBooking) return;
-    setIsCompleting(true);
-    try {
-      await completeBooking(activeBooking.id);
-      setShowRatingModal(true);
-    } finally {
-      setIsCompleting(false);
-    }
-  };
 
   if (!activeBooking) {
     return (
-      <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
-        <div className="w-16 h-16 bg-[#FFF0F5] rounded-full flex items-center justify-center mx-auto text-[#F42F73]">
-          <Clock className="w-8 h-8" />
+      <div className="max-w-3xl mx-auto px-4 py-12 text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-[#FFF0F5] text-[#F42F73] flex items-center justify-center mx-auto font-bold text-xl">
+          !
         </div>
-        <div>
-          <h3 className="text-lg font-bold text-[#14213D]">No Active Booking in Progress</h3>
-          <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
-            Book a verified Diblo assistant right now for your errands, hospital visits, or senior assistance.
-          </p>
+        <h2 className="text-xl font-bold text-[#14213D]">No Active Booking Selected</h2>
+        <p className="text-xs text-gray-500 max-w-md mx-auto">
+          You don’t have an active assistance request open right now. Book a Diblo assistant from the Home screen or select a booking from My Requests.
+        </p>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <button
+            onClick={handleBack}
+            className="px-6 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold"
+          >
+            Back to Home
+          </button>
+          {onOpenBooking && (
+            <button
+              onClick={onOpenBooking}
+              className="px-6 py-3 rounded-xl bg-[#F42F73] text-white text-xs font-bold shadow-md"
+            >
+              Book New Assistant
+            </button>
+          )}
         </div>
-        <button
-          onClick={onOpenBooking}
-          className="px-6 py-3 rounded-2xl bg-[#F42F73] text-white font-bold text-xs shadow-lg shadow-[#F42F73]/20"
-        >
-          Book an Assistant @ ₹149/hr
-        </button>
       </div>
     );
   }
 
-  // Format Elapsed Timer (seconds to HH:MM:SS)
-  const formatTimer = (totalSeconds: number = 0) => {
-    const hrs = Math.floor(totalSeconds / 3600);
-    const mins = Math.floor((totalSeconds % 3600) / 60);
-    const secs = totalSeconds % 60;
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const normStatus = normalizeBookingStatus(activeBooking.status);
+  const isPending = normStatus === 'pending';
+  const isAcceptedOrActive =
+    normStatus === 'accepted' ||
+    normStatus === 'on_the_way' ||
+    normStatus === 'arrived' ||
+    normStatus === 'in_progress';
+  const isCompleted = normStatus === 'completed';
+  const isCancelledOrRejected = normStatus === 'cancelled' || normStatus === 'rejected';
 
-  const handleSendChat = () => {
-    if (!newMsg.trim()) return;
-    setChatMessages((prev) => [...prev, newMsg]);
-    setNewMsg('');
-  };
+  // Format elapsed timer if IN_PROGRESS
+  const elapsedSec = activeBooking.timerElapsedSeconds || 0;
+  const hrs = Math.floor(elapsedSec / 3600);
+  const mins = Math.floor((elapsedSec % 3600) / 60);
+  const secs = elapsedSec % 60;
+  const formattedTimer = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
-  const handleExtend = async (hours: number) => {
+  const handleExtendHour = async () => {
     setIsExtending(true);
-    try {
-      await extendBooking(activeBooking.id, hours);
-    } finally {
-      setIsExtending(false);
-    }
+    await extendBooking(activeBooking.id, 1);
+    setIsExtending(false);
   };
 
   const handleConfirmCancel = async () => {
@@ -118,243 +115,476 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({ onOpenBook
     setShowCancelModal(false);
   };
 
+  const statusSteps = [
+    { key: 'pending', label: 'Request Sent' },
+    { key: 'accepted', label: 'Assistant Assigned' },
+    { key: 'in_progress', label: 'In Progress' },
+    { key: 'completed', label: 'Completed' }
+  ];
+
+  const getStepIndex = () => {
+    if (normStatus === 'pending') return 0;
+    if (normStatus === 'accepted' || normStatus === 'on_the_way' || normStatus === 'arrived') return 1;
+    if (normStatus === 'in_progress') return 2;
+    if (normStatus === 'completed') return 3;
+    return 0;
+  };
+  const activeStepIdx = getStepIndex();
+
+  // Real assistant GPS coordinates from Firebase (never simulated)
+  const resolvedAssistantCoords =
+    liveAssistantCoords ||
+    (activeBooking.assistantLocation?.lat && activeBooking.assistantLocation?.lng
+      ? { lat: activeBooking.assistantLocation.lat, lng: activeBooking.assistantLocation.lng }
+      : null);
+
   return (
-    <div className="max-w-4xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-24 md:pb-12 text-[#14213D]">
-      {/* Top Status Banner */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Booking {activeBooking.bookingNumber}
-            </span>
-            <span className="bg-[#FFF0F5] text-[#F42F73] text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-              {activeBooking.status.replace('_', ' ')}
-            </span>
-          </div>
-          <h2 className="text-xl sm:text-2xl font-black text-[#14213D] mt-1">{activeBooking.serviceName}</h2>
-          <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-            <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
-            <span className="break-words">{activeBooking.location.address} ({activeBooking.location.area})</span>
-          </div>
+    <div className="max-w-4xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-5 sm:space-y-6 pb-24 md:pb-12 text-[#14213D]">
+      {/* Back & Booking ID Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          onClick={handleBack}
+          className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-[#14213D] py-1.5 px-2.5 -ml-2.5 rounded-xl hover:bg-gray-100 transition-colors min-h-[40px]"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Dashboard</span>
+        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono font-bold text-gray-500">
+            {activeBooking.bookingNumber || activeBooking.requestId || activeBooking.id}
+          </span>
+          <span
+            className={`px-2.5 py-1 rounded-full text-[11px] font-bold uppercase ${
+              isCompleted
+                ? 'bg-emerald-100 text-emerald-800'
+                : isCancelledOrRejected
+                ? 'bg-red-100 text-red-700'
+                : isAcceptedOrActive
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-[#FFF0F5] text-[#F42F73]'
+            }`}
+          >
+            {isPending
+              ? 'Finding an assistant'
+              : normStatus === 'accepted'
+              ? 'Assistant Assigned'
+              : normStatus === 'in_progress'
+              ? 'Assistance in Progress'
+              : activeBooking.status.replace('_', ' ')}
+          </span>
         </div>
-
-        {/* Live OTP Box */}
-        {(activeBooking.status === 'ASSIGNED' ||
-          activeBooking.status === 'ACCEPTED' ||
-          activeBooking.status === 'ON_THE_WAY' ||
-          activeBooking.status === 'ARRIVED') && (
-          <div className="bg-[#FFF0F5] border border-[#F42F73]/30 p-3.5 sm:p-4 rounded-2xl text-center shrink-0 w-full sm:w-auto">
-            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Start Task OTP</div>
-            <div className="text-2xl sm:text-3xl font-black text-[#F42F73] font-mono tracking-widest mt-0.5">
-              {activeBooking.startOtp || '5829'}
-            </div>
-            <div className="text-[10px] text-gray-500">Share with assistant upon arrival</div>
-          </div>
-        )}
-
-        {/* In-Progress Live Timer */}
-        {activeBooking.status === 'IN_PROGRESS' && (
-          <div className="bg-emerald-50 border border-emerald-200 p-3.5 sm:p-4 rounded-2xl text-center shrink-0 w-full sm:w-auto">
-            <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Task In Progress</div>
-            <div className="text-2xl sm:text-3xl font-black text-emerald-600 font-mono tracking-widest mt-0.5">
-              {formatTimer(activeBooking.timerElapsedSeconds || 320)}
-            </div>
-            <div className="text-[10px] text-emerald-700">Booked for {activeBooking.totalHours} hrs</div>
-          </div>
-        )}
       </div>
 
-      {/* Live Map Tracking View */}
-      {(activeBooking.status === 'ON_THE_WAY' || activeBooking.status === 'ARRIVED' || activeBooking.status === 'IN_PROGRESS') && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-[#14213D] flex items-center gap-1.5">
-              <Navigation className="w-3.5 h-3.5 text-[#F42F73]" />
-              <span>Live Assistant Route Map</span>
-            </span>
-            <span className="text-gray-500 font-medium">GPS Tracking Active</span>
+      {/* ================================================================= */}
+      {/* STATE 1: BOOKING REQUEST SENT (PENDING - WAITING FOR ASSISTANT)   */}
+      {/* ================================================================= */}
+      {isPending && (
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-amber-200 shadow-sm space-y-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+              <Sparkles className="w-6 h-6 animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h2 className="text-lg sm:text-xl font-black text-[#14213D]">Booking Request Sent</h2>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  Status: Finding an assistant
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-gray-600 mt-1">
+                Your request has been sent to available assistants. This screen will update automatically in real time as soon as an assistant accepts.
+              </p>
+            </div>
           </div>
-          <div className="w-full rounded-2xl overflow-hidden shadow-xs border border-gray-100">
-            <MapView
-              assistantLocation={liveAssistantCoords}
-              customerLocation={{ lat: activeBooking.location.lat, lng: activeBooking.location.lng }}
-              height="320px"
-              etaMinutes={activeBooking.status === 'ON_THE_WAY' ? liveEtaMinutes : 0}
-              distanceKm={activeBooking.status === 'ON_THE_WAY' ? liveDistanceKm : 0}
-            />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-4 rounded-2xl border border-gray-100 text-xs">
+            <div>
+              <span className="text-gray-400 font-semibold block">Request ID</span>
+              <span className="font-mono font-bold text-[#14213D]">
+                {activeBooking.bookingNumber || activeBooking.requestId || activeBooking.id}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 font-semibold block">Service</span>
+              <span className="font-bold text-[#14213D]">{activeBooking.serviceName}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 font-semibold block">Date & Time</span>
+              <span className="font-semibold text-[#14213D]">
+                {activeBooking.scheduledDate} • {activeBooking.startTime}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 font-semibold block">Estimated Distance / Duration</span>
+              <span className="font-semibold text-[#14213D]">
+                {activeBooking.estimatedDistance || 'Within 2.5 km'} •{' '}
+                {activeBooking.estimatedDuration || `${activeBooking.totalHours || 2} hrs`}
+              </span>
+            </div>
+            <div className="sm:col-span-2">
+              <span className="text-gray-400 font-semibold block">Pickup Location</span>
+              <span className="font-semibold text-[#14213D]">{activeBooking.location?.address}</span>
+            </div>
+            {activeBooking.destinationLocation?.address && (
+              <div className="sm:col-span-2">
+                <span className="text-gray-400 font-semibold block">Destination</span>
+                <span className="font-semibold text-[#14213D]">
+                  {activeBooking.destinationLocation.address}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Assigned Assistant Card */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
-        <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Assigned Diblo Assistant</div>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* ================================================================= */}
+      {/* STATE 2: ASSISTANT ASSIGNED & LIVE TRACKING BANNER                */}
+      {/* ================================================================= */}
+      {isAcceptedOrActive && (
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-5 sm:p-6 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <img
               src={
                 activeBooking.assistantPhoto ||
                 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80'
               }
-              alt="Assistant"
-              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border-2 border-gray-100 shadow-xs shrink-0"
+              alt={activeBooking.assistantName || 'Assistant'}
+              className="w-14 h-14 rounded-2xl object-cover border-2 border-white shadow-md shrink-0"
             />
             <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h4 className="font-extrabold text-base sm:text-lg text-[#14213D]">{activeBooking.assistantName || 'Rajesh Sharma'}</h4>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
-                  <ShieldCheck className="w-3 h-3" />
-                  <span>Verified</span>
-                </span>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-black uppercase tracking-wider mb-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-ping" />
+                {normStatus === 'in_progress' ? 'Assistance in Progress' : 'Assistant Assigned'}
               </div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                +91 {activeBooking.assistantPhone || '9820554433'} • 4.9★ (320+ tasks completed)
-              </div>
-              <div className="text-[11px] text-[#F42F73] font-semibold mt-1">
-                Badge ID: DIBLO-MUM-{activeBooking.assistantId?.slice(-4).toUpperCase() || '7721'}
-              </div>
+              <h2 className="text-lg sm:text-xl font-black text-white">
+                Your Assistant is on the way
+              </h2>
+              <p className="text-xs text-emerald-100 mt-0.5">
+                <strong>{activeBooking.assistantName || 'Rajesh Sharma'}</strong> • {activeBooking.serviceName}
+              </p>
             </div>
           </div>
 
-          {/* Quick Communication Actions */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <a
-              href={`tel:${activeBooking.assistantPhone || '9820554433'}`}
-              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px]"
-            >
-              <Phone className="w-4 h-4 text-[#F42F73]" />
-              <span>Call</span>
-            </a>
-            <button
-              onClick={() => setChatOpen(!chatOpen)}
-              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-[#FFF0F5] hover:bg-[#F42F73] hover:text-white text-[#F42F73] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px]"
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>Chat</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Expandable In-App Chat Drawer */}
-        {chatOpen && (
-          <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-            <div className="text-xs font-bold text-gray-600">Quick Assistant Chat</div>
-            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className="text-xs bg-white p-2.5 rounded-xl border border-gray-100 shadow-2xs">
-                  {msg}
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newMsg}
-                onChange={(e) => setNewMsg(e.target.value)}
-                placeholder="Type a message..."
-                className="flex-1 px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs min-h-[44px]"
-              />
-              <button
-                onClick={handleSendChat}
-                className="px-4 py-2.5 rounded-xl bg-[#14213D] text-white text-xs font-bold min-h-[44px]"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* In-Progress Extension & Controls */}
-      {activeBooking.status === 'IN_PROGRESS' && (
-        <div className="bg-[#FFF0F5]/80 border border-[#F42F73]/20 rounded-3xl p-5 sm:p-6 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 bg-black/20 px-4 py-3 rounded-2xl border border-white/15 shrink-0">
             <div>
-              <h4 className="text-sm font-bold text-[#14213D]">Need More Time?</h4>
-              <p className="text-xs text-gray-500">Extend your ongoing booking seamlessly at flat ₹149/hr.</p>
+              <div className="text-[10px] uppercase tracking-wider text-emerald-200 font-bold">Live ETA</div>
+              <div className="text-base font-black text-white">
+                {liveEtaMinutes > 0
+                  ? `${liveEtaMinutes} mins`
+                  : activeBooking.estimatedDuration || 'Calculating...'}
+              </div>
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              onClick={() => handleExtend(1)}
-              disabled={isExtending}
-              className="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center justify-center gap-1 min-h-[44px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add +1 Hour (₹149)</span>
-            </button>
-            <button
-              onClick={() => handleExtend(2)}
-              disabled={isExtending}
-              className="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-white border border-[#F42F73] text-[#F42F73] text-xs font-bold hover:bg-[#F42F73] hover:text-white transition-colors flex items-center justify-center gap-1 min-h-[44px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add +2 Hours (₹298)</span>
-            </button>
+            <div className="h-8 w-px bg-white/20" />
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-emerald-200 font-bold">Distance</div>
+              <div className="text-base font-black text-white">
+                {liveDistanceKm > 0
+                  ? `${liveDistanceKm} km`
+                  : activeBooking.estimatedDistance || '2.4 km'}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Action Buttons: Invoice, Rating, Complete, Cancel */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          {activeBooking.invoiceNumber && (
-            <button
-              id="active-view-tax-invoice-btn"
-              onClick={() => setShowInvoiceModal(true)}
-              className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[44px]"
-            >
-              <FileText className="w-4 h-4 text-[#F42F73]" />
-              <span>View Tax Invoice</span>
-            </button>
-          )}
+      {/* Live Google Map View (Pickup, Destination, Route & Real Assistant GPS Marker) */}
+      {!isCompleted && !isCancelledOrRejected && (
+        <AssistantTaskMap
+          assistantLocation={
+            resolvedAssistantCoords
+              ? {
+                  lat: resolvedAssistantCoords.lat,
+                  lng: resolvedAssistantCoords.lng,
+                  address: activeBooking.assistantLocation?.address || 'Live Assistant GPS',
+                  area: activeBooking.location?.area || 'Mumbai'
+                }
+              : null
+          }
+          customerLocation={{
+            lat: activeBooking.location?.lat || 19.0607,
+            lng: activeBooking.location?.lng || 72.8258,
+            address: activeBooking.location?.address || 'Mumbai',
+            area: activeBooking.location?.area || 'Mumbai',
+            landmark: activeBooking.location?.landmark
+          }}
+          destinationLocation={
+            activeBooking.destinationLocation?.address
+              ? {
+                  lat: activeBooking.destinationLocation.lat || 19.055,
+                  lng: activeBooking.destinationLocation.lng || 72.831,
+                  address: activeBooking.destinationLocation.address,
+                  area: activeBooking.destinationLocation.area || 'Mumbai'
+                }
+              : null
+          }
+          customerName={activeBooking.customerName || 'Customer'}
+          assistantName={activeBooking.assistantName || 'Diblo Assistant'}
+          bookingStatus={activeBooking.status}
+          height="320px"
+        />
+      )}
 
-          {activeBooking.status === 'IN_PROGRESS' && (
-            <button
-              id="active-view-complete-task-btn"
-              onClick={handleCompleteTask}
-              disabled={isCompleting}
-              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{isCompleting ? 'Completing...' : 'Mark as Completed & Rate'}</span>
-            </button>
-          )}
+      {/* Progress Stepper */}
+      <div className="bg-white rounded-3xl p-4 sm:p-6 border border-gray-100 shadow-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {statusSteps.map((step, i) => {
+            const isDone = i <= activeStepIdx;
+            const isCurrent = i === activeStepIdx;
+            return (
+              <div
+                key={step.key}
+                className={`p-3 rounded-2xl border transition-all ${
+                  isCurrent
+                    ? 'border-[#F42F73] bg-[#FFF0F5]'
+                    : isDone
+                    ? 'border-emerald-200 bg-emerald-50/40'
+                    : 'border-gray-100 bg-gray-50 opacity-60'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Step {i + 1}
+                  </span>
+                  {isDone && (
+                    <CheckCircle2
+                      className={`w-3.5 h-3.5 ${isCurrent ? 'text-[#F42F73]' : 'text-emerald-600'}`}
+                    />
+                  )}
+                </div>
+                <div className="text-xs font-bold text-[#14213D]">{step.label}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-          {activeBooking.status === 'COMPLETED' && !activeBooking.rating && (
-            <button
-              id="active-view-rate-tip-btn"
-              onClick={() => setShowRatingModal(true)}
-              className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
-            >
-              <Star className="w-4 h-4 fill-gray-900" />
-              <span>Rate Assistant & Leave Tip</span>
-            </button>
-          )}
-
-          {activeBooking.rating && (
-            <div className="px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200/80 text-xs font-bold text-amber-800 flex items-center gap-1.5">
-              <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
-              <span>Rated {activeBooking.rating.stars}★</span>
-              {activeBooking.tipAmount && activeBooking.tipAmount > 0 ? (
-                <span className="text-emerald-700 font-bold ml-1">
-                  • ₹{activeBooking.tipAmount} Tip Given
+      {/* Main Grid: Assistant Profile + OTP & Live Timer */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+        {/* Assigned Assistant Profile Card */}
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs flex flex-col justify-between space-y-4">
+          <div className="flex items-start gap-4">
+            <img
+              src={
+                activeBooking.assistantPhoto ||
+                'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80'
+              }
+              alt={activeBooking.assistantName || 'Assistant'}
+              className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-500 shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3" /> Police Verified
                 </span>
-              ) : null}
+                <span className="text-xs font-bold text-amber-500 flex items-center gap-0.5">
+                  <Star className="w-3.5 h-3.5 fill-amber-400" /> {activeBooking.assistantRating || 4.95}
+                </span>
+              </div>
+              <h3 className="text-lg font-extrabold text-[#14213D] mt-1">
+                {activeBooking.assistantName || (isPending ? 'Finding Assistant...' : 'Rajesh Sharma')}
+              </h3>
+              <p className="text-xs text-gray-500">
+                {isPending
+                  ? 'Broadcasting your request to verified assistants nearby'
+                  : `Assigned for ${activeBooking.serviceName}`}
+              </p>
+
+              {activeBooking.assistantId && (
+                <button
+                  type="button"
+                  onClick={() => toggleFavoriteAssistant(activeBooking.assistantId!)}
+                  className={`mt-2.5 px-3 py-1.5 rounded-xl text-[11px] font-extrabold border transition-all inline-flex items-center gap-1.5 cursor-pointer ${
+                    isAssistantFavorited(activeBooking.assistantId)
+                      ? 'bg-rose-50 text-[#F42F73] border-rose-200 shadow-2xs'
+                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-[#F42F73]/40 hover:text-[#F42F73]'
+                  }`}
+                >
+                  <Heart
+                    className={`w-3.5 h-3.5 ${
+                      isAssistantFavorited(activeBooking.assistantId) ? 'fill-[#F42F73] text-[#F42F73]' : ''
+                    }`}
+                  />
+                  <span>
+                    {isAssistantFavorited(activeBooking.assistantId)
+                      ? 'Saved as Preferred Helper'
+                      : 'Save Helper to Favorites'}
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] text-gray-400 font-bold uppercase">Assistant Contact</div>
+              <div className="text-xs font-mono font-bold text-[#14213D]">
+                {activeBooking.assistantPhone ? `+91 ${activeBooking.assistantPhone}` : 'Assigned upon acceptance'}
+              </div>
+            </div>
+            {activeBooking.assistantPhone && (
+              <a
+                href={`tel:${activeBooking.assistantPhone}`}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>Call Assistant</span>
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* Security Start OTP & Live Timer Card */}
+        <div className="bg-[#14213D] text-white rounded-3xl p-5 sm:p-6 shadow-lg flex flex-col justify-between space-y-4">
+          {normStatus !== 'in_progress' && !isCompleted ? (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-[#F42F73]" />
+                  <span>Start Security OTP</span>
+                </span>
+                <span className="text-[10px] bg-white/10 px-2.5 py-0.5 rounded-full text-gray-200">
+                  Share on arrival
+                </span>
+              </div>
+
+              <div className="py-2 text-center">
+                <div className="text-3xl sm:text-4xl font-mono font-black tracking-[0.3em] text-[#F42F73] bg-white/5 py-3 rounded-2xl border border-white/10">
+                  {activeBooking.startOtp}
+                </div>
+                <p className="text-[11px] text-gray-300 mt-2">
+                  Share this 4-digit code with your assistant once they reach your pickup location.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 animate-spin" />
+                  <span>{isCompleted ? 'Session Completed' : 'Assistance Session Live'}</span>
+                </span>
+                <span className="text-xs font-bold text-white bg-white/10 px-2.5 py-0.5 rounded-full">
+                  Booked: {activeBooking.totalHours || activeBooking.bookedHours} hrs
+                </span>
+              </div>
+
+              <div className="py-2 text-center">
+                <div className="text-3xl font-mono font-black tracking-widest text-white">
+                  {isCompleted ? `${activeBooking.totalHours || activeBooking.bookedHours}:00:00` : formattedTimer}
+                </div>
+                <p className="text-[11px] text-gray-300 mt-1">
+                  Billed transparently at ₹149/hour • Total: ₹{activeBooking.totalAmount}
+                </p>
+              </div>
+
+              {normStatus === 'in_progress' && (
+                <button
+                  onClick={handleExtendHour}
+                  disabled={isExtending}
+                  className="w-full py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>{isExtending ? 'Extending...' : 'Extend Booking by +1 Hour (₹149)'}</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Service & Pickup / Destination Summary Card */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-3">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+          <div>
+            <div className="text-xs text-gray-400 font-bold uppercase">Service Booked</div>
+            <div className="text-base font-extrabold text-[#14213D]">{activeBooking.serviceName}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-400 font-bold uppercase">Total Fare</div>
+            <div className="text-lg font-black text-[#F42F73]">₹{activeBooking.totalAmount}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-gray-600 pt-1">
+          <div className="flex items-start gap-2">
+            <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-[#14213D]">Pickup Location:</span>{' '}
+              {activeBooking.location?.address}
+              {activeBooking.location?.landmark && ` (${activeBooking.location.landmark})`}
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <Clock className="w-4 h-4 text-[#F42F73] shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-[#14213D]">Schedule:</span> {activeBooking.scheduledDate} at{' '}
+              {activeBooking.startTime} ({activeBooking.totalHours || activeBooking.bookedHours} Hours)
+            </div>
+          </div>
+          {activeBooking.destinationLocation?.address && (
+            <div className="flex items-start gap-2 sm:col-span-2">
+              <Flag className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-[#14213D]">Destination:</span>{' '}
+                {activeBooking.destinationLocation.address}
+              </div>
             </div>
           )}
         </div>
 
-        {activeBooking.status !== 'COMPLETED' && activeBooking.status !== 'CANCELLED' && (
-          <button
-            id="active-view-cancel-booking-btn"
-            onClick={() => setShowCancelModal(true)}
-            className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors py-2 px-1 min-h-[44px] flex items-center"
-          >
-            Cancel Booking
-          </button>
+        {(activeBooking.instructions || activeBooking.description) && (
+          <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 border border-gray-100">
+            <span className="font-bold text-[#14213D]">Customer Instructions: </span>
+            {activeBooking.instructions || activeBooking.description}
+          </div>
         )}
+
+        {/* Action Buttons Footer */}
+        <div className="pt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowInvoiceModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#14213D] text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[44px]"
+            >
+              <FileText className="w-4 h-4 text-[#F42F73]" />
+              <span>View GST Invoice</span>
+            </button>
+
+            {isCompleted && !activeBooking.rating && (
+              <button
+                id="active-view-rate-tip-btn"
+                onClick={() => setShowRatingModal(true)}
+                className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-gray-900 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs min-h-[44px]"
+              >
+                <Star className="w-4 h-4 fill-gray-900" />
+                <span>Rate Assistant & Leave Tip</span>
+              </button>
+            )}
+
+            {activeBooking.rating && (
+              <div className="px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200/80 text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
+                <span>Rated {activeBooking.rating.stars}★</span>
+                {activeBooking.tipAmount && activeBooking.tipAmount > 0 ? (
+                  <span className="text-emerald-700 font-bold ml-1">
+                    • ₹{activeBooking.tipAmount} Tip Given
+                  </span>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          {!isCompleted && !isCancelledOrRejected && (
+            <button
+              id="active-view-cancel-booking-btn"
+              onClick={() => setShowCancelModal(true)}
+              className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors py-2 px-1 min-h-[44px] flex items-center"
+            >
+              Cancel Booking
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Cancel Confirmation Modal */}

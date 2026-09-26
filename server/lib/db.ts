@@ -35,73 +35,10 @@ let memorySocieties: Society[] = [...MOCK_SOCIETIES];
 let memoryCoupons: Coupon[] = [...MOCK_COUPONS];
 let memoryReferrals: Referral[] = [...MOCK_REFERRALS];
 let memorySupportTickets: SupportTicket[] = [...MOCK_SUPPORT_TICKETS];
-let memoryEmergencyAlerts: EmergencyAlert[] = [
-  {
-    id: 'sos-init-1',
-    alertNumber: 'SOS-2026-911',
-    userId: 'user-c-1',
-    userName: 'Aarav Mehta',
-    userPhone: '9820123456',
-    userRole: 'CUSTOMER',
-    bookingId: 'bk-101',
-    serviceName: 'Senior Citizen Assistance',
-    status: 'ACTIVE',
-    lat: 19.0596,
-    lng: 72.8295,
-    address: 'Carter Road, Bandra West, Mumbai',
-    accuracy: 12,
-    triggerSource: 'CUSTOMER_HEADER_SOS',
-    timestamp: new Date(Date.now() - 15 * 60000).toISOString()
-  }
-];
+let memoryEmergencyAlerts: EmergencyAlert[] = [];
 let memoryServices: ServiceItem[] = [...SERVICES];
-let memoryApplications: AssistantApplication[] = [
-  {
-    id: 'app-1',
-    applicationNumber: 'DIBLO-APP-1001',
-    fullName: 'Sunil Jadhav',
-    mobileNumber: '9819283746',
-    email: 'sunil.jadhav@gmail.com',
-    dateOfBirth: '1995-04-12',
-    gender: 'MALE',
-    currentAddress: 'Room 14, Chawl No 3, Khar Danda, Khar West, Mumbai',
-    permanentAddress: 'Room 14, Chawl No 3, Khar Danda, Khar West, Mumbai',
-    mumbaiArea: 'Bandra West',
-    pinCode: '400052',
-    aadhaarNumber: '482910394821',
-    panNumber: 'ABCDE1234F',
-    languagesSpoken: ['Hindi', 'Marathi', 'English'],
-    selectedServices: ['Senior Citizen Assistance', 'Shopping & Market Escort', 'Hospital Visit OPD Queue'],
-    yearsOfExperience: 3,
-    preferredOperatingZones: ['Bandra West', 'Khar West', 'Santacruz West'],
-    availabilityType: 'FULL_TIME',
-    preferredTimeSlots: ['Morning (08:00 AM - 02:00 PM)', 'Evening (02:00 PM - 08:00 PM)'],
-    hasTwoWheeler: true,
-    drivingLicenseNumber: 'MH02-20160029381',
-    emergencyContactName: 'Kavita Jadhav',
-    emergencyContactPhone: '9819283740',
-    emergencyContactRelation: 'Spouse',
-    hasCriminalRecord: false,
-    bankAccountNumber: '50100234891023',
-    bankIfscCode: 'HDFC0000123',
-    bankName: 'HDFC Bank',
-    accountHolderName: 'Sunil Jadhav',
-    termsAccepted: true,
-    codeOfConductAccepted: true,
-    status: 'PENDING_REVIEW',
-    appliedAt: '2026-09-15T11:30:00Z'
-  }
-];
+let memoryApplications: AssistantApplication[] = [];
 let memoryUsers: User[] = [
-  {
-    id: 'user-c-1',
-    name: 'Aarav Mehta',
-    phone: '9820123456',
-    email: 'aarav.mehta@gmail.com',
-    role: 'CUSTOMER',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
-    createdAt: '2026-01-10T10:00:00Z'
-  },
   {
     id: 'user-a-1',
     name: 'Rajesh Sharma',

@@ -21,6 +21,14 @@ export interface SavedAddress {
   isDefault?: boolean;
 }
 
+export interface NotificationPreferences {
+  pushEnabled: boolean;
+  bookingUpdates: boolean;
+  sessionReminders: boolean;
+  promotionsAndOffers: boolean;
+  soundAndVibration: boolean;
+}
+
 export interface CustomerProfile {
   id: string;
   userId: string;
@@ -28,6 +36,13 @@ export interface CustomerProfile {
   phone: string;
   email: string;
   avatar?: string;
+  alternatePhone?: string;
+  gender?: string;
+  dob?: string;
+  preferredLanguage?: string;
+  bloodGroup?: string;
+  bio?: string;
+  specialInstructions?: string;
   savedAddresses: SavedAddress[];
   emergencyContact: {
     name: string;
@@ -40,6 +55,10 @@ export interface CustomerProfile {
     phone?: string;
     notes?: string;
   }[];
+  favoriteAssistantIds?: string[];
+  fcmToken?: string;
+  fcmTokenUpdatedAt?: string;
+  notificationPreferences?: NotificationPreferences;
   referralCode: string;
   walletBalance: number;
   createdAt: string;
@@ -120,7 +139,9 @@ export interface ServiceItem {
 }
 
 export type BookingStatus =
+  | 'PENDING'
   | 'SEARCHING'
+  | 'SCHEDULED'
   | 'ASSIGNED'
   | 'ACCEPTED'
   | 'ON_THE_WAY'
@@ -128,7 +149,17 @@ export type BookingStatus =
   | 'OTP_VERIFIED'
   | 'IN_PROGRESS'
   | 'COMPLETED'
-  | 'CANCELLED';
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'pending'
+  | 'scheduled'
+  | 'accepted'
+  | 'on_the_way'
+  | 'arrived'
+  | 'in_progress'
+  | 'completed'
+  | 'rejected'
+  | 'cancelled';
 
 export interface BookingLocation {
   address: string;
@@ -141,17 +172,38 @@ export interface BookingLocation {
   placeId?: string;
 }
 
+export interface AssistantLiveLocation {
+  lat: number;
+  lng: number;
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  heading?: number | null;
+  speed?: number | null;
+  address?: string;
+  timestamp: string;
+}
+
 export interface Booking {
   id: string;
+  requestId?: string;
   bookingNumber: string;
   customerId: string;
+  customerUid?: string;
   customerName: string;
   customerPhone: string;
   serviceId: string;
   serviceName: string;
   serviceIcon: string;
   location: BookingLocation;
-  destinationLocation?: BookingLocation;
+  pickupLocation?: BookingLocation;
+  destinationLocation?: BookingLocation | null;
+  estimatedDistance?: string;
+  estimatedDistanceKm?: number;
+  estimatedDistanceMeters?: number;
+  estimatedDuration?: string;
+  estimatedDurationMinutes?: number;
+  routePolyline?: string | null;
   dateType: 'TODAY' | 'TOMORROW' | 'CUSTOM';
   scheduledDate: string; // YYYY-MM-DD
   startTime: string; // HH:mm
@@ -165,6 +217,7 @@ export interface Booking {
   taxAmount: number;
   totalAmount: number;
   instructions?: string;
+  description?: string;
   specialRequirements?: string;
   contactPerson?: {
     name: string;
@@ -177,15 +230,28 @@ export interface Booking {
   genderPreference: 'ANY' | 'MALE' | 'FEMALE';
   status: BookingStatus;
   assistantId?: string | null;
+  assistantUid?: string | null;
   assistantName?: string | null;
   assistantPhone?: string | null;
   assistantPhoto?: string | null;
   assistantRating?: number;
+  preferredAssistantId?: string | null;
+  preferredAssistantName?: string | null;
+  preferredAssistantPhoto?: string | null;
+  isPreferredRequested?: boolean;
   assistantLocation?: {
     lat: number;
     lng: number;
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number;
+    heading?: number | null;
     address?: string;
-  };
+    timestamp?: string;
+  } | null;
+  rejectedByAssistantIds?: string[];
+  rejectedAssistantIds?: string[];
+  updatedByRole?: UserRole;
   startOtp: string; // 4 or 6 digit OTP given to customer, verified by assistant
   paymentId?: string;
   orderId?: string;
@@ -193,10 +259,14 @@ export interface Booking {
   paymentMethod?: string;
   invoiceNumber?: string;
   createdAt: string;
+  updatedAt?: string;
   acceptedAt?: string;
+  startedRouteAt?: string;
   arrivedAt?: string;
   startedAt?: string;
   completedAt?: string;
+  rejectedAt?: string;
+  cancelledAt?: string;
   timerElapsedSeconds?: number;
   tipAmount?: number;
   tipPaymentMethod?: string;

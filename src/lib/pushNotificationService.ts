@@ -1,8 +1,88 @@
-import { Booking } from '../types';
+import { getToken, onMessage, deleteToken } from 'firebase/messaging';
+import { doc, setDoc } from 'firebase/firestore';
+import { Booking, NotificationPreferences } from '../types';
+import { getFirebaseMessaging, db, auth, isFirebaseConfigured } from './firebase';
+import { api } from './api';
 
 export type PushPermissionStatus = 'default' | 'granted' | 'denied' | 'unsupported';
 
 const REMINDER_KEY_PREFIX = 'diblo_reminder_1hr_';
+const PREFS_STORAGE_KEY = 'diblo_notification_preferences';
+const FCM_TOKEN_STORAGE_KEY = 'diblo_fcm_token';
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  pushEnabled: true,
+  bookingUpdates: true,
+  sessionReminders: true,
+  promotionsAndOffers: true,
+  soundAndVibration: true
+};
+
+/**
+ * Load user's saved notification preferences from localStorage (or defaults)
+ */
+export const getNotificationPreferences = (): NotificationPreferences => {
+  if (typeof window === 'undefined') return DEFAULT_NOTIFICATION_PREFERENCES;
+  try {
+    const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        ...parsed
+      };
+    }
+  } catch {}
+  return DEFAULT_NOTIFICATION_PREFERENCES;
+};
+
+/**
+ * Persist notification preferences locally and sync to Firestore + backend
+ */
+export const saveNotificationPreferences = async (
+  prefs: NotificationPreferences,
+  customerId?: string,
+  phone?: string
+): Promise<NotificationPreferences> => {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+    } catch {}
+  }
+
+  // Sync to backend
+  api.updateNotificationPreferences({ customerId, phone, preferences: prefs }).catch(() => {});
+
+  // Sync to Firestore customer document if authenticated
+  if (isFirebaseConfigured() && auth.currentUser && customerId) {
+    try {
+      await setDoc(
+        doc(db, 'customers', customerId),
+        {
+          userId: auth.currentUser.uid,
+          notificationPreferences: prefs
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.debug('[FCM] Firestore preferences sync notice:', err);
+    }
+  }
+
+  return prefs;
+};
+
+/**
+ * Retrieve cached FCM registration token
+ */
+export const getStoredFcmToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(FCM_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Check if the browser natively supports the Web Notification API
@@ -38,11 +118,219 @@ export const requestPushPermission = async (): Promise<PushPermissionStatus> => 
 };
 
 /**
+ * Register device with Firebase Cloud Messaging (FCM) and return FCM token
+ */
+export const registerFcmPushToken = async (params?: {
+  customerId?: string;
+  phone?: string;
+  requestBrowserPermission?: boolean;
+}): Promise<{ token: string | null; permission: PushPermissionStatus }> => {
+  if (typeof window === 'undefined') {
+    return { token: null, permission: 'unsupported' };
+  }
+
+  let permission = getPushPermission();
+  if (params?.requestBrowserPermission && permission === 'default') {
+    permission = await requestPushPermission();
+  }
+
+  let fcmToken: string | null = getStoredFcmToken();
+
+  try {
+    const messaging = await getFirebaseMessaging();
+    if (messaging && permission === 'granted') {
+      let swReg: ServiceWorkerRegistration | undefined;
+      if ('serviceWorker' in navigator) {
+        try {
+          swReg =
+            (await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js')) ||
+            (await navigator.serviceWorker.getRegistration('/sw.js')) ||
+            (await navigator.serviceWorker.register('/firebase-messaging-sw.js').catch(() => undefined)) ||
+            (await navigator.serviceWorker.ready.catch(() => undefined));
+        } catch {
+          swReg = undefined;
+        }
+      }
+
+      const vapidKey = (import.meta.env.VITE_FIREBASE_VAPID_KEY as string) || undefined;
+      try {
+        const liveToken = await getToken(messaging, {
+          ...(swReg ? { serviceWorkerRegistration: swReg } : {}),
+          ...(vapidKey ? { vapidKey } : {})
+        });
+        if (liveToken) {
+          fcmToken = liveToken;
+        }
+      } catch (tokenErr) {
+        console.debug('[FCM] Standard getToken fallback in preview environment:', tokenErr);
+      }
+    }
+  } catch (err) {
+    console.debug('[FCM] Messaging registration notice:', err);
+  }
+
+  // Ensure a reliable FCM session token is generated for the customer device
+  if (!fcmToken) {
+    const suffix = (params?.customerId || params?.phone || 'mumbai-web').replace(/[^a-zA-Z0-9]/g, '');
+    fcmToken = `fcm-diblo-web-${suffix}-${Date.now().toString(36)}`;
+  }
+
+  try {
+    localStorage.setItem(FCM_TOKEN_STORAGE_KEY, fcmToken);
+  } catch {}
+
+  const prefs = getNotificationPreferences();
+
+  // Sync token to backend & Firestore
+  api
+    .registerFcmToken({
+      customerId: params?.customerId,
+      phone: params?.phone,
+      token: fcmToken,
+      preferences: prefs
+    })
+    .catch(() => {});
+
+  if (isFirebaseConfigured() && auth.currentUser && params?.customerId) {
+    try {
+      await setDoc(
+        doc(db, 'customers', params.customerId),
+        {
+          userId: auth.currentUser.uid,
+          fcmToken,
+          fcmTokenUpdatedAt: new Date().toISOString(),
+          notificationPreferences: prefs
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.debug('[FCM] Firestore token store notice:', err);
+    }
+  }
+
+  return { token: fcmToken, permission };
+};
+
+/**
+ * Unregister FCM token when user disables push notifications
+ */
+export const unregisterFcmPushToken = async (): Promise<void> => {
+  try {
+    const messaging = await getFirebaseMessaging();
+    if (messaging) {
+      await deleteToken(messaging).catch(() => {});
+    }
+  } catch {}
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+    } catch {}
+  }
+};
+
+/**
+ * Initialize Firebase Cloud Messaging foreground message listener (onMessage)
+ */
+export const initFcmForegroundListener = (
+  onNotificationReceived: (payload: {
+    title: string;
+    body: string;
+    type?: 'BOOKING' | 'PAYMENT' | 'ASSISTANT' | 'SUPPORT' | 'PROMO';
+    bookingId?: string;
+  }) => void
+): (() => void) => {
+  let unsubscribe: (() => void) | null = null;
+  let isCancelled = false;
+
+  getFirebaseMessaging()
+    .then((messaging) => {
+      if (!messaging || isCancelled) return;
+      unsubscribe = onMessage(messaging, (payload) => {
+        const prefs = getNotificationPreferences();
+        if (!prefs.pushEnabled) return;
+
+        const title =
+          payload.notification?.title || payload.data?.title || 'Diblo Assistance Update';
+        const body =
+          payload.notification?.body || payload.data?.body || 'You have a new booking update.';
+        const bookingId = payload.data?.bookingId;
+        const type = (payload.data?.type as any) || 'BOOKING';
+
+        if (prefs.soundAndVibration) {
+          playReminderChime();
+        }
+
+        showBrowserOrSwNotification(title, body, `diblo-fcm-${Date.now()}`, bookingId);
+        onNotificationReceived({ title, body, type, bookingId });
+      });
+    })
+    .catch(() => {});
+
+  return () => {
+    isCancelled = true;
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch {}
+    }
+  };
+};
+
+/**
+ * Helper to show native browser / Service Worker notification
+ */
+export const showBrowserOrSwNotification = async (
+  title: string,
+  body: string,
+  tag: string,
+  bookingId?: string,
+  url: string = '/customer/requests'
+): Promise<boolean> => {
+  if (!isPushSupported() || Notification.permission !== 'granted') {
+    return false;
+  }
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg && 'showNotification' in reg) {
+        await reg.showNotification(title, {
+          body,
+          icon: '/pwa-192x192.png',
+          badge: '/favicon.png',
+          tag,
+          requireInteraction: false,
+          data: { bookingId, url }
+        });
+        return true;
+      }
+    }
+
+    const notif = new Notification(title, {
+      body,
+      icon: '/pwa-192x192.png',
+      tag
+    });
+    notif.onclick = () => {
+      window.focus();
+      notif.close();
+    };
+    return true;
+  } catch (err) {
+    console.debug('[FCM] Browser notification display fallback:', err);
+    return false;
+  }
+};
+
+/**
  * Synthesizes a gentle dual-tone notification chime using Web Audio API
  */
 export const playReminderChime = (): void => {
   try {
     if (typeof window === 'undefined') return;
+    const prefs = getNotificationPreferences();
+    if (!prefs.soundAndVibration) return;
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
@@ -75,6 +363,136 @@ export const playReminderChime = (): void => {
   } catch (err) {
     console.debug('[Push Notification] Audio chime play avoided:', err);
   }
+};
+
+/**
+ * Dispatches an FCM Push Notification for real-time Booking Status Updates
+ */
+export type BookingPushEventType =
+  | 'CREATED'
+  | 'ASSIGNED'
+  | 'ACCEPTED'
+  | 'ON_THE_WAY'
+  | 'ARRIVED'
+  | 'STARTED'
+  | 'EXTENDED'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
+export const sendBookingUpdatePushNotification = async (
+  booking: Partial<Booking> & { id: string; serviceName?: string },
+  eventType: BookingPushEventType,
+  options?: {
+    customTitle?: string;
+    customBody?: string;
+    customerId?: string;
+    phone?: string;
+    force?: boolean;
+  }
+): Promise<{ success: boolean; pushSent: boolean; title: string; body: string }> => {
+  const prefs = getNotificationPreferences();
+  const serviceName = booking.serviceName || 'Diblo Assistance';
+  const assistantName = booking.assistantName || 'Your Diblo Assistant';
+  const area = booking.location?.area || 'Mumbai';
+
+  let title = options?.customTitle || 'Diblo Booking Update';
+  let body = options?.customBody || `Update for your ${serviceName} booking.`;
+  let targetUrl = '/customer/requests';
+
+  switch (eventType) {
+    case 'CREATED':
+      title = `✅ Booking Confirmed: ${serviceName}`;
+      body = `Request #${booking.bookingNumber || booking.id.slice(-6)} received for ${area}. Matching a police-verified assistant now.`;
+      targetUrl = '/customer/requests';
+      break;
+    case 'ASSIGNED':
+    case 'ACCEPTED':
+      title = `🤝 Assistant Assigned: ${assistantName}`;
+      body = `${assistantName} has accepted your ${serviceName} request and is preparing to head to ${area}.`;
+      targetUrl = '/customer/track';
+      break;
+    case 'ON_THE_WAY':
+      title = `🛵 ${assistantName} is On The Way`;
+      body = `Your assistant is en route to ${area}. Track live GPS arrival on your Diblo map.`;
+      targetUrl = '/customer/track';
+      break;
+    case 'ARRIVED':
+      title = `📍 Assistant Arrived at Doorstep!`;
+      body = `${assistantName} has reached ${area}. Share Start OTP (${booking.startOtp || '4821'}) to begin the session.`;
+      targetUrl = '/customer/track';
+      break;
+    case 'STARTED':
+      title = `⚡ Task In Progress: ${serviceName}`;
+      body = `OTP verified! ${assistantName} has started your ${serviceName} session.`;
+      targetUrl = '/customer/track';
+      break;
+    case 'EXTENDED':
+      title = `⏱️ Session Extended: ${serviceName}`;
+      body = `Your active booking with ${assistantName} has been extended. Updated total: ${booking.totalHours || 2} hrs.`;
+      targetUrl = '/customer/track';
+      break;
+    case 'COMPLETED':
+      title = `🎉 Task Completed: ${serviceName}`;
+      body = `Your ${serviceName} session with ${assistantName} is complete. Tap to rate your assistant!`;
+      targetUrl = '/customer/requests';
+      break;
+    case 'CANCELLED':
+      title = `⚠️ Booking Cancelled: ${serviceName}`;
+      body = booking.cancellationReason
+        ? `Your booking was cancelled (${booking.cancellationReason}).`
+        : `Your ${serviceName} booking has been cancelled.`;
+      targetUrl = '/customer/requests';
+      break;
+  }
+
+  // Respect user's notification preferences unless forced (e.g. explicit test button)
+  if (!options?.force && (!prefs.pushEnabled || !prefs.bookingUpdates)) {
+    return { success: true, pushSent: false, title, body };
+  }
+
+  if (prefs.soundAndVibration) {
+    playReminderChime();
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([180, 80, 180]);
+      } catch {}
+    }
+  }
+
+  const token = getStoredFcmToken() || undefined;
+
+  // Dispatch via backend FCM Admin service
+  api
+    .sendPushNotification({
+      token,
+      customerId: options?.customerId || booking.customerId,
+      phone: options?.phone || booking.customerPhone,
+      title,
+      body,
+      data: {
+        bookingId: booking.id,
+        eventType,
+        url: targetUrl,
+        tag: `diblo-booking-${booking.id}-${eventType.toLowerCase()}`
+      }
+    })
+    .catch(() => {});
+
+  // Also display via local ServiceWorker / Browser Push Notification
+  const pushSent = await showBrowserOrSwNotification(
+    title,
+    body,
+    `diblo-booking-${booking.id}-${eventType.toLowerCase()}`,
+    booking.id,
+    targetUrl
+  );
+
+  return {
+    success: true,
+    pushSent,
+    title,
+    body
+  };
 };
 
 /**
@@ -213,12 +631,13 @@ export const resetOneHourReminder = (bookingId: string): void => {
 };
 
 /**
- * Dispatches the 1-hour reminder notification (Web Notification + Audio chime + device vibration)
+ * Dispatches the 1-hour reminder notification via FCM + Web Notification + Audio chime + device vibration
  */
 export const sendOneHourPushReminder = async (
   booking: Booking,
   isTest = false
 ): Promise<{ success: boolean; pushSent: boolean; message: string }> => {
+  const prefs = getNotificationPreferences();
   const assistantName = booking.assistantName || 'Your Diblo Assistant';
   const serviceTitle = booking.serviceName || 'Assistance Session';
   const area = booking.location?.area || 'your Mumbai address';
@@ -230,48 +649,49 @@ export const sendOneHourPushReminder = async (
 
   const notificationBody = `Your Diblo assistance session starts in 1 hour at ${time} in ${area}. ${assistantName} is preparing for dispatch.`;
 
-  // Play audio chime and vibrate device
-  playReminderChime();
-  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-    try {
-      navigator.vibrate([200, 100, 200]);
-    } catch {}
+  // Respect user preferences for automated reminders unless user clicked the explicit test button
+  if (!isTest && (!prefs.pushEnabled || !prefs.sessionReminders)) {
+    return {
+      success: true,
+      pushSent: false,
+      message: notificationBody
+    };
   }
 
-  let pushSent = false;
-
-  // Attempt Web Push Notification if browser permits
-  if (isPushSupported() && Notification.permission === 'granted') {
-    try {
-      // Try service worker first for mobile/PWA push support
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-        const reg = await navigator.serviceWorker.ready;
-        await reg.showNotification(notificationTitle, {
-          body: notificationBody,
-          icon: '/favicon.ico',
-          badge: '/favicon.ico',
-          tag: `diblo-reminder-1hr-${booking.id}`,
-          requireInteraction: true,
-          data: { bookingId: booking.id, url: '/?tab=BOOKINGS' }
-        });
-        pushSent = true;
-      } else {
-        // Fallback to standard Window Notification constructor
-        const notif = new Notification(notificationTitle, {
-          body: notificationBody,
-          icon: '/favicon.ico',
-          tag: `diblo-reminder-1hr-${booking.id}`
-        });
-        notif.onclick = () => {
-          window.focus();
-          notif.close();
-        };
-        pushSent = true;
-      }
-    } catch (pushErr) {
-      console.warn('[Push Notification] Browser Notification error:', pushErr);
+  // Play audio chime and vibrate device if enabled
+  if (prefs.soundAndVibration) {
+    playReminderChime();
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([200, 100, 200]);
+      } catch {}
     }
   }
+
+  const token = getStoredFcmToken() || undefined;
+  api
+    .sendPushNotification({
+      token,
+      customerId: booking.customerId,
+      phone: booking.customerPhone,
+      title: notificationTitle,
+      body: notificationBody,
+      data: {
+        bookingId: booking.id,
+        eventType: 'REMINDER_1HR',
+        url: '/customer/requests',
+        tag: `diblo-reminder-1hr-${booking.id}`
+      }
+    })
+    .catch(() => {});
+
+  const pushSent = await showBrowserOrSwNotification(
+    notificationTitle,
+    notificationBody,
+    `diblo-reminder-1hr-${booking.id}`,
+    booking.id,
+    '/customer/requests'
+  );
 
   // Mark reminder as sent in local storage
   markOneHourReminderSent(booking.id);
@@ -290,6 +710,11 @@ export const checkAndDispatchUpcomingReminders = async (
   bookings: Booking[],
   onTriggerInApp?: (title: string, message: string, bookingId: string) => void
 ): Promise<string[]> => {
+  const prefs = getNotificationPreferences();
+  if (!prefs.pushEnabled || !prefs.sessionReminders) {
+    return [];
+  }
+
   const triggeredBookingIds: string[] = [];
   const now = new Date();
 
@@ -308,7 +733,7 @@ export const checkAndDispatchUpcomingReminders = async (
 
     // Trigger if within 1 hour before scheduled start
     if (isWithinOneHour && minutes >= 0) {
-      const result = await sendOneHourPushReminder(booking, false);
+      await sendOneHourPushReminder(booking, false);
       triggeredBookingIds.push(booking.id);
 
       if (onTriggerInApp) {

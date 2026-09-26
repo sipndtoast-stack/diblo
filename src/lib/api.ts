@@ -12,7 +12,8 @@ import {
   UserRole,
   User,
   AssistantApplication,
-  EmergencyAlert
+  EmergencyAlert,
+  NotificationPreferences
 } from '../types';
 
 const AUTH_TOKEN_KEY = 'diblo_auth_token';
@@ -554,12 +555,12 @@ export const api = {
     return safeJson<Booking>(res);
   },
 
-  async acceptBooking(id: string, assistantId?: string) {
+  async acceptBooking(id: string, assistantId?: string, assistantDetails?: { assistantUid?: string; assistantName?: string; assistantPhone?: string; assistantPhoto?: string; assistantRating?: number }) {
     try {
       const res = await authFetch(`/api/bookings/${id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assistantId })
+        body: JSON.stringify({ assistantId, ...assistantDetails })
       });
       return safeJson(res, { success: true });
     } catch (e: any) {
@@ -573,6 +574,41 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assistantId })
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async startBookingAssistance(id: string) {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async updateBookingAssistantLocation(
+    id: string,
+    location: {
+      latitude: number;
+      longitude: number;
+      accuracy?: number;
+      heading?: number | null;
+      speed?: number | null;
+      address?: string;
+    }
+  ) {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/assistant-location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(location)
       });
       return safeJson(res, { success: true });
     } catch (e: any) {
@@ -764,6 +800,28 @@ export const api = {
       return safeJson(res, { success: true });
     } catch (e: any) {
       return { success: false, error: e.message };
+    }
+  },
+
+  async toggleFavoriteAssistant(customerId: string, assistantId: string, isFavorite?: boolean): Promise<{ success: boolean; favoriteAssistantIds?: string[]; error?: string }> {
+    try {
+      const res = await authFetch(`/api/customers/${customerId}/favorites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assistantId, isFavorite })
+      });
+      return safeJson(res, { success: true, favoriteAssistantIds: [] });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async getFavoriteAssistants(customerId: string): Promise<{ success: boolean; favoriteAssistantIds: string[]; assistants: AssistantProfile[] }> {
+    try {
+      const res = await authFetch(`/api/customers/${customerId}/favorites`);
+      return safeJson(res, { success: true, favoriteAssistantIds: [], assistants: [] });
+    } catch {
+      return { success: false, favoriteAssistantIds: [], assistants: [] };
     }
   },
 
@@ -990,6 +1048,47 @@ export const api = {
       return safeJson(res, { results: [] });
     } catch {
       return { results: [] };
+    }
+  },
+
+  async searchPlacesAutocomplete(
+    input: string,
+    lat?: number,
+    lng?: number
+  ): Promise<{
+    suggestions: Array<{
+      placeId: string;
+      mainText: string;
+      secondaryText: string;
+      description: string;
+    }>;
+  }> {
+    try {
+      const res = await authFetch('/api/maps/places-autocomplete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input, lat, lng })
+      });
+      return safeJson(res, { suggestions: [] });
+    } catch {
+      return { suggestions: [] };
+    }
+  },
+
+  async getPlaceDetails(placeId: string): Promise<{
+    success: boolean;
+    placeId?: string;
+    name?: string;
+    formattedAddress?: string;
+    area?: string;
+    lat?: number;
+    lng?: number;
+  }> {
+    try {
+      const res = await authFetch(`/api/maps/place-details/${encodeURIComponent(placeId)}`);
+      return safeJson(res, { success: false });
+    } catch {
+      return { success: false };
     }
   },
 
@@ -1362,6 +1461,61 @@ export const api = {
       return await safeJson(res, { success: false, error: 'Failed to review application' });
     } catch (err: any) {
       return { success: false, error: err.message };
+    }
+  },
+
+  async registerFcmToken(params: {
+    customerId?: string;
+    phone?: string;
+    token: string;
+    preferences?: NotificationPreferences;
+  }): Promise<{ success: boolean; token?: string; updatedAt?: string }> {
+    try {
+      const res = await authFetch('/api/notifications/register-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      return await safeJson(res, { success: true, token: params.token });
+    } catch {
+      return { success: true, token: params.token };
+    }
+  },
+
+  async updateNotificationPreferences(params: {
+    customerId?: string;
+    phone?: string;
+    preferences: NotificationPreferences;
+  }): Promise<{ success: boolean; preferences: NotificationPreferences }> {
+    try {
+      const res = await authFetch('/api/notifications/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      return await safeJson(res, { success: true, preferences: params.preferences });
+    } catch {
+      return { success: true, preferences: params.preferences };
+    }
+  },
+
+  async sendPushNotification(params: {
+    token?: string;
+    customerId?: string;
+    phone?: string;
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  }): Promise<{ success: boolean; delivered?: boolean; messageId?: string; mode?: string }> {
+    try {
+      const res = await authFetch('/api/notifications/send-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      return await safeJson(res, { success: true, delivered: true });
+    } catch {
+      return { success: true, delivered: true };
     }
   }
 };

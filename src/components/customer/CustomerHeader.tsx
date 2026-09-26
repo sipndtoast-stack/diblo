@@ -16,7 +16,8 @@ import {
   ExternalLink,
   Navigation,
   CheckCircle2,
-  Radio
+  Radio,
+  Heart
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
@@ -27,12 +28,13 @@ import { CustomerDrawer } from './CustomerDrawer';
 
 interface CustomerHeaderProps {
   onOpenBooking: () => void;
-  onSelectTab: (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => void;
+  onSelectTab: (tab: any) => void;
   activeTab: string;
+  onOpenLogout: () => void;
 }
 
-export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, onSelectTab, activeTab }) => {
-  const { currentUser } = useAuth();
+export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, onSelectTab, activeTab, onOpenLogout }) => {
+  const { currentUser, customerProfile, favoriteAssistantIds } = useAuth();
   const { activeBooking, pushPermission, requestPushNotificationPermission, addNotification } = useBooking();
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
@@ -55,7 +57,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
     'Lower Parel, Mumbai'
   ];
 
-  const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'PROFILE' | 'SUPPORT') => {
+  const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'FAVORITES' | 'PROFILE' | 'SUPPORT') => {
     onSelectTab(tab);
     setIsDrawerOpen(false);
   };
@@ -204,7 +206,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
 
           <div
             onClick={() => handleTabClick('HOME')}
-            className="cursor-pointer flex items-baseline gap-1 select-none py-1"
+            className="cursor-pointer flex items-baseline gap-1 select-none py-1 lg:hidden"
           >
             <span className="text-2xl sm:text-3xl font-black text-[#F42F73] tracking-tighter lowercase">
               diblo
@@ -251,31 +253,6 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           </div>
         </div>
 
-        {/* Desktop Navigation Links */}
-        <nav className="hidden lg:flex items-center gap-1 text-sm font-semibold">
-          {[
-            { id: 'HOME', label: 'Home' },
-            { id: 'BOOKINGS', label: 'My Bookings' },
-            { id: 'ACTIVITY', label: 'Live Assistance' },
-            { id: 'SUPPORT', label: 'Support' },
-            { id: 'PROFILE', label: 'Profile' }
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id as any)}
-              className={`px-3.5 py-2 rounded-xl transition-all relative min-h-[40px] flex items-center ${
-                activeTab === item.id
-                  ? 'text-[#F42F73] bg-[#FFF0F5] font-bold'
-                  : 'text-gray-600 hover:text-[#14213D] hover:bg-gray-50'
-              }`}
-            >
-              <span>{item.label}</span>
-              {item.id === 'ACTIVITY' && activeBooking && (
-                <span className="absolute top-2 right-1.5 w-2 h-2 rounded-full bg-[#10B981] animate-ping" />
-              )}
-            </button>
-          ))}
-        </nav>
 
         {/* Right CTA & Emergency Safety Buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2.5">
@@ -351,11 +328,21 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           {/* User Avatar Circle */}
           <button
             onClick={() => onSelectTab('PROFILE')}
-            className="w-9 h-9 rounded-full bg-[#14213D] text-white text-xs font-bold flex items-center justify-center hover:ring-2 hover:ring-[#F42F73] transition-all shrink-0 min-w-[36px] min-h-[36px]"
+            className="w-9 h-9 rounded-full bg-[#14213D] text-white text-xs font-bold flex items-center justify-center hover:ring-2 hover:ring-[#F42F73] transition-all shrink-0 min-w-[36px] min-h-[36px] overflow-hidden cursor-pointer shadow-xs border border-gray-100"
             title="My Profile"
             aria-label="User Profile"
           >
-            {currentUser?.name ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'AK'}
+            {customerProfile?.avatar || currentUser?.avatar ? (
+              <img
+                src={customerProfile?.avatar || currentUser?.avatar}
+                alt="Profile"
+                className="w-full h-full object-cover rounded-full"
+              />
+            ) : currentUser?.name ? (
+              currentUser.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+            ) : (
+              'CU'
+            )}
           </button>
 
           {/* Mobile Menu Hamburger Button (Hidden on Desktop) */}
@@ -386,6 +373,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           setIsDrawerOpen(false);
           handleTriggerEmergencySos();
         }}
+        onOpenLogout={onOpenLogout}
         selectedArea={selectedArea}
         onSelectArea={(area) => {
           setSelectedArea(area);
