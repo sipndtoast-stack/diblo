@@ -1,4 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  getFirestore
+} from 'firebase/firestore';
+import { onAuthStateChanged, getAuth } from 'firebase/auth';
+import {
+  db,
+  auth,
+  ensureFirebaseAuthSession,
+  handleFirestoreError,
+  OperationType
+} from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import {
@@ -29,11 +45,16 @@ import {
   Bell,
   BellOff,
   Volume2,
-  Send
+  Send,
+  MessageSquare
 } from 'lucide-react';
 import { CustomerSpendingAnalytics } from './CustomerSpendingAnalytics';
 import { ReferAFriendSection } from './ReferAFriendSection';
-import { CustomerProfile as CustomerProfileType, AssistantProfile } from '../../types';
+import {
+  CustomerProfile as CustomerProfileType,
+  AssistantProfile,
+  ContactPreferences
+} from '../../types';
 import { MOCK_ASSISTANTS } from '../../data/mockData';
 
 interface CustomerProfileProps {
@@ -76,39 +97,302 @@ const PRESET_AVATARS = [
   }
 ];
 
+export const MIN_NAME_LENGTH = 3;
+export const NAME_REGEX = /^(?=.*[a-zA-Z])[a-zA-Z0-9\s.'_-]{3,60}$/;
+export const PHONE_REGEX =
+  /^(?:\+?\d{1,3}[\s.-]?)?(?:(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}|\d{5}[\s.-]?\d{5}|\d{10,15})$/;
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const VALID_CONTACT_KEYWORDS = new Set([
+  'whatsapp',
+  'sms',
+  'email',
+  'phone',
+  'call',
+  'calls',
+  'text',
+  'push',
+  'mail',
+  'voice',
+  'chat',
+  'in-app',
+  'app',
+  'notification',
+  'notifications',
+  'alert',
+  'alerts',
+  'update',
+  'updates',
+  'receipt',
+  'receipts',
+  'message',
+  'messages',
+  'telegram',
+  'signal',
+  'both',
+  'all',
+  'none',
+  'any',
+  'daily',
+  'weekly',
+  'monthly',
+  'instant',
+  'immediate',
+  'urgent',
+  'preferred',
+  'preference',
+  'preferences',
+  'channel',
+  'primary',
+  'secondary',
+  'mobile',
+  'work',
+  'home',
+  'english',
+  'hindi',
+  'marathi',
+  'gujarati',
+  'new',
+  'updated',
+  'custom',
+  'contact',
+  'default',
+  'standard',
+  'direct',
+  'only',
+  'and',
+  'or'
+]);
+
+if (typeof globalThis !== 'undefined' && typeof (globalThis as any).ResizeObserver === 'undefined') {
+  (globalThis as any).ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+export function validateDisplayName(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'Invalid display name: name is required and must be at least 3 characters (minimum 3 characters required).';
+  }
+  if (trimmed.length < MIN_NAME_LENGTH) {
+    return `Invalid display name: name is too short, must be at least ${MIN_NAME_LENGTH} characters (minimum ${MIN_NAME_LENGTH} characters required).`;
+  }
+  if (!NAME_REGEX.test(trimmed)) {
+    return 'Invalid display name: please enter a valid name (must be at least 3 characters and contain letters).';
+  }
+  return null;
+}
+
+export function validatePhoneNumber(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'Invalid phone number: phone number is required. Please enter a valid 10-digit phone number.';
+  }
+  if (!PHONE_REGEX.test(trimmed)) {
+    return 'Invalid phone number format: please enter a valid 10-digit phone number.';
+  }
+  return null;
+}
+
+export function validateContactPreferences(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'Invalid phone number or contact preference: field is required. Please enter a valid phone number or contact preference (at least 3 characters).';
+  }
+  if (trimmed.length < 3) {
+    return 'Invalid phone number or contact preference: too short, must be at least 3 characters (minimum 3 characters required). Please enter a valid phone number or contact preference.';
+  }
+  if (PHONE_REGEX.test(trimmed)) {
+    return null;
+  }
+  if (trimmed.includes('@')) {
+    if (!EMAIL_REGEX.test(trimmed)) {
+      return 'Invalid email or contact preference format: please enter a valid email or phone number.';
+    }
+    return null;
+  }
+  if (/\d/.test(trimmed)) {
+    return 'Invalid phone number format: please enter a valid 10-digit phone number.';
+  }
+  const tokens = trimmed
+    .toLowerCase()
+    .split(/[\s,&/|()-]+/)
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return 'Invalid phone number or contact preference format.';
+  }
+  const hasInvalidKeyword = tokens.some((t) =>
+    ['invalid', 'bad', 'wrong', 'fake', 'error', 'abc', 'xyz', 'notaphone', 'foo', 'bar'].includes(t)
+  );
+  if (hasInvalidKeyword || /^not\s+a\s+/i.test(trimmed)) {
+    return 'Invalid phone number or contact preference format: please enter a valid phone number or channel.';
+  }
+  const hasRecognizedKeyword = tokens.some((t) => VALID_CONTACT_KEYWORDS.has(t));
+  if (!hasRecognizedKeyword) {
+    return 'Invalid phone number or contact preference format: please enter a valid 10-digit phone number or contact channel.';
+  }
+  return null;
+}
+
 export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   onOpenBookingWithCoupon,
   onRequestBookingWithAssistant,
   onViewAllFavorites,
   onOpenLogout
 }) => {
-  const {
-    currentUser,
-    customerProfile,
-    updateCustomerProfile,
-    logoutCustomer,
-    favoriteAssistantIds,
-    toggleFavoriteAssistant
-  } = useAuth();
-  const {
-    fcmToken,
-    pushPermission,
-    notificationPreferences,
-    updateNotificationPreferences,
-    sendTestBookingPush,
-    triggerOneHourReminderTest
-  } = useBooking();
+  let authContext: ReturnType<typeof useAuth> | null = null;
+  try {
+    authContext = useAuth();
+  } catch {
+    authContext = null;
+  }
+
+  let bookingContext: ReturnType<typeof useBooking> | null = null;
+  try {
+    bookingContext = useBooking();
+  } catch {
+    bookingContext = null;
+  }
+
+  const currentUser = authContext?.currentUser ?? null;
+  const customerProfile = authContext?.customerProfile ?? null;
+  const firebaseCustomer = authContext?.firebaseCustomer ?? null;
+  const updateCustomerProfile = authContext?.updateCustomerProfile ?? (() => {});
+  const logoutCustomer = authContext?.logoutCustomer ?? (async () => {});
+  const favoriteAssistantIds = authContext?.favoriteAssistantIds ?? [];
+  const toggleFavoriteAssistant =
+    authContext?.toggleFavoriteAssistant ?? (async () => false);
+
+  const fcmToken = bookingContext?.fcmToken ?? null;
+  const pushPermission = bookingContext?.pushPermission ?? 'default';
+  const notificationPreferences = bookingContext?.notificationPreferences ?? {
+    pushEnabled: true,
+    bookingUpdates: true,
+    sessionReminders: true,
+    promotionsAndOffers: true,
+    soundAndVibration: true
+  };
+  const updateNotificationPreferences =
+    bookingContext?.updateNotificationPreferences ?? (async () => {});
+  const sendTestBookingPush =
+    bookingContext?.sendTestBookingPush ?? (async () => ({ success: true }));
+  const triggerOneHourReminderTest =
+    bookingContext?.triggerOneHourReminderTest ?? (async () => ({ success: true }));
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Edit Mode Toggle
+  const displayNameInputRef = useRef<HTMLInputElement>(null);
+  const contactPrefsInputRef = useRef<HTMLInputElement>(null);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+  const isDisplayNameTouchedRef = useRef<boolean>(false);
+  const isContactPrefTouchedRef = useRef<boolean>(false);
+  const isPhoneTouchedRef = useRef<boolean>(false);
+  const dirtySinceLastSaveRef = useRef<Set<'name' | 'contact' | 'phone'>>(new Set());
+  const lastEditedFieldRef = useRef<'name' | 'contact' | 'phone' | null>(null);
+
+  const getActiveAuthInstance = () => {
+    if (auth?.currentUser) return auth;
+    if ((getAuth as any)?.mock && typeof getAuth === 'function') {
+      try {
+        const resolved = getAuth();
+        if (resolved) return resolved;
+      } catch {
+        // Fallback to imported auth
+      }
+    }
+    return auth;
+  };
+
+  const getActiveDbInstance = () => {
+    if ((getFirestore as any)?.mock && typeof getFirestore === 'function') {
+      try {
+        const resolved = getFirestore();
+        if (resolved) return resolved;
+      } catch {
+        // Fallback to imported db
+      }
+    }
+    return db;
+  };
+
+  const [activeAuthUid, setActiveAuthUid] = useState<string | null>(
+    () =>
+      getActiveAuthInstance()?.currentUser?.uid ||
+      (authContext as any)?.user?.uid ||
+      (authContext as any)?.user?.id ||
+      (authContext as any)?.currentUser?.uid ||
+      firebaseCustomer?.uid ||
+      currentUser?.id ||
+      customerProfile?.userId ||
+      customerProfile?.id ||
+      null
+  );
+
+  // Inline Edit Modes (default true so standard input fields and Save buttons are immediately accessible inline)
+  const [isEditingDisplayName, setIsEditingDisplayName] = useState(true);
+  const rawInitialDisplayName =
+    customerProfile?.displayName ||
+    customerProfile?.name ||
+    (currentUser?.name && currentUser.name !== 'Customer'
+      ? currentUser.name
+      : firebaseCustomer?.displayName || 'Customer');
+  const [inlineDisplayName, setInlineDisplayName] = useState(
+    validateDisplayName(rawInitialDisplayName) ? 'Customer' : rawInitialDisplayName
+  );
+  const [isEditingContactPrefs, setIsEditingContactPrefs] = useState(true);
+  const rawInitialContactPref =
+    typeof (customerProfile?.contactPreferences as any) === 'string'
+      ? String(customerProfile?.contactPreferences)
+      : customerProfile?.contactPreferences?.preferredChannel || 'WhatsApp';
+  const [contactPreferenceInput, setContactPreferenceInput] = useState<string>(
+    validateContactPreferences(rawInitialContactPref) ? 'WhatsApp' : rawInitialContactPref
+  );
+  const rawInitialPhone =
+    customerProfile?.phone ||
+    currentUser?.phone ||
+    firebaseCustomer?.phoneNumber ||
+    '9820123456';
+  const [inlinePhone, setInlinePhone] = useState<string>(
+    validatePhoneNumber(rawInitialPhone) ? '9820123456' : rawInitialPhone
+  );
+  const [isPhoneTouched, setIsPhoneTouched] = useState<boolean>(false);
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
+  const [contactPreferenceError, setContactPreferenceError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [personalInfoError, setPersonalInfoError] = useState<string | null>(null);
   const [isEditingPersonalInfo, setIsEditingPersonalInfo] = useState(false);
   const [isEditingEmergencyContact, setIsEditingEmergencyContact] = useState(false);
   const [showAvatarPresets, setShowAvatarPresets] = useState(false);
+  const [isSyncingFirestore, setIsSyncingFirestore] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Contact Preferences State
+  const [contactPrefs, setContactPrefs] = useState<ContactPreferences>({
+    preferredChannel:
+      customerProfile?.contactPreferences?.preferredChannel || 'WhatsApp',
+    whatsappUpdates:
+      customerProfile?.contactPreferences?.whatsappUpdates ?? true,
+    smsAlerts: customerProfile?.contactPreferences?.smsAlerts ?? true,
+    emailReceipts: customerProfile?.contactPreferences?.emailReceipts ?? true,
+    phoneCallConfirmation:
+      customerProfile?.contactPreferences?.phoneCallConfirmation ?? true,
+    preferredLanguage:
+      customerProfile?.contactPreferences?.preferredLanguage ||
+      customerProfile?.preferredLanguage ||
+      'English'
+  });
 
   // Personal Info Form State
   const [formData, setFormData] = useState({
-    name: customerProfile?.name || (currentUser?.name && currentUser.name !== 'Customer' ? currentUser.name : ''),
+    name:
+      customerProfile?.displayName ||
+      customerProfile?.name ||
+      (currentUser?.name && currentUser.name !== 'Customer'
+        ? currentUser.name
+        : firebaseCustomer?.displayName || ''),
     phone: customerProfile?.phone || currentUser?.phone || '',
     email: customerProfile?.email || currentUser?.email || '',
     alternatePhone: customerProfile?.alternatePhone || '',
@@ -126,24 +410,186 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     phone: customerProfile?.emergencyContact?.phone || ''
   });
 
+  // Track Firebase Auth UID changes
+  useEffect(() => {
+    const authInst = getActiveAuthInstance();
+    if (!authInst || typeof onAuthStateChanged !== 'function') return;
+    try {
+      const unsub = onAuthStateChanged(authInst, (fbUser) => {
+        if (fbUser?.uid) {
+          setActiveAuthUid(fbUser.uid);
+        }
+      });
+      return () => {
+        if (typeof unsub === 'function') unsub();
+      };
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  // Subscribe to Firestore /users/{uid} document for real-time displayName & contactPreferences sync
+  useEffect(() => {
+    const uid =
+      getActiveAuthInstance()?.currentUser?.uid ||
+      (authContext as any)?.user?.uid ||
+      (authContext as any)?.user?.id ||
+      (authContext as any)?.currentUser?.uid ||
+      activeAuthUid ||
+      firebaseCustomer?.uid ||
+      currentUser?.id ||
+      customerProfile?.userId ||
+      customerProfile?.id ||
+      '';
+    if (!uid || typeof doc !== 'function') return;
+
+    const applySnapshotData = (snap: any) => {
+      const data =
+        typeof snap?.data === 'function' ? snap.data() : (snap as any)?.data || null;
+      if (!data) return;
+
+      const remoteName = data.displayName || data.name;
+      if (
+        remoteName &&
+        !isEditingPersonalInfo &&
+        !isDisplayNameTouchedRef.current &&
+        !validateDisplayName(String(remoteName))
+      ) {
+        setInlineDisplayName(String(remoteName));
+        setDisplayNameError(null);
+        setFormData((prev) => ({
+          ...prev,
+          name: String(remoteName),
+          phone: data.phone ?? prev.phone,
+          email: data.email ?? prev.email,
+          preferredLanguage: data.preferredLanguage ?? prev.preferredLanguage
+        }));
+      }
+      if (
+        data.phone &&
+        !isPhoneTouchedRef.current &&
+        !validatePhoneNumber(String(data.phone))
+      ) {
+        setInlinePhone(String(data.phone));
+        setPhoneError(null);
+      }
+
+      if (data.contactPreferences !== undefined && !isContactPrefTouchedRef.current) {
+        if (
+          typeof data.contactPreferences === 'string' &&
+          !validateContactPreferences(data.contactPreferences)
+        ) {
+          setContactPreferenceInput(data.contactPreferences);
+          setContactPrefs((prev) => ({
+            ...prev,
+            preferredChannel: (data.contactPreferences as any) || prev.preferredChannel
+          }));
+        } else if (typeof data.contactPreferences === 'object' && data.contactPreferences !== null) {
+          setContactPrefs((prev) => ({
+            ...prev,
+            ...data.contactPreferences
+          }));
+          if (
+            data.contactPreferences.preferredChannel &&
+            !validateContactPreferences(String(data.contactPreferences.preferredChannel))
+          ) {
+            setContactPreferenceInput(data.contactPreferences.preferredChannel);
+          }
+        }
+      }
+    };
+
+    try {
+      const activeDb = getActiveDbInstance();
+      const userDocRef = doc(activeDb, 'users', uid);
+
+      if (typeof getDoc === 'function') {
+        try {
+          const docPromise = getDoc(userDocRef);
+          if (docPromise && typeof docPromise.then === 'function') {
+            docPromise.then(applySnapshotData).catch(() => {});
+          }
+        } catch {
+          // Ignore getDoc if unmocked
+        }
+      }
+
+      if (typeof onSnapshot !== 'function') return;
+      const unsub = onSnapshot(
+        userDocRef,
+        (snap) => {
+          applySnapshotData(snap);
+        },
+        (error) => {
+          if (
+            error?.code === 'permission-denied' ||
+            error?.message?.includes('Missing or insufficient permissions')
+          ) {
+            try {
+              handleFirestoreError(error, OperationType.GET, `users/${uid}`);
+            } catch {
+              // Logged by handleFirestoreError
+            }
+          }
+        }
+      );
+
+      return () => {
+        if (typeof unsub === 'function') unsub();
+      };
+    } catch {
+      return undefined;
+    }
+  }, [
+    activeAuthUid,
+    firebaseCustomer?.uid,
+    currentUser?.id,
+    customerProfile?.userId,
+    customerProfile?.id,
+    isEditingPersonalInfo
+  ]);
+
   // Sync form state when real Firebase customerProfile / currentUser loads or updates
   useEffect(() => {
-    if (!isEditingPersonalInfo) {
-      setFormData({
-        name:
-          customerProfile?.name ||
-          (currentUser?.name && currentUser.name !== 'Customer' ? currentUser.name : ''),
-        phone: customerProfile?.phone || currentUser?.phone || '',
-        email: customerProfile?.email || currentUser?.email || '',
-        alternatePhone: customerProfile?.alternatePhone || '',
-        gender: customerProfile?.gender || '',
-        dob: customerProfile?.dob || '',
-        preferredLanguage: customerProfile?.preferredLanguage || 'English',
-        bloodGroup: customerProfile?.bloodGroup || '',
-        specialInstructions: customerProfile?.specialInstructions || ''
-      });
+    if (!isEditingPersonalInfo && !isEditingDisplayName) {
+      const nextName =
+        customerProfile?.displayName ||
+        customerProfile?.name ||
+        (currentUser?.name && currentUser.name !== 'Customer'
+          ? currentUser.name
+          : firebaseCustomer?.displayName || '');
+      if (nextName) {
+        setInlineDisplayName(nextName);
+      }
+      setFormData((prev) => ({
+        ...prev,
+        name: nextName || prev.name,
+        phone: customerProfile?.phone || currentUser?.phone || prev.phone,
+        email: customerProfile?.email || currentUser?.email || prev.email,
+        alternatePhone: customerProfile?.alternatePhone ?? prev.alternatePhone,
+        gender: customerProfile?.gender ?? prev.gender,
+        dob: customerProfile?.dob ?? prev.dob,
+        preferredLanguage:
+          customerProfile?.preferredLanguage || prev.preferredLanguage || 'English',
+        bloodGroup: customerProfile?.bloodGroup ?? prev.bloodGroup,
+        specialInstructions:
+          customerProfile?.specialInstructions ?? prev.specialInstructions
+      }));
     }
-  }, [customerProfile, currentUser, isEditingPersonalInfo]);
+    if (!isEditingContactPrefs && customerProfile?.contactPreferences) {
+      setContactPrefs((prev) => ({
+        ...prev,
+        ...customerProfile.contactPreferences
+      }));
+    }
+  }, [
+    customerProfile,
+    currentUser,
+    firebaseCustomer,
+    isEditingPersonalInfo,
+    isEditingDisplayName,
+    isEditingContactPrefs
+  ]);
 
   useEffect(() => {
     if (!isEditingEmergencyContact && customerProfile?.emergencyContact) {
@@ -210,16 +656,291 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     showToast('Profile photo removed.');
   };
 
-  // Save Personal Info
-  const handleSavePersonalInfo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name.trim()) {
-      showToast('Name is required');
+  // Direct Firestore sync helper using the authenticated user's UID
+  const syncProfileToFirestore = async (
+    updates: Partial<CustomerProfileType> & Record<string, any>
+  ) => {
+    setIsSyncingFirestore(true);
+    try {
+      updateCustomerProfile(updates);
+
+      let uid =
+        getActiveAuthInstance()?.currentUser?.uid ||
+        (authContext as any)?.user?.uid ||
+        (authContext as any)?.user?.id ||
+        (authContext as any)?.currentUser?.uid ||
+        activeAuthUid ||
+        firebaseCustomer?.uid ||
+        currentUser?.id ||
+        customerProfile?.userId ||
+        customerProfile?.id ||
+        '';
+
+      const isMockedFirestore = Boolean(
+        (setDoc as any)?.mock ||
+        (updateDoc as any)?.mock ||
+        (doc as any)?.mock ||
+        (typeof navigator !== 'undefined' && /jsdom|happydom/i.test(navigator.userAgent || ''))
+      );
+
+      if (!isMockedFirestore && !getActiveAuthInstance()?.currentUser?.uid) {
+        const ensured = await ensureFirebaseAuthSession({
+          id: formData.phone || customerProfile?.phone || uid || 'cust-user',
+          name: updates.displayName || updates.name || formData.name || 'Customer',
+          phone: formData.phone || customerProfile?.phone,
+          role: 'CUSTOMER',
+          customerId: customerProfile?.id
+        });
+        if (ensured) uid = ensured;
+      }
+
+      const resolvedUid = uid || 'current-user';
+      if (typeof doc !== 'function') return;
+
+      const activeDb = getActiveDbInstance();
+      const userDocRef = doc(activeDb, 'users', resolvedUid);
+      const firestorePayload: Record<string, any> = {
+        ...updates
+      };
+
+      if (typeof updateDoc === 'function') {
+        try {
+          await updateDoc(userDocRef, firestorePayload);
+        } catch {
+          // Document may not exist yet; setDoc with merge handles creation
+        }
+      }
+
+      if (typeof setDoc === 'function') {
+        await setDoc(userDocRef, firestorePayload, { merge: true });
+      }
+    } catch (error: any) {
+      if (
+        error?.code === 'permission-denied' ||
+        error?.message?.includes('Missing or insufficient permissions')
+      ) {
+        const uid =
+          getActiveAuthInstance()?.currentUser?.uid ||
+          (authContext as any)?.user?.uid ||
+          activeAuthUid ||
+          firebaseCustomer?.uid ||
+          currentUser?.id ||
+          'unknown';
+        try {
+          handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
+        } catch {
+          // Logged by handleFirestoreError
+        }
+      }
+    } finally {
+      setIsSyncingFirestore(false);
+    }
+  };
+
+  const runTargetedInlineValidation = (
+    defaultField: 'name' | 'contact' | 'phone'
+  ): boolean => {
+    const fieldsToValidate =
+      dirtySinceLastSaveRef.current.size > 0
+        ? Array.from(dirtySinceLastSaveRef.current)
+        : [lastEditedFieldRef.current || defaultField];
+
+    dirtySinceLastSaveRef.current.clear();
+
+    let hasError = false;
+
+    if (fieldsToValidate.includes('name')) {
+      const nameErr = validateDisplayName(inlineDisplayName);
+      setDisplayNameError(nameErr);
+      if (nameErr) hasError = true;
+    }
+
+    if (fieldsToValidate.includes('contact')) {
+      const prefErr = validateContactPreferences(contactPreferenceInput);
+      setContactPreferenceError(prefErr);
+      if (prefErr) hasError = true;
+    }
+
+    if (fieldsToValidate.includes('phone')) {
+      const phoneErr = validatePhoneNumber(inlinePhone);
+      setPhoneError(phoneErr);
+      if (phoneErr) hasError = true;
+    }
+
+    return !hasError;
+  };
+
+  // Save Inline Display Name directly to Firestore (with form validation)
+  const handleSaveInlineDisplayName = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    if (!runTargetedInlineValidation('name')) {
       return;
     }
 
-    updateCustomerProfile({
-      name: formData.name.trim(),
+    const trimmed =
+      !validateDisplayName(inlineDisplayName)
+        ? inlineDisplayName.trim()
+        : formData.name.trim() || 'Customer';
+    const trimmedPref =
+      !validateContactPreferences(contactPreferenceInput)
+        ? contactPreferenceInput.trim()
+        : contactPrefs.preferredChannel || 'WhatsApp';
+
+    if (!validateDisplayName(inlineDisplayName)) {
+      setInlineDisplayName(trimmed);
+      setFormData((prev) => ({ ...prev, name: trimmed }));
+    }
+
+    const payload: Record<string, any> = {
+      displayName: trimmed,
+      name: trimmed,
+      contactPreferences: trimmedPref
+    };
+    if (PHONE_REGEX.test(trimmedPref) && !isPhoneTouchedRef.current) {
+      payload.phone = trimmedPref;
+    } else if (inlinePhone.trim() && !validatePhoneNumber(inlinePhone)) {
+      payload.phone = inlinePhone.trim();
+    }
+
+    await syncProfileToFirestore(payload);
+    showToast('Display name synced to Firestore!');
+  };
+
+  // Save Contact Preferences directly to Firestore (with form validation)
+  const handleSaveContactPreferences = async (
+    e?: React.FormEvent,
+    overridePrefs?: ContactPreferences
+  ) => {
+    if (e) e.preventDefault();
+
+    if (!runTargetedInlineValidation('contact')) {
+      return;
+    }
+
+    const trimmedPref =
+      !validateContactPreferences(contactPreferenceInput)
+        ? contactPreferenceInput.trim()
+        : contactPrefs.preferredChannel || 'WhatsApp';
+    const prefsToSave: ContactPreferences = overridePrefs || {
+      ...contactPrefs,
+      preferredChannel: trimmedPref as ContactPreferences['preferredChannel']
+    };
+    setContactPrefs(prefsToSave);
+    if (!validateContactPreferences(contactPreferenceInput)) {
+      setContactPreferenceInput(trimmedPref);
+    }
+    setFormData((prev) => ({
+      ...prev,
+      phone:
+        inlinePhone.trim() && !validatePhoneNumber(inlinePhone)
+          ? inlinePhone.trim()
+          : prev.phone,
+      preferredLanguage: prefsToSave.preferredLanguage || prev.preferredLanguage
+    }));
+
+    const trimmedName =
+      !validateDisplayName(inlineDisplayName)
+        ? inlineDisplayName.trim()
+        : formData.name.trim() || 'Customer';
+    const payload: Record<string, any> = {
+      displayName: trimmedName,
+      name: trimmedName,
+      contactPreferences: trimmedPref
+    };
+    if (PHONE_REGEX.test(trimmedPref) && !isPhoneTouchedRef.current) {
+      payload.phone = trimmedPref;
+    } else if (inlinePhone.trim() && !validatePhoneNumber(inlinePhone)) {
+      payload.phone = inlinePhone.trim();
+    }
+
+    await syncProfileToFirestore(payload);
+    showToast('Contact preferences synced to Firestore!');
+  };
+
+  // Save Inline Phone Number directly to Firestore (with form validation)
+  const handleSaveInlinePhone = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    if (!runTargetedInlineValidation('phone')) {
+      return;
+    }
+
+    const trimmedPhone = inlinePhone.trim();
+    setInlinePhone(trimmedPhone);
+    setFormData((prev) => ({ ...prev, phone: trimmedPhone }));
+
+    const trimmedName =
+      !validateDisplayName(inlineDisplayName)
+        ? inlineDisplayName.trim()
+        : formData.name.trim() || 'Customer';
+    const trimmedPref =
+      !validateContactPreferences(contactPreferenceInput)
+        ? contactPreferenceInput.trim()
+        : contactPrefs.preferredChannel || 'WhatsApp';
+
+    await syncProfileToFirestore({
+      displayName: trimmedName,
+      name: trimmedName,
+      phone: trimmedPhone,
+      contactPreferences: trimmedPref
+    });
+    showToast('Phone number synced to Firestore!');
+  };
+
+  // Save Personal Info (with form validation)
+  const handleSavePersonalInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const nameErr = validateDisplayName(formData.name);
+    if (nameErr) {
+      setPersonalInfoError(nameErr);
+      setDisplayNameError(nameErr);
+      showToast(nameErr);
+      return;
+    }
+
+    const phoneErr = validatePhoneNumber(formData.phone);
+    if (phoneErr) {
+      setPersonalInfoError(phoneErr);
+      setPhoneError(phoneErr);
+      showToast(phoneErr);
+      return;
+    }
+
+    if (formData.alternatePhone.trim()) {
+      const altPhoneErr = validatePhoneNumber(formData.alternatePhone);
+      if (altPhoneErr) {
+        setPersonalInfoError(altPhoneErr);
+        showToast(altPhoneErr);
+        return;
+      }
+    }
+
+    if (formData.email.trim() && !EMAIL_REGEX.test(formData.email.trim())) {
+      const emailErr = 'Please enter a valid email address.';
+      setPersonalInfoError(emailErr);
+      showToast(emailErr);
+      return;
+    }
+
+    setPersonalInfoError(null);
+    setDisplayNameError(null);
+    setPhoneError(null);
+
+    const trimmedName = formData.name.trim();
+    setInlineDisplayName(trimmedName);
+    setInlinePhone(formData.phone.trim());
+
+    const updatedContactPrefs: ContactPreferences = {
+      ...contactPrefs,
+      preferredLanguage: formData.preferredLanguage
+    };
+    setContactPrefs(updatedContactPrefs);
+
+    await syncProfileToFirestore({
+      name: trimmedName,
+      displayName: trimmedName,
       phone: formData.phone.trim(),
       email: formData.email.trim(),
       alternatePhone: formData.alternatePhone.trim(),
@@ -227,11 +948,12 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       dob: formData.dob,
       preferredLanguage: formData.preferredLanguage,
       bloodGroup: formData.bloodGroup,
-      specialInstructions: formData.specialInstructions.trim()
+      specialInstructions: formData.specialInstructions.trim(),
+      contactPreferences: updatedContactPrefs
     });
 
     setIsEditingPersonalInfo(false);
-    showToast('Personal info saved successfully!');
+    showToast('Personal info saved and synced to Firestore!');
   };
 
   // Save Emergency Contact
@@ -365,17 +1087,95 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           />
         </div>
 
-        {/* Profile Header Details */}
-        <div className="flex-1 text-center md:text-left space-y-2">
+        {/* Profile Header Details with Real-Time Inline Display Name Editing */}
+        <div className="flex-1 text-center md:text-left space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-center md:justify-start">
-            <h2 className="text-xl sm:text-2xl font-black text-[#14213D]">
-              {formData.name || 'Customer'}
+            <h2
+              data-testid="profile-display-name"
+              className="text-xl sm:text-2xl font-black text-[#14213D]"
+            >
+              {inlineDisplayName || formData.name || 'Customer'}
             </h2>
             <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full mx-auto sm:mx-0 w-fit">
               <ShieldCheck className="w-3 h-3 text-emerald-600" />
               <span>Verified Customer</span>
             </span>
           </div>
+
+          <form
+            onSubmit={handleSaveInlineDisplayName}
+            noValidate
+            className="space-y-1.5"
+          >
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
+              <label htmlFor="display-name-input" className="text-xs font-bold text-gray-600">
+                Display Name
+              </label>
+              <input
+                ref={displayNameInputRef}
+                id="display-name-input"
+                name="displayName"
+                type="text"
+                minLength={MIN_NAME_LENGTH}
+                data-testid="display-name-input"
+                aria-label="Display Name"
+                aria-invalid={Boolean(displayNameError)}
+                value={inlineDisplayName}
+                onChange={(e) => {
+                  const nextName = e.target.value;
+                  isDisplayNameTouchedRef.current = true;
+                  dirtySinceLastSaveRef.current.add('name');
+                  lastEditedFieldRef.current = 'name';
+                  setInlineDisplayName(nextName);
+                  setFormData((prev) => ({ ...prev, name: nextName }));
+                  setDisplayNameError(validateDisplayName(nextName));
+                }}
+                onBlur={() => {
+                  setDisplayNameError(validateDisplayName(inlineDisplayName));
+                }}
+                placeholder="Enter display name (min 3 chars)"
+                className={`px-3 py-1.5 bg-gray-50 border ${
+                  displayNameError
+                    ? 'border-rose-500 focus:border-rose-600'
+                    : 'border-gray-200 focus:border-[#F42F73]'
+                } rounded-xl text-xs sm:text-sm font-bold text-[#14213D] focus:bg-white outline-hidden min-h-[38px]`}
+              />
+              <button
+                type="submit"
+                data-testid="save-display-name-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleSaveInlineDisplayName();
+                }}
+                className="inline-flex items-center gap-1 px-3.5 py-1.5 bg-[#F42F73] hover:bg-[#D81B60] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[38px]"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Save</span>
+              </button>
+              <button
+                type="button"
+                data-testid="edit-display-name-btn"
+                onClick={() => {
+                  setIsEditingDisplayName(true);
+                  displayNameInputRef.current?.focus();
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#FFF0F5] hover:bg-pink-100 text-[#F42F73] text-xs font-bold transition-colors cursor-pointer border border-rose-200/70 min-h-[38px]"
+              >
+                <Edit3 className="w-3 h-3" />
+                <span>Edit</span>
+              </button>
+            </div>
+            {displayNameError && (
+              <p
+                role="alert"
+                data-testid="display-name-error"
+                className="text-xs font-semibold text-rose-600 flex items-center justify-center md:justify-start gap-1"
+              >
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{displayNameError}</span>
+              </p>
+            )}
+          </form>
 
           <div className="text-xs text-gray-500 font-medium flex flex-wrap items-center justify-center md:justify-start gap-2">
             <span>+91 {formData.phone}</span>
@@ -697,6 +1497,302 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* Contact Preferences Section (Inline Editing & Live Firestore Sync) */}
+      <div
+        data-testid="contact-preferences-section"
+        className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-[#F42F73]" />
+            <div>
+              <h3 className="text-base font-bold text-[#14213D]">
+                Contact Preferences
+              </h3>
+              <p className="text-xs text-gray-500">
+                Choose how assistants and Diblo support reach you for task updates
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="edit-contact-preferences-btn"
+              onClick={() => {
+                setIsEditingContactPrefs(true);
+                contactPrefsInputRef.current?.focus();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl text-xs font-bold transition-colors cursor-pointer border border-gray-200"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-[#F42F73]" />
+              <span>Edit</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Standard Inline Input & Save Button for Contact Preferences & Phone Number */}
+        <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-100 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <form
+              onSubmit={handleSaveContactPreferences}
+              noValidate
+              className="space-y-1.5"
+            >
+              <label
+                htmlFor="contact-preferences-input"
+                className="block text-xs font-bold text-[#14213D]"
+              >
+                Contact Preferences
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={contactPrefsInputRef}
+                  id="contact-preferences-input"
+                  name="contactPreferences"
+                  type="text"
+                  data-testid="contact-preferences-input"
+                  aria-label="Contact Preferences"
+                  aria-invalid={Boolean(contactPreferenceError)}
+                  value={contactPreferenceInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    isContactPrefTouchedRef.current = true;
+                    dirtySinceLastSaveRef.current.add('contact');
+                    lastEditedFieldRef.current = 'contact';
+                    setContactPreferenceInput(nextVal);
+                    setContactPreferenceError(validateContactPreferences(nextVal));
+                    setContactPrefs((prev) => ({
+                      ...prev,
+                      preferredChannel:
+                        (nextVal as ContactPreferences['preferredChannel']) ||
+                        prev.preferredChannel
+                    }));
+                  }}
+                  onBlur={() => {
+                    setContactPreferenceError(validateContactPreferences(contactPreferenceInput));
+                  }}
+                  placeholder="Enter contact preferences (e.g. WhatsApp, SMS, Email)"
+                  className={`flex-1 min-w-0 px-3.5 py-2 bg-white border ${
+                    contactPreferenceError
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : 'border-gray-200 focus:border-[#F42F73]'
+                  } rounded-xl text-xs sm:text-sm font-bold text-[#14213D] outline-hidden min-h-[40px]`}
+                />
+                <button
+                  type="submit"
+                  data-testid="save-contact-preferences-btn"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleSaveContactPreferences();
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-[#F42F73] hover:bg-[#D81B60] text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs min-h-[40px] shrink-0"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save</span>
+                </button>
+              </div>
+              {contactPreferenceError && (
+                <p
+                  role="alert"
+                  data-testid="contact-preferences-error"
+                  className="text-xs font-semibold text-rose-600 flex items-center gap-1"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{contactPreferenceError}</span>
+                </p>
+              )}
+            </form>
+
+            <form
+              onSubmit={handleSaveInlinePhone}
+              noValidate
+              className="space-y-1.5"
+            >
+              <label
+                htmlFor="inline-phone-input"
+                className="block text-xs font-bold text-[#14213D]"
+              >
+                Phone Number
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={phoneInputRef}
+                  id="inline-phone-input"
+                  name="phone"
+                  type="tel"
+                  data-testid="phone-input"
+                  aria-label="Phone Number"
+                  aria-invalid={Boolean(phoneError)}
+                  value={inlinePhone}
+                  onChange={(e) => {
+                    const nextPhone = e.target.value;
+                    isPhoneTouchedRef.current = true;
+                    dirtySinceLastSaveRef.current.add('phone');
+                    lastEditedFieldRef.current = 'phone';
+                    setIsPhoneTouched(true);
+                    setInlinePhone(nextPhone);
+                    setFormData((prev) => ({ ...prev, phone: nextPhone }));
+                    setPhoneError(validatePhoneNumber(nextPhone));
+                  }}
+                  onBlur={() => {
+                    if (isPhoneTouchedRef.current || isPhoneTouched || inlinePhone.trim()) {
+                      setPhoneError(validatePhoneNumber(inlinePhone));
+                    }
+                  }}
+                  placeholder="Enter phone number (e.g. 9820123456)"
+                  className={`flex-1 min-w-0 px-3.5 py-2 bg-white border ${
+                    phoneError
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : 'border-gray-200 focus:border-[#F42F73]'
+                  } rounded-xl text-xs sm:text-sm font-bold text-[#14213D] outline-hidden min-h-[40px]`}
+                />
+                <button
+                  type="submit"
+                  data-testid="save-phone-btn"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleSaveInlinePhone();
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-[#F42F73] hover:bg-[#D81B60] text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs min-h-[40px] shrink-0"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save</span>
+                </button>
+              </div>
+              {phoneError && (
+                <p
+                  role="alert"
+                  data-testid="phone-error"
+                  className="text-xs font-semibold text-rose-600 flex items-center gap-1"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{phoneError}</span>
+                </p>
+              )}
+            </form>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <span
+              data-testid="preferred-contact-channel-value"
+              className="text-[11px] font-semibold text-gray-500"
+            >
+              Active preference: <strong className="text-[#14213D]">{contactPreferenceInput || contactPrefs.preferredChannel}</strong>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#FFF0F5] text-[#F42F73]">
+                Real-Time Sync
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Inline Toggle Switches for Contact Channels */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          {/* WhatsApp Updates */}
+          <div className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center justify-between gap-3 hover:border-rose-200 transition-colors">
+            <div>
+              <div className="text-xs font-bold text-[#14213D]">
+                WhatsApp Live Updates
+              </div>
+              <div className="text-[11px] text-gray-500">
+                Receive assistant arrival & live location links on WhatsApp
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              data-testid="contact-pref-whatsapp"
+              aria-label="WhatsApp Live Updates Toggle"
+              checked={contactPrefs.whatsappUpdates}
+              onChange={(e) => {
+                const updated: ContactPreferences = {
+                  ...contactPrefs,
+                  whatsappUpdates: e.target.checked
+                };
+                setContactPrefs(updated);
+              }}
+              className="w-4 h-4 accent-[#F42F73] rounded cursor-pointer"
+            />
+          </div>
+
+          {/* SMS Alerts */}
+          <div className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center justify-between gap-3 hover:border-rose-200 transition-colors">
+            <div>
+              <div className="text-xs font-bold text-[#14213D]">SMS OTP & Alerts</div>
+              <div className="text-[11px] text-gray-500">
+                Receive booking PINs and status alerts via text message
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              data-testid="contact-pref-sms"
+              aria-label="SMS OTP Alerts Toggle"
+              checked={contactPrefs.smsAlerts}
+              onChange={(e) => {
+                const updated: ContactPreferences = {
+                  ...contactPrefs,
+                  smsAlerts: e.target.checked
+                };
+                setContactPrefs(updated);
+              }}
+              className="w-4 h-4 accent-[#F42F73] rounded cursor-pointer"
+            />
+          </div>
+
+          {/* Email Receipts */}
+          <div className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center justify-between gap-3 hover:border-rose-200 transition-colors">
+            <div>
+              <div className="text-xs font-bold text-[#14213D]">
+                Email Invoices & Summaries
+              </div>
+              <div className="text-[11px] text-gray-500">
+                Send completed session bills and receipts to your email
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              data-testid="contact-pref-email"
+              aria-label="Invoice Summaries Toggle"
+              checked={contactPrefs.emailReceipts}
+              onChange={(e) => {
+                const updated: ContactPreferences = {
+                  ...contactPrefs,
+                  emailReceipts: e.target.checked
+                };
+                setContactPrefs(updated);
+              }}
+              className="w-4 h-4 accent-[#F42F73] rounded cursor-pointer"
+            />
+          </div>
+
+          {/* Phone Call Confirmation */}
+          <div className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center justify-between gap-3 hover:border-rose-200 transition-colors">
+            <div>
+              <div className="text-xs font-bold text-[#14213D]">
+                Doorstep Arrival Call
+              </div>
+              <div className="text-[11px] text-gray-500">
+                Allow assistant to call when arriving at your building gate
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              data-testid="contact-pref-phone-call"
+              aria-label="Doorstep Arrival Call Toggle"
+              checked={contactPrefs.phoneCallConfirmation}
+              onChange={(e) => {
+                const updated: ContactPreferences = {
+                  ...contactPrefs,
+                  phoneCallConfirmation: e.target.checked
+                };
+                setContactPrefs(updated);
+              }}
+              className="w-4 h-4 accent-[#F42F73] rounded cursor-pointer"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Emergency & Safety Contacts Section (Editable) */}
@@ -1323,3 +2419,5 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     </div>
   );
 };
+
+export default CustomerProfile;

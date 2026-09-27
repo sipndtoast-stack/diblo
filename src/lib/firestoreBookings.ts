@@ -31,12 +31,14 @@ export function isDemoBookingRecord(b: Partial<Booking> | null | undefined): boo
 export function normalizeBookingStatus(status: BookingStatus | string | undefined): string {
   const s = String(status || 'pending').trim().toLowerCase();
   if (s === 'searching' || s === 'pending') return 'pending';
+  if (s === 'upcoming' || s === 'confirmed') return 'upcoming';
   if (s === 'scheduled') return 'scheduled';
   if (s === 'assigned' || s === 'accepted') return 'accepted';
   if (s === 'on_the_way') return 'on_the_way';
   if (s === 'arrived') return 'arrived';
+  if (s === 'active' || s === 'ongoing' || s === 'started' || s === 'in-progress') return 'active';
   if (s === 'otp_verified' || s === 'in_progress') return 'in_progress';
-  if (s === 'completed') return 'completed';
+  if (s === 'completed' || s === 'done' || s === 'finished') return 'completed';
   if (s === 'rejected') return 'rejected';
   if (s === 'cancelled') return 'cancelled';
   return s;
@@ -44,16 +46,26 @@ export function normalizeBookingStatus(status: BookingStatus | string | undefine
 
 /**
  * Categorize booking for Customer "My Requests":
- * - UPCOMING: pending, accepted, scheduled
- * - ACTIVE: on_the_way (assistant on the way), arrived, in_progress
- * - COMPLETED: completed (plus cancelled/rejected in history if needed)
+ * - UPCOMING: upcoming, pending, accepted, scheduled, confirmed
+ * - ACTIVE: active, on_the_way (assistant on the way), arrived, in_progress
+ * - COMPLETED: completed (plus done/finished)
  */
 export function getCustomerRequestTabCategory(status: BookingStatus | string | undefined): 'UPCOMING' | 'ACTIVE' | 'COMPLETED' | 'OTHER' {
   const norm = normalizeBookingStatus(status);
-  if (norm === 'pending' || norm === 'accepted' || norm === 'scheduled') {
+  if (
+    norm === 'upcoming' ||
+    norm === 'pending' ||
+    norm === 'accepted' ||
+    norm === 'scheduled'
+  ) {
     return 'UPCOMING';
   }
-  if (norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress') {
+  if (
+    norm === 'active' ||
+    norm === 'on_the_way' ||
+    norm === 'arrived' ||
+    norm === 'in_progress'
+  ) {
     return 'ACTIVE';
   }
   if (norm === 'completed') {

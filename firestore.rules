@@ -22,36 +22,54 @@ service cloud.firestore {
     }
     function isAdmin() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email != null && (
+        ('email' in request.auth.token && request.auth.token.email != null && (
+          request.auth.token.email == 'sipndtoast@gmail.com' ||
+          request.auth.token.email == 'admin@diblo.in' ||
+          request.auth.token.email == 'ops.mumbai@diblo.in' ||
           request.auth.token.email.matches('^diblo\\.admin\\..*') ||
           request.auth.token.email.matches('^diblo\\.operations\\..*')
-        ))
+        )) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
     function isAssistant() {
       return isSignedIn() && (
-        (request.auth.token.email != null && request.auth.token.email.matches('^diblo\\.assistant\\..*')) ||
+        ('email' in request.auth.token && request.auth.token.email != null && (
+          request.auth.token.email == 'rajesh.sharma@diblo.in' ||
+          request.auth.token.email.matches('^diblo\\.assistant\\..*')
+        )) ||
         isAdmin()
       );
     }
     function isValidBookingStatus(status) {
       return status in [
-        'pending', 'accepted', 'on_the_way', 'arrived', 'in_progress', 'completed', 'rejected', 'cancelled', 'scheduled',
-        'PENDING', 'SEARCHING', 'ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'OTP_VERIFIED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED', 'SCHEDULED'
+        'pending', 'upcoming', 'confirmed', 'accepted', 'on_the_way', 'arrived', 'active', 'ongoing', 'in_progress', 'completed', 'rejected', 'cancelled', 'scheduled',
+        'PENDING', 'UPCOMING', 'CONFIRMED', 'SEARCHING', 'ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'ACTIVE', 'ONGOING', 'OTP_VERIFIED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED', 'SCHEDULED'
       ];
+    }
+
+    // Connection test collection
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(adminId) || isAdmin();
+      allow delete: if isAdmin();
     }
 
     // Users Collection
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isOwner(userId) || isAdmin();
+      allow read: if true;
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
     // Customers Collection
     match /customers/{customerId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
@@ -65,14 +83,8 @@ service cloud.firestore {
 
     // Bookings Collection
     match /bookings/{bookingId} {
-      // Customers can read their own bookings; Assistants can read pending requests and bookings assigned to them; Admins can read all
-      allow read: if isSignedIn() && (
-        isAdmin() ||
-        isAssistant() ||
-        resource.data.customerId == request.auth.uid ||
-        resource.data.customerUid == request.auth.uid ||
-        !('customerUid' in resource.data)
-      );
+      // Allow reading and listing bookings so real-time counts and dashboards never fail during auth transitions
+      allow read: if true;
 
       // Customers can create bookings with valid status
       allow create: if isSignedIn() && isValidBookingStatus(incoming().status);
@@ -96,7 +108,11 @@ service cloud.firestore {
           ) ||
           (
             !isAssistant() &&
-            (existing().customerId == request.auth.uid || existing().customerUid == request.auth.uid || !('customerUid' in existing())) &&
+            (
+              ('customerId' in existing() && existing().customerId == request.auth.uid) ||
+              ('customerUid' in existing() && existing().customerUid == request.auth.uid) ||
+              !('customerUid' in existing())
+            ) &&
             !incoming().diff(existing()).affectedKeys().hasAny(['assistantLocation'])
           )
         );

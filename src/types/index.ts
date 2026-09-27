@@ -29,10 +29,20 @@ export interface NotificationPreferences {
   soundAndVibration: boolean;
 }
 
+export interface ContactPreferences {
+  preferredChannel: 'WhatsApp' | 'Phone Call' | 'SMS' | 'Email';
+  whatsappUpdates: boolean;
+  smsAlerts: boolean;
+  emailReceipts: boolean;
+  phoneCallConfirmation: boolean;
+  preferredLanguage?: string;
+}
+
 export interface CustomerProfile {
   id: string;
   userId: string;
   name: string;
+  displayName?: string;
   phone: string;
   email: string;
   avatar?: string;
@@ -43,6 +53,7 @@ export interface CustomerProfile {
   bloodGroup?: string;
   bio?: string;
   specialInstructions?: string;
+  contactPreferences?: ContactPreferences;
   savedAddresses: SavedAddress[];
   emergencyContact: {
     name: string;

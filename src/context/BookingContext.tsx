@@ -817,8 +817,57 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 };
 
-export const useBooking = () => {
+export const useBooking = (): BookingContextType => {
   const context = useContext(BookingContext);
-  if (!context) throw new Error('useBooking must be used within a BookingProvider');
+  if (!context) {
+    return {
+      bookings: [],
+      activeBooking: null,
+      notifications: [],
+      pricing: {
+        baseHourlyRate: 149,
+        minBookingHours: 2,
+        gstPercent: 0,
+        platformFee: 0,
+        surgeMultiplier: 1,
+        emergencySurcharge: 0
+      },
+      isLoading: false,
+      liveEtaMinutes: 8,
+      liveDistanceKm: 1.4,
+      liveAssistantCoords: { lat: 19.0596, lng: 72.8295 },
+      pushPermission: 'default',
+      fcmToken: null,
+      notificationPreferences: {
+        pushEnabled: true,
+        bookingUpdates: true,
+        sessionReminders: true,
+        promotionsAndOffers: true,
+        soundAndVibration: true
+      },
+      updateNotificationPreferences: async () => {},
+      requestPushNotificationPermission: async () => 'default',
+      sendTestBookingPush: async () => ({ success: true }),
+      triggerOneHourReminderTest: async () => ({ success: true }),
+      isReminderSentForBooking: () => false,
+      completedFeedbackBooking: null,
+      setCompletedFeedbackBooking: () => {},
+      dismissFeedbackModal: () => {},
+      refreshBookings: async () => {},
+      createBooking: async (data: any) => data as Booking,
+      acceptBooking: async () => {},
+      rejectBooking: async () => {},
+      startAssistance: async () => {},
+      updateAssistantLiveLocation: async () => {},
+      verifyStartOtp: async () => true,
+      extendBooking: async () => {},
+      completeBooking: async () => {},
+      cancelBooking: async () => {},
+      rateBooking: async () => {},
+      setActiveBooking: () => {},
+      markNotificationRead: () => {},
+      addNotification: () => {}
+    };
+  }
   return context;
 };

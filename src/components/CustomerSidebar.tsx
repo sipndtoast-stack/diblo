@@ -1,14 +1,15 @@
 export {
-  CustomerSidebar as CustomerDrawer,
   CustomerSidebar,
+  CustomerSidebar as CustomerDrawer,
   default,
   useBookingCounts,
   useCustomerBookingCounts,
   RequestCountBadge
-} from './CustomerSidebar';
+} from './customer/CustomerSidebar';
 export type {
   CustomerNavId,
   CustomerSidebarProps,
   CustomerBookingCounts,
-  RequestCountBadgeProps
-} from './CustomerSidebar';
+  RequestCountBadgeProps,
+  BookingCounts
+} from './customer/CustomerSidebar';

@@ -24,7 +24,7 @@ import { useBooking } from '../../context/BookingContext';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 import { api } from '../../lib/api';
 import { EmergencyAlert } from '../../types';
-import { CustomerDrawer } from './CustomerDrawer';
+import { CustomerSidebar } from './CustomerSidebar';
 import { CustomerRequestFilter } from './CustomerBookings';
 
 interface CustomerHeaderProps {
@@ -372,7 +372,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
       </header>
 
       {/* Customer Portal Sidebar Drawer (Connected to top-left hamburger button) */}
-      <CustomerDrawer
+      <CustomerSidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         activeTab={activeTab as any}

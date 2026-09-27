@@ -25,7 +25,9 @@ import {
   Radio,
   ExternalLink,
   Navigation,
-  Phone
+  Phone,
+  Menu,
+  X
 } from 'lucide-react';
 import {
   LineChart,
@@ -47,6 +49,12 @@ import { useBooking } from '../../context/BookingContext';
 import { MapView } from '../common/MapView';
 import { AdminBookingsMap } from '../maps/AdminBookingsMap';
 import { GoogleSheetsHub } from './GoogleSheetsHub';
+import { AdminSidebar, AdminTabId, AdminBookingFilter, useAdminBookingCounts } from './AdminSidebar';
+import { LogoutConfirmModal } from '../customer/LogoutConfirmModal';
+import {
+  getCustomerRequestTabCategory,
+  isDemoBookingRecord
+} from '../../lib/firestoreBookings';
 import {
   AssistantProfile,
   CustomerProfile,
@@ -63,7 +71,11 @@ import {
 export const AdminPanel: React.FC = () => {
   const { logoutStaff, staffUser } = useAuth();
   const { bookings, refreshBookings } = useBooking();
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LIVEMAP' | 'BOOKINGS' | 'ASSISTANTS' | 'APPLICATIONS' | 'SOCIETIES' | 'PRICING' | 'SUPPORT' | 'SHEETS'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<AdminTabId>('OVERVIEW');
+  const [bookingFilter, setBookingFilter] = useState<AdminBookingFilter>('ALL');
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
 
   // State entities
   const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
@@ -275,23 +287,80 @@ export const AdminPanel: React.FC = () => {
 
   const chartColors = ['#F42F73', '#14213D', '#10B981', '#F59E0B', '#8B5CF6'];
 
+  const {
+    upcomingCount: upcomingBookingsCount,
+    activeCount: activeBookingsCount,
+    completedCount: completedBookingsCount,
+    bookings: liveAdminBookings
+  } = useAdminBookingCounts();
+
+  const realBookings =
+    liveAdminBookings.length > 0
+      ? liveAdminBookings
+      : bookings.filter((b) => !isDemoBookingRecord(b));
+
+  const filteredBookings =
+    bookingFilter === 'ALL'
+      ? bookings
+      : realBookings.filter(
+          (b) => getCustomerRequestTabCategory(b.status) === bookingFilter
+        );
+
+  const handleConfirmAdminLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logoutStaff();
+      setShowLogoutConfirm(false);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#fcfcfc] text-[#14213D] pb-24 md:pb-16">
       {/* Top Admin Bar */}
       <header className="sticky top-0 z-30 bg-[#14213D] text-white border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="text-xl font-black text-[#F42F73] lowercase tracking-tight">diblo</div>
-            <span className="text-gray-400">/</span>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white">Central Mumbai Operations Admin</span>
-              <span className="bg-white/10 text-emerald-400 text-[10px] font-mono px-2 py-0.5 rounded border border-white/10">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Top-Left 3-Line Hamburger Button */}
+            <button
+              id="admin-header-menu-btn"
+              type="button"
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              aria-expanded={isSidebarOpen}
+              aria-controls="admin-sidebar-container"
+              className="p-2 sm:p-2.5 rounded-2xl bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-all min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] flex items-center justify-center shadow-2xs relative cursor-pointer shrink-0 border border-white/10"
+              aria-label={isSidebarOpen ? 'Close Admin Navigation Sidebar' : 'Open Admin Navigation Sidebar'}
+              title={isSidebarOpen ? 'Close Admin Sidebar Menu' : 'Open Admin Sidebar Menu'}
+            >
+              {isSidebarOpen ? (
+                <X className="w-5 h-5 text-white" />
+              ) : (
+                <Menu className="w-5 h-5 text-white" />
+              )}
+              {emergencyAlerts.some((a) => a.status === 'ACTIVE') && !isSidebarOpen && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#14213D] animate-pulse" />
+              )}
+            </button>
+
+            <div
+              onClick={() => setActiveTab('OVERVIEW')}
+              className="text-xl font-black text-[#F42F73] lowercase tracking-tight cursor-pointer select-none"
+            >
+              diblo
+            </div>
+            <span className="text-gray-400 hidden xs:inline">/</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xs sm:text-sm font-bold text-white truncate">
+                Central Mumbai Operations Admin
+              </span>
+              <span className="hidden sm:inline-block bg-white/10 text-emerald-400 text-[10px] font-mono px-2 py-0.5 rounded border border-white/10 shrink-0">
                 LIVE PRODUCTION
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 text-xs text-gray-300">
+          <div className="flex items-center gap-3 text-xs text-gray-300 shrink-0">
             <div className="hidden sm:flex items-center gap-1.5 bg-black/30 px-3 py-1.5 rounded-full border border-white/10">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span>{assistants.filter((a) => a.isOnline).length} Assistants Online</span>
@@ -305,9 +374,9 @@ export const AdminPanel: React.FC = () => {
             )}
 
             <button
-              onClick={() => logoutStaff()}
-              className="flex items-center gap-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs"
-              title="Log out of Assistance"
+              onClick={() => setShowLogoutConfirm(true)}
+              className="flex items-center gap-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer"
+              title="Log out of Admin Panel"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Logout</span>
@@ -357,6 +426,41 @@ export const AdminPanel: React.FC = () => {
           })}
         </div>
       </header>
+
+      {/* Admin Portal Sidebar Drawer (Connected to top-left hamburger button) */}
+      <AdminSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        activeTab={activeTab}
+        bookingFilter={bookingFilter}
+        onSelectTab={(tab) => {
+          setActiveTab(tab);
+          setIsSidebarOpen(false);
+        }}
+        onSelectBookingFilter={(filter) => {
+          setBookingFilter(filter);
+          setActiveTab('BOOKINGS');
+          setIsSidebarOpen(false);
+        }}
+        onOpenLogout={() => setShowLogoutConfirm(true)}
+        onRefreshData={() => {
+          loadAdminData();
+          refreshBookings();
+        }}
+        assistants={assistants}
+        applications={applications}
+        societies={societies}
+        tickets={tickets}
+        emergencyAlerts={emergencyAlerts}
+      />
+
+      {/* Logout Confirmation Dialog */}
+      <LogoutConfirmModal
+        isOpen={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleConfirmAdminLogout}
+        isLoading={isLoggingOut}
+      />
 
       {/* Admin Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
@@ -621,6 +725,29 @@ export const AdminPanel: React.FC = () => {
                 <h3 className="text-base font-bold">Master Bookings Registry</h3>
                 <p className="text-xs text-gray-500">Real-time dispatch, status overrides, and verification logs</p>
               </div>
+
+              {/* Filter Pills: All / Upcoming / Active / Completed */}
+              <div className="flex flex-wrap items-center gap-1.5 bg-gray-100 p-1 rounded-2xl">
+                {([
+                  { id: 'ALL', label: `All (${bookings.length})` },
+                  { id: 'UPCOMING', label: `Upcoming (${upcomingBookingsCount})` },
+                  { id: 'ACTIVE', label: `Active (${activeBookingsCount})` },
+                  { id: 'COMPLETED', label: `Completed (${completedBookingsCount})` }
+                ] as { id: AdminBookingFilter; label: string }[]).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setBookingFilter(item.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      bookingFilter === item.id
+                        ? 'bg-[#F42F73] text-white shadow-xs'
+                        : 'text-gray-600 hover:text-[#14213D]'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -638,7 +765,7 @@ export const AdminPanel: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {bookings.map((b) => (
+                  {filteredBookings.map((b) => (
                     <tr key={b.id} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3.5 px-3 font-mono font-bold text-[#14213D]">{b.bookingNumber}</td>
                       <td className="py-3.5 px-3 font-bold text-[#14213D]">{b.serviceName}</td>

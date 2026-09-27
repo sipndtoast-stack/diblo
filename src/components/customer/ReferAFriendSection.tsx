@@ -37,7 +37,7 @@ export const ReferAFriendSection: React.FC<ReferAFriendSectionProps> = ({
   // State
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [earnedCoupons, setEarnedCoupons] = useState<Coupon[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
 
   // Copy States & Visual Feedback

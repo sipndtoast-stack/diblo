@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Home,
   Calendar,
@@ -8,22 +9,25 @@ import {
   CreditCard,
   HelpCircle,
   LogOut,
+  X,
+  MapPin,
+  Sparkles,
+  Phone,
+  AlertTriangle,
   ChevronRight,
   ChevronDown,
-  Sparkles,
   Clock,
   CheckCircle2,
-  Activity
+  Activity,
+  Heart
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
-import { Booking } from '../../types';
 import { CustomerRequestFilter } from './CustomerBookings';
-import {
-  getCustomerRequestTabCategory,
-  isDemoBookingRecord,
-  subscribeToRealtimeBookings
-} from '../../lib/firestoreBookings';
+import { useBookingCounts, BookingCounts } from '../../hooks/useBookingCounts';
+
+export { useBookingCounts };
+export type { BookingCounts };
 
 export type CustomerNavId =
   | 'HOME'
@@ -32,37 +36,171 @@ export type CustomerNavId =
   | 'PROFILE'
   | 'NOTIFICATIONS'
   | 'PAYMENTS'
-  | 'SUPPORT';
+  | 'SUPPORT'
+  | 'FAVORITES';
 
-interface CustomerSidebarProps {
-  activeTab: string;
+export interface CustomerBookingCounts extends BookingCounts {
+  upcomingCount: number;
+  activeCount: number;
+  completedCount: number;
+  totalRequestsCount: number;
+}
+
+/**
+ * Alias wrapper around `useBookingCounts` for backwards compatibility.
+ */
+export function useCustomerBookingCounts(): CustomerBookingCounts {
+  const { upcoming, active, completed } = useBookingCounts();
+  return {
+    upcoming,
+    active,
+    completed,
+    upcomingCount: upcoming,
+    activeCount: active,
+    completedCount: completed,
+    totalRequestsCount: upcoming + active + completed
+  };
+}
+
+export interface RequestCountBadgeProps {
+  count: number;
+  variant?: 'total' | 'upcoming' | 'active' | 'completed';
+  isSelected?: boolean;
+  testId?: string;
+}
+
+/**
+ * Stylized, compact Badge UI component matching the Diblo brand design
+ * (bg-[#FFF0F5] and text-[#F42F73]) for displaying live booking counts.
+ */
+export const RequestCountBadge: React.FC<RequestCountBadgeProps> = ({
+  count,
+  variant = 'total',
+  isSelected = false,
+  testId
+}) => {
+  return (
+    <span
+      data-testid={testId}
+      className={`inline-flex items-center justify-center gap-1 min-w-[22px] h-5 px-2 rounded-full text-[10px] font-extrabold tabular-nums transition-all bg-[#FFF0F5] text-[#F42F73] ${
+        isSelected
+          ? 'border border-rose-200 shadow-2xs ring-1 ring-[#F42F73]/20'
+          : 'border border-rose-200/70'
+      }`}
+    >
+      {variant === 'active' && count > 0 && (
+        <span className="w-1.5 h-1.5 rounded-full bg-[#F42F73] animate-pulse" />
+      )}
+      <span>{count}</span>
+    </span>
+  );
+};
+
+export interface CustomerSidebarProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+  activeTab?: string;
   requestsFilter?: CustomerRequestFilter;
-  onSelectTab: (tab: CustomerNavId) => void;
+  onSelectTab?: (tab: CustomerNavId) => void;
   onSelectRequestFilter?: (filter: CustomerRequestFilter) => void;
-  onOpenLogout: () => void;
   onOpenBooking?: () => void;
+  onTriggerSos?: () => void;
+  onOpenLogout?: () => void;
+  selectedArea?: string;
+  onSelectArea?: (area: string) => void;
+  mumbaiAreas?: string[];
 }
 
 export const CustomerSidebar: React.FC<CustomerSidebarProps> = ({
-  activeTab,
+  isOpen = true,
+  onClose = () => {},
+  activeTab = 'HOME',
   requestsFilter = 'UPCOMING',
-  onSelectTab,
+  onSelectTab = (_tab: CustomerNavId) => {},
   onSelectRequestFilter,
-  onOpenLogout,
-  onOpenBooking
+  onOpenBooking,
+  onTriggerSos,
+  onOpenLogout = () => {},
+  selectedArea = 'Bandra West, Mumbai',
+  onSelectArea,
+  mumbaiAreas = []
 }) => {
-  const { currentUser, customerProfile, firebaseCustomer } = useAuth();
-  const { bookings: contextBookings, activeBooking, notifications } = useBooking();
-  const [realtimeFirebaseBookings, setRealtimeFirebaseBookings] = useState<Booking[]>([]);
+  let authContext: ReturnType<typeof useAuth> | null = null;
+  try {
+    authContext = useAuth();
+  } catch {
+    authContext = null;
+  }
+
+  let bookingContext: ReturnType<typeof useBooking> | null = null;
+  try {
+    bookingContext = useBooking();
+  } catch {
+    bookingContext = null;
+  }
+
+  const currentUser = authContext?.currentUser ?? null;
+  const customerProfile = authContext?.customerProfile ?? null;
+  const firebaseCustomer = authContext?.firebaseCustomer ?? null;
+  const favoriteAssistantIds = authContext?.favoriteAssistantIds ?? [];
+  const activeBooking = bookingContext?.activeBooking ?? null;
+  const notifications = bookingContext?.notifications ?? [];
+
+  // Real-time Firestore booking counts for Upcoming, Active, and Completed from useBookingCounts hook
+  const { upcoming, active, completed } = useBookingCounts();
+  const totalRequestsCount = upcoming + active + completed;
 
   const isRequestsActive = activeTab === 'REQUESTS' || activeTab === 'BOOKINGS';
   const [isRequestsExpanded, setIsRequestsExpanded] = useState<boolean>(true);
+  const [hoveredNavItem, setHoveredNavItem] = useState<string | null>(null);
+
+  const navHoverScaleClasses =
+    'transform transition-all transition-transform duration-200 ease-in-out hover:scale-105 hover:scale-[1.02] active:scale-95';
+
+  const getHoverStateClasses = (itemKey: string) =>
+    hoveredNavItem === itemKey ? 'scale-[1.02] scale-105' : '';
+
+  const getHoverStyle = (itemKey: string): React.CSSProperties | undefined =>
+    hoveredNavItem === itemKey
+      ? { transform: 'scale(1.02)', transition: 'transform 200ms ease-in-out' }
+      : undefined;
+
+  const getHoverHandlers = (itemKey: string) => ({
+    onMouseEnter: () => setHoveredNavItem(itemKey),
+    onMouseLeave: () => setHoveredNavItem((prev) => (prev === itemKey ? null : prev))
+  });
 
   useEffect(() => {
     if (isRequestsActive) {
       setIsRequestsExpanded(true);
     }
   }, [isRequestsActive]);
+
+  // Close sidebar on ESC key press (Desktop & Keyboard accessibility)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  // Prevent accidental background scroll/interaction when sidebar drawer is open
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (isOpen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [isOpen]);
 
   const rawName =
     customerProfile?.name ||
@@ -95,98 +233,9 @@ export const CustomerSidebar: React.FC<CustomerSidebarProps> = ({
           .toUpperCase()
       : 'CU';
 
-  // Subscribe directly to the current user's Firebase bookings for real-time request counts
-  useEffect(() => {
-    const cleanPhone = displayPhone.replace(/\D/g, '').slice(-10);
-    const resolvedCustomerId =
-      customerProfile?.id ||
-      firebaseCustomer?.uid ||
-      currentUser?.id ||
-      (cleanPhone ? `cust-${cleanPhone}` : undefined);
-
-    if (!resolvedCustomerId && !cleanPhone) {
-      setRealtimeFirebaseBookings([]);
-      return;
-    }
-
-    const unsubscribe = subscribeToRealtimeBookings(
-      {
-        role: 'CUSTOMER',
-        customerId: resolvedCustomerId,
-        customerPhone: cleanPhone || undefined,
-        customerName: displayName
-      },
-      (liveBookings) => {
-        setRealtimeFirebaseBookings(liveBookings);
-      }
-    );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    customerProfile?.id,
-    firebaseCustomer?.uid,
-    currentUser?.id,
-    displayPhone,
-    displayName
-  ]);
-
-  // Merge real-time Firebase bookings with context bookings for accurate, instant counts
-  const { upcomingCount, activeCount, completedCount, totalRequestsCount } = useMemo(() => {
-    const mergedMap = new Map<string, Booking>();
-    const cleanMyPhone = displayPhone.replace(/\D/g, '').slice(-10);
-    const myCustomerId = customerProfile?.id || '';
-    const myUid = firebaseCustomer?.uid || currentUser?.id || '';
-
-    const belongsToCurrentCustomer = (b: Booking): boolean => {
-      if (isDemoBookingRecord(b)) return false;
-      const recPhone = (b.customerPhone || '').replace(/\D/g, '').slice(-10);
-      if (myUid && (b.customerUid === myUid || b.customerId === myUid)) return true;
-      if (myCustomerId && b.customerId === myCustomerId) return true;
-      if (cleanMyPhone && recPhone && cleanMyPhone === recPhone) return true;
-      return false;
-    };
-
-    contextBookings.forEach((b) => {
-      if (b?.id && belongsToCurrentCustomer(b)) {
-        mergedMap.set(b.id, b);
-      }
-    });
-
-    realtimeFirebaseBookings.forEach((b) => {
-      if (b?.id && belongsToCurrentCustomer(b)) {
-        mergedMap.set(b.id, b);
-      }
-    });
-
-    let upcoming = 0;
-    let active = 0;
-    let completed = 0;
-
-    mergedMap.forEach((booking) => {
-      const category = getCustomerRequestTabCategory(booking.status);
-      if (category === 'UPCOMING') upcoming += 1;
-      else if (category === 'ACTIVE') active += 1;
-      else if (category === 'COMPLETED') completed += 1;
-    });
-
-    return {
-      upcomingCount: upcoming,
-      activeCount: active,
-      completedCount: completed,
-      totalRequestsCount: upcoming + active + completed
-    };
-  }, [
-    contextBookings,
-    realtimeFirebaseBookings,
-    displayPhone,
-    customerProfile?.id,
-    firebaseCustomer?.uid,
-    currentUser?.id
-  ]);
-
-  const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
+  const unreadNotificationsCount = notifications.filter(
+    (n: any) => !(n.read ?? n.isRead)
+  ).length;
 
   const normalizeActiveTab = (tab: string): CustomerNavId => {
     if (tab === 'BOOKINGS' || tab === 'REQUESTS') return 'REQUESTS';
@@ -195,6 +244,7 @@ export const CustomerSidebar: React.FC<CustomerSidebarProps> = ({
     if (tab === 'PAYMENTS') return 'PAYMENTS';
     if (tab === 'SUPPORT') return 'SUPPORT';
     if (tab === 'PROFILE') return 'PROFILE';
+    if (tab === 'FAVORITES') return 'FAVORITES';
     return 'HOME';
   };
 
@@ -206,388 +256,642 @@ export const CustomerSidebar: React.FC<CustomerSidebarProps> = ({
     } else {
       onSelectTab('REQUESTS');
     }
+    onClose();
   };
 
-  return (
-    <aside
-      id="customer-desktop-sidebar"
-      className="hidden lg:flex flex-col w-64 xl:w-72 bg-white border-r border-gray-100 min-h-screen sticky top-0 h-screen z-30 shrink-0 select-none"
+  const sidebarContent = (
+    <div
+      id="customer-drawer-overlay"
+      className={`fixed inset-0 z-50 flex transition-all duration-300 ${
+        isOpen ? 'visible pointer-events-auto' : 'invisible pointer-events-none'
+      }`}
+      aria-hidden={!isOpen}
     >
-      {/* Top Header: Diblo Brand Logo */}
-      <div className="h-16 px-6 border-b border-gray-100 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => onSelectTab('HOME')}
-          className="flex items-baseline gap-1.5 cursor-pointer text-left group"
-        >
-          <span className="text-2xl font-black text-[#F42F73] tracking-tighter lowercase group-hover:opacity-90 transition-opacity">
-            diblo
-          </span>
-          <span className="text-[10px] font-extrabold uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] border border-rose-200 px-1.5 py-0.5 rounded">
-            Customer
-          </span>
-        </button>
+      {/* Subtle Dark Backdrop / Overlay: Clicking outside closes sidebar */}
+      <div
+        id="customer-drawer-backdrop"
+        className={`fixed inset-0 bg-black/55 backdrop-blur-[1px] transition-opacity duration-300 ease-in-out ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
 
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Mumbai</span>
-        </span>
-      </div>
+      {/* Slide-in Sidebar Container */}
+      <aside
+        id="customer-drawer-container"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Customer Portal Navigation"
+        className={`relative w-[82vw] max-w-[320px] sm:w-80 sm:max-w-sm bg-white h-full shadow-2xl flex flex-col z-10 overflow-hidden transform transition-transform duration-300 ease-in-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Brand & Close Header */}
+        <div className="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-[#FFF0F5]/70 via-white to-white">
+          <div
+            onClick={() => {
+              onSelectTab('HOME');
+              onClose();
+            }}
+            className="flex items-baseline gap-1.5 select-none cursor-pointer"
+          >
+            <span className="text-2xl font-black text-[#F42F73] tracking-tighter lowercase">
+              diblo
+            </span>
+            <span className="text-[10px] font-extrabold uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] border border-rose-200 px-2 py-0.5 rounded-md">
+              Mumbai
+            </span>
+          </div>
 
-      {/* Main Navigation Menu */}
-      <div className="flex-1 overflow-y-auto px-3.5 py-5 space-y-1">
-        <div className="px-3 pb-2 text-[10px] font-extrabold text-gray-400 uppercase tracking-wider">
-          Navigation
+          <button
+            id="customer-drawer-close-btn"
+            type="button"
+            onClick={onClose}
+            className={`p-2 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 cursor-pointer ${navHoverScaleClasses}`}
+            aria-label="Close Sidebar"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Home */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('HOME')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'HOME'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
+        {/* Customer Profile Summary Card */}
+        <div className="p-4 border-b border-gray-100 bg-gray-50/60">
+          <div
+            onClick={() => {
+              onSelectTab('PROFILE');
+              onClose();
+            }}
+            {...getHoverHandlers('PROFILE_CARD')}
+            style={getHoverStyle('PROFILE_CARD')}
+            className={`flex items-center gap-3 p-2.5 rounded-2xl bg-white border border-gray-100 shadow-2xs hover:border-rose-200 cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('PROFILE_CARD')}`}
+          >
+            <div className="w-11 h-11 rounded-full bg-[#14213D] text-white font-black text-sm flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-[#F42F73]/20">
+              {displayAvatar ? (
+                <img
+                  src={displayAvatar}
+                  alt={displayName}
+                  className="w-full h-full object-cover"
+                />
+              ) : displayName && displayName !== 'Customer' ? (
+                <span>{initials}</span>
+              ) : (
+                <User className="w-5 h-5 text-white" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-black text-[#14213D] truncate group-hover:text-[#F42F73] transition-colors">
+                {displayName || 'Customer'}
+              </div>
+              <div className="text-xs text-gray-500 font-medium truncate">
+                {displayPhone
+                  ? displayPhone.startsWith('+91')
+                    ? displayPhone
+                    : `+91 ${displayPhone}`
+                  : 'Verified Customer'}
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-[#F42F73] transition-colors shrink-0" />
+          </div>
+        </div>
+
+        {/* Scrollable Navigation Content */}
+        <div className="flex-1 overflow-y-auto p-3.5 space-y-5">
+          {/* Primary Navigation Items */}
+          <nav aria-label="Sidebar Navigation" className="space-y-1">
+            <div className="px-3 pb-1.5 text-[10px] font-extrabold text-gray-400 uppercase tracking-wider">
+              Navigation
+            </div>
+
+            {/* 1. HOME */}
+            <button
+              id="customer-drawer-nav-home"
+              type="button"
+              onClick={() => {
+                onSelectTab('HOME');
+                onClose();
+              }}
+              {...getHoverHandlers('HOME')}
+              style={getHoverStyle('HOME')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('HOME')} ${
                 currentNav === 'HOME'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
               }`}
             >
-              <Home className="w-4 h-4" />
-            </span>
-            <span className="truncate">Home</span>
-          </div>
-        </button>
-
-        {/* My Requests */}
-        <div className="space-y-1">
-          <div
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-              isRequestsActive
-                ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => setIsRequestsExpanded((prev) => !prev)}
-              className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
-            >
-              <span
-                className={`p-2 rounded-xl transition-colors ${
-                  isRequestsActive
-                    ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                    : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                <Calendar className="w-4 h-4" />
-              </span>
-              <span className="truncate">My Requests</span>
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('HOME')}`}>
+                <span
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'HOME'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  <Home className="w-4 h-4" />
+                </span>
+                <span
+                  {...getHoverHandlers('HOME')}
+                  style={getHoverStyle('HOME')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('HOME')}`}
+                >
+                  Home
+                </span>
+              </div>
             </button>
 
-            <div className="flex items-center gap-1.5">
-              <span
-                data-testid="sidebar-total-requests-count"
-                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+            {/* 2. MY REQUESTS (Expandable: Upcoming, Active, Completed with live Firestore badge counts) */}
+            <div className="space-y-1">
+              <div
+                {...getHoverHandlers('REQUESTS')}
+                style={getHoverStyle('REQUESTS')}
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('REQUESTS')} ${
                   isRequestsActive
-                    ? 'bg-[#F42F73] text-white'
-                    : 'bg-gray-100 text-gray-600'
+                    ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                    : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
                 }`}
               >
-                {totalRequestsCount}
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsRequestsExpanded((prev) => !prev)}
-                className="p-1 rounded-lg hover:bg-rose-100/60 text-gray-500 cursor-pointer"
-                aria-label={isRequestsExpanded ? 'Collapse My Requests' : 'Expand My Requests'}
-              >
-                {isRequestsExpanded ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-              </button>
+                <button
+                  id="customer-drawer-nav-requests"
+                  type="button"
+                  onClick={() => {
+                    setIsRequestsExpanded((prev) => !prev);
+                  }}
+                  {...getHoverHandlers('REQUESTS')}
+                  style={getHoverStyle('REQUESTS')}
+                  className={`flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer ${navHoverScaleClasses} ${getHoverStateClasses('REQUESTS')}`}
+                >
+                  <span
+                    className={`p-2 rounded-xl transition-colors ${
+                      isRequestsActive
+                        ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4" />
+                  </span>
+                  <span
+                    {...getHoverHandlers('REQUESTS')}
+                    style={getHoverStyle('REQUESTS')}
+                    className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('REQUESTS')}`}
+                  >
+                    My Requests
+                  </span>
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <span
+                    data-testid="sidebar-total-requests-count"
+                    className="inline-flex items-center justify-center min-w-[22px] h-5 px-2 rounded-full text-[10px] font-extrabold tabular-nums bg-[#FFF0F5] text-[#F42F73] border border-rose-200/70"
+                  >
+                    {totalRequestsCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsRequestsExpanded((prev) => !prev)}
+                    {...getHoverHandlers('REQUESTS_TOGGLE')}
+                    style={getHoverStyle('REQUESTS_TOGGLE')}
+                    className={`p-1 rounded-lg hover:bg-rose-100/60 text-gray-500 cursor-pointer ${navHoverScaleClasses} ${getHoverStateClasses('REQUESTS_TOGGLE')}`}
+                    aria-label={isRequestsExpanded ? 'Collapse My Requests' : 'Expand My Requests'}
+                  >
+                    {isRequestsExpanded ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-items: Upcoming, Active, Completed */}
+              {isRequestsExpanded && (
+                <div className="pl-5 pr-1 py-1 space-y-1 border-l-2 border-rose-100 ml-5">
+                  {/* Upcoming */}
+                  <button
+                    id="customer-drawer-requests-upcoming"
+                    type="button"
+                    onClick={() => handleSelectSubFilter('UPCOMING')}
+                    {...getHoverHandlers('UPCOMING')}
+                    style={getHoverStyle('UPCOMING')}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('UPCOMING')} ${
+                      isRequestsActive && requestsFilter === 'UPCOMING'
+                        ? 'bg-[#F42F73] text-white shadow-xs'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
+                    }`}
+                  >
+                    <div className={`flex items-center gap-2 ${navHoverScaleClasses} ${getHoverStateClasses('UPCOMING')}`}>
+                      <Clock className="w-3.5 h-3.5" />
+                      <span
+                        {...getHoverHandlers('UPCOMING')}
+                        style={getHoverStyle('UPCOMING')}
+                        className={`${navHoverScaleClasses} ${getHoverStateClasses('UPCOMING')}`}
+                      >
+                        Upcoming
+                      </span>
+                    </div>
+                    <span
+                      data-testid="sidebar-upcoming-count"
+                      className="inline-flex items-center justify-center min-w-[22px] h-5 px-2 rounded-full text-[10px] font-extrabold tabular-nums bg-[#FFF0F5] text-[#F42F73] border border-rose-200/70"
+                    >
+                      {upcoming}
+                    </span>
+                  </button>
+
+                  {/* Active */}
+                  <button
+                    id="customer-drawer-requests-active"
+                    type="button"
+                    onClick={() => handleSelectSubFilter('ACTIVE')}
+                    {...getHoverHandlers('ACTIVE')}
+                    style={getHoverStyle('ACTIVE')}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('ACTIVE')} ${
+                      isRequestsActive && requestsFilter === 'ACTIVE'
+                        ? 'bg-[#F42F73] text-white shadow-xs'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
+                    }`}
+                  >
+                    <div className={`flex items-center gap-2 ${navHoverScaleClasses} ${getHoverStateClasses('ACTIVE')}`}>
+                      <Activity className="w-3.5 h-3.5" />
+                      <span
+                        {...getHoverHandlers('ACTIVE')}
+                        style={getHoverStyle('ACTIVE')}
+                        className={`${navHoverScaleClasses} ${getHoverStateClasses('ACTIVE')}`}
+                      >
+                        Active
+                      </span>
+                    </div>
+                    <span
+                      data-testid="sidebar-active-count"
+                      className="inline-flex items-center justify-center gap-1 min-w-[22px] h-5 px-2 rounded-full text-[10px] font-extrabold tabular-nums bg-[#FFF0F5] text-[#F42F73] border border-rose-200/70"
+                    >
+                      {active > 0 && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#F42F73] animate-pulse" />
+                      )}
+                      {active}
+                    </span>
+                  </button>
+
+                  {/* Completed */}
+                  <button
+                    id="customer-drawer-requests-completed"
+                    type="button"
+                    onClick={() => handleSelectSubFilter('COMPLETED')}
+                    {...getHoverHandlers('COMPLETED')}
+                    style={getHoverStyle('COMPLETED')}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('COMPLETED')} ${
+                      isRequestsActive && requestsFilter === 'COMPLETED'
+                        ? 'bg-[#F42F73] text-white shadow-xs'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
+                    }`}
+                  >
+                    <div className={`flex items-center gap-2 ${navHoverScaleClasses} ${getHoverStateClasses('COMPLETED')}`}>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span
+                        {...getHoverHandlers('COMPLETED')}
+                        style={getHoverStyle('COMPLETED')}
+                        className={`${navHoverScaleClasses} ${getHoverStateClasses('COMPLETED')}`}
+                      >
+                        Completed
+                      </span>
+                    </div>
+                    <span
+                      data-testid="sidebar-completed-count"
+                      className="inline-flex items-center justify-center min-w-[22px] h-5 px-2 rounded-full text-[10px] font-extrabold tabular-nums bg-[#FFF0F5] text-[#F42F73] border border-rose-200/70"
+                    >
+                      {completed}
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
 
-          {isRequestsExpanded && (
-            <div className="pl-5 pr-1 py-1 space-y-1 border-l-2 border-rose-100 ml-5">
-              <button
-                id="customer-sidebar-requests-upcoming"
-                type="button"
-                onClick={() => handleSelectSubFilter('UPCOMING')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  isRequestsActive && requestsFilter === 'UPCOMING'
-                    ? 'bg-[#F42F73] text-white shadow-xs'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Upcoming</span>
-                </div>
+            {/* 3. PROFILE */}
+            <button
+              id="customer-drawer-nav-profile"
+              type="button"
+              onClick={() => {
+                onSelectTab('PROFILE');
+                onClose();
+              }}
+              {...getHoverHandlers('PROFILE')}
+              style={getHoverStyle('PROFILE')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('PROFILE')} ${
+                currentNav === 'PROFILE'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('PROFILE')}`}>
                 <span
-                  data-testid="sidebar-upcoming-count"
-                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                    isRequestsActive && requestsFilter === 'UPCOMING'
-                      ? 'bg-white/20 text-white'
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'PROFILE'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
                       : 'bg-gray-100 text-gray-600'
                   }`}
                 >
-                  {upcomingCount}
+                  <User className="w-4 h-4" />
                 </span>
-              </button>
-
-              <button
-                id="customer-sidebar-requests-active"
-                type="button"
-                onClick={() => handleSelectSubFilter('ACTIVE')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  isRequestsActive && requestsFilter === 'ACTIVE'
-                    ? 'bg-[#F42F73] text-white shadow-xs'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Activity className="w-3.5 h-3.5" />
-                  <span>Active</span>
-                </div>
                 <span
-                  data-testid="sidebar-active-count"
-                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                    isRequestsActive && requestsFilter === 'ACTIVE'
-                      ? 'bg-white/20 text-white'
-                      : activeCount > 0
-                      ? 'bg-emerald-100 text-emerald-700'
+                  {...getHoverHandlers('PROFILE')}
+                  style={getHoverStyle('PROFILE')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('PROFILE')}`}
+                >
+                  Profile
+                </span>
+              </div>
+            </button>
+
+            {/* 4. TRACK ASSISTANT */}
+            <button
+              id="customer-drawer-nav-track"
+              type="button"
+              onClick={() => {
+                onSelectTab('TRACK');
+                onClose();
+              }}
+              {...getHoverHandlers('TRACK')}
+              style={getHoverStyle('TRACK')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('TRACK')} ${
+                currentNav === 'TRACK'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('TRACK')}`}>
+                <span
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'TRACK'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
                       : 'bg-gray-100 text-gray-600'
                   }`}
                 >
-                  {activeCount}
+                  <Navigation className="w-4 h-4" />
                 </span>
-              </button>
-
-              <button
-                id="customer-sidebar-requests-completed"
-                type="button"
-                onClick={() => handleSelectSubFilter('COMPLETED')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  isRequestsActive && requestsFilter === 'COMPLETED'
-                    ? 'bg-[#F42F73] text-white shadow-xs'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-[#14213D]'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Completed</span>
-                </div>
                 <span
-                  data-testid="sidebar-completed-count"
-                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                    isRequestsActive && requestsFilter === 'COMPLETED'
-                      ? 'bg-white/20 text-white'
+                  {...getHoverHandlers('TRACK')}
+                  style={getHoverStyle('TRACK')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('TRACK')}`}
+                >
+                  Track Assistant
+                </span>
+              </div>
+              {activeBooking && (
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 animate-pulse">
+                  LIVE
+                </span>
+              )}
+            </button>
+
+            {/* 5. NOTIFICATIONS */}
+            <button
+              id="customer-drawer-nav-notifications"
+              type="button"
+              onClick={() => {
+                onSelectTab('NOTIFICATIONS');
+                onClose();
+              }}
+              {...getHoverHandlers('NOTIFICATIONS')}
+              style={getHoverStyle('NOTIFICATIONS')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('NOTIFICATIONS')} ${
+                currentNav === 'NOTIFICATIONS'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('NOTIFICATIONS')}`}>
+                <span
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'NOTIFICATIONS'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
                       : 'bg-gray-100 text-gray-600'
                   }`}
                 >
-                  {completedCount}
+                  <Bell className="w-4 h-4" />
+                </span>
+                <span
+                  {...getHoverHandlers('NOTIFICATIONS')}
+                  style={getHoverStyle('NOTIFICATIONS')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('NOTIFICATIONS')}`}
+                >
+                  Notifications
+                </span>
+              </div>
+              {unreadNotificationsCount > 0 && (
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#F42F73] text-white">
+                  {unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
+            {/* 6. PAYMENTS */}
+            <button
+              id="customer-drawer-nav-payments"
+              type="button"
+              onClick={() => {
+                onSelectTab('PAYMENTS');
+                onClose();
+              }}
+              {...getHoverHandlers('PAYMENTS')}
+              style={getHoverStyle('PAYMENTS')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('PAYMENTS')} ${
+                currentNav === 'PAYMENTS'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('PAYMENTS')}`}>
+                <span
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'PAYMENTS'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                </span>
+                <span
+                  {...getHoverHandlers('PAYMENTS')}
+                  style={getHoverStyle('PAYMENTS')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('PAYMENTS')}`}
+                >
+                  Payments
+                </span>
+              </div>
+            </button>
+
+            {/* 7. SAVED ASSISTANTS (If any favorited) */}
+            {favoriteAssistantIds.length > 0 && (
+              <button
+                id="customer-drawer-nav-favorites"
+                type="button"
+                onClick={() => {
+                  onSelectTab('FAVORITES');
+                  onClose();
+                }}
+                {...getHoverHandlers('FAVORITES')}
+                style={getHoverStyle('FAVORITES')}
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('FAVORITES')} ${
+                  currentNav === 'FAVORITES'
+                    ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                    : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+                }`}
+              >
+                <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('FAVORITES')}`}>
+                  <span
+                    className={`p-2 rounded-xl transition-colors ${
+                      currentNav === 'FAVORITES'
+                        ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    <Heart className="w-4 h-4" />
+                  </span>
+                  <span
+                    {...getHoverHandlers('FAVORITES')}
+                    style={getHoverStyle('FAVORITES')}
+                    className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('FAVORITES')}`}
+                  >
+                    Saved Assistants
+                  </span>
+                </div>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#FFF0F5] text-[#F42F73]">
+                  {favoriteAssistantIds.length}
                 </span>
               </button>
+            )}
+
+            {/* 8. HELP / SUPPORT */}
+            <button
+              id="customer-drawer-nav-support"
+              type="button"
+              onClick={() => {
+                onSelectTab('SUPPORT');
+                onClose();
+              }}
+              {...getHoverHandlers('SUPPORT')}
+              style={getHoverStyle('SUPPORT')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold cursor-pointer group ${navHoverScaleClasses} ${getHoverStateClasses('SUPPORT')} ${
+                currentNav === 'SUPPORT'
+                  ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/70'
+                  : 'text-[#14213D] hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              <div className={`flex items-center gap-3 min-w-0 ${navHoverScaleClasses} ${getHoverStateClasses('SUPPORT')}`}>
+                <span
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentNav === 'SUPPORT'
+                      ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </span>
+                <span
+                  {...getHoverHandlers('SUPPORT')}
+                  style={getHoverStyle('SUPPORT')}
+                  className={`truncate ${navHoverScaleClasses} ${getHoverStateClasses('SUPPORT')}`}
+                >
+                  Help / Support
+                </span>
+              </div>
+            </button>
+          </nav>
+
+          {/* Mumbai Operating Zone Quick Selector */}
+          {mumbaiAreas.length > 0 && onSelectArea && (
+            <div className="pt-2 border-t border-gray-100">
+              <div className="px-3 pb-2 text-[10px] font-extrabold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                <MapPin className="w-3 h-3 text-[#F42F73]" />
+                <span>Operating Zone</span>
+              </div>
+              <div className="px-2">
+                <select
+                  value={selectedArea}
+                  onChange={(e) => onSelectArea(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-xs font-bold text-[#14213D] focus:outline-none focus:border-[#F42F73]"
+                  aria-label="Mumbai Operating Zone"
+                >
+                  {mumbaiAreas.map((area) => (
+                    <option key={area} value={area}>
+                      {area}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
+
+          {/* Logout Option */}
+          <div className="pt-2 border-t border-gray-100">
+            <button
+              id="customer-drawer-logout-btn"
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenLogout();
+              }}
+              {...getHoverHandlers('LOGOUT')}
+              style={getHoverStyle('LOGOUT')}
+              className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-bold text-red-600 hover:bg-red-50 cursor-pointer ${navHoverScaleClasses} ${getHoverStateClasses('LOGOUT')}`}
+            >
+              <span className="p-2 rounded-xl bg-red-50 text-red-600">
+                <LogOut className="w-4 h-4" />
+              </span>
+              <span
+                {...getHoverHandlers('LOGOUT')}
+                style={getHoverStyle('LOGOUT')}
+                className={`${navHoverScaleClasses} ${getHoverStateClasses('LOGOUT')}`}
+              >
+                Logout
+              </span>
+            </button>
+          </div>
         </div>
 
-        {/* Profile */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('PROFILE')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'PROFILE'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
-                currentNav === 'PROFILE'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              <User className="w-4 h-4" />
-            </span>
-            <span className="truncate">Profile</span>
-          </div>
-        </button>
-
-        {/* Track Assistant */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('TRACK')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'TRACK'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
-                currentNav === 'TRACK'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              <Navigation className="w-4 h-4" />
-            </span>
-            <span className="truncate">Track Assistant</span>
-          </div>
-          {activeBooking && (
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 animate-pulse">
-              LIVE
-            </span>
-          )}
-        </button>
-
-        {/* Notifications */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('NOTIFICATIONS')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'NOTIFICATIONS'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
-                currentNav === 'NOTIFICATIONS'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              <Bell className="w-4 h-4" />
-            </span>
-            <span className="truncate">Notifications</span>
-          </div>
-          {unreadNotificationsCount > 0 && (
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#F42F73] text-white">
-              {unreadNotificationsCount}
-            </span>
-          )}
-        </button>
-
-        {/* Payments */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('PAYMENTS')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'PAYMENTS'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
-                currentNav === 'PAYMENTS'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              <CreditCard className="w-4 h-4" />
-            </span>
-            <span className="truncate">Payments</span>
-          </div>
-        </button>
-
-        {/* Help / Support */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('SUPPORT')}
-          className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
-            currentNav === 'SUPPORT'
-              ? 'bg-[#FFF0F5] text-[#F42F73] shadow-2xs border border-rose-200/80'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-[#14213D]'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`p-2 rounded-xl transition-colors ${
-                currentNav === 'SUPPORT'
-                  ? 'bg-[#F42F73] text-white shadow-xs shadow-[#F42F73]/30'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              <HelpCircle className="w-4 h-4" />
-            </span>
-            <span className="truncate">Help / Support</span>
-          </div>
-        </button>
-
-        {onOpenBooking && (
-          <div className="pt-4 px-1">
+        {/* Sticky Bottom CTA & Safety Footer */}
+        <div className="p-4 border-t border-gray-100 bg-gray-50/80 space-y-2.5">
+          {onOpenBooking && (
             <button
               type="button"
-              onClick={onOpenBooking}
-              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-[#F42F73] to-[#D81B60] hover:opacity-95 text-white font-extrabold text-xs shadow-md shadow-[#F42F73]/20 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
+              onClick={() => {
+                onClose();
+                onOpenBooking();
+              }}
+              className={`w-full py-3 px-4 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white font-extrabold text-xs sm:text-sm shadow-md shadow-[#F42F73]/25 flex items-center justify-center gap-2 cursor-pointer ${navHoverScaleClasses}`}
             >
               <Sparkles className="w-4 h-4" />
               <span>Book Assistant • ₹149/hr</span>
             </button>
-          </div>
-        )}
-      </div>
+          )}
 
-      {/* Bottom Profile & Logout Section */}
-      <div className="p-4 border-t border-gray-100 bg-gray-50/50 space-y-2.5">
-        <div
-          onClick={() => onSelectTab('PROFILE')}
-          className="flex items-center gap-3 p-2.5 rounded-2xl bg-white border border-gray-100 shadow-2xs cursor-pointer hover:border-rose-200 transition-colors"
-        >
-          <div className="w-9 h-9 rounded-full bg-[#14213D] text-white font-black text-xs flex items-center justify-center shrink-0 overflow-hidden">
-            {displayAvatar ? (
-              <img
-                src={displayAvatar}
-                alt={displayName}
-                className="w-full h-full object-cover"
-              />
-            ) : displayName && displayName !== 'Customer' ? (
-              <span>{initials}</span>
-            ) : (
-              <User className="w-4 h-4 text-white" />
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href="tel:8291919829"
+              className={`py-2 px-3 rounded-xl bg-white hover:bg-gray-100 border border-gray-200 text-[#14213D] font-bold text-[11px] flex items-center justify-center gap-1.5 ${navHoverScaleClasses}`}
+            >
+              <Phone className="w-3.5 h-3.5 text-[#F42F73]" />
+              <span>Helpline</span>
+            </a>
+            {onTriggerSos && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onTriggerSos();
+                }}
+                className={`py-2 px-3 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer ${navHoverScaleClasses}`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                <span>SOS Desk</span>
+              </button>
             )}
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-extrabold text-[#14213D] truncate">
-              {displayName || 'Customer'}
-            </div>
-            <div className="text-[11px] text-gray-500 font-medium truncate">
-              {displayPhone
-                ? displayPhone.startsWith('+91')
-                  ? displayPhone
-                  : `+91 ${displayPhone}`
-                : 'Customer Account'}
-            </div>
-          </div>
         </div>
-
-        <button
-          id="customer-sidebar-logout-btn"
-          type="button"
-          onClick={onOpenLogout}
-          className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl border border-red-200 bg-red-50/70 hover:bg-red-100 text-red-600 text-xs font-extrabold transition-all cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Logout</span>
-        </button>
-      </div>
-    </aside>
+      </aside>
+    </div>
   );
+
+  return sidebarContent;
 };
+
+export default CustomerSidebar;

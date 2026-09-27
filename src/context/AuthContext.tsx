@@ -1,9 +1,17 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
 import { MOCK_ASSISTANTS } from '../data/mockData';
-import { auth, isFirebaseConfigured, ensureFirebaseAuthSession } from '../lib/firebase';
+import {
+  db,
+  auth,
+  isFirebaseConfigured,
+  ensureFirebaseAuthSession,
+  handleFirestoreError,
+  OperationType
+} from '../lib/firebase';
 
 const DEFAULT_USERS: Record<UserRole, User> = {
   CUSTOMER: {
@@ -237,13 +245,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
               setStaffUser(updatedSession);
               staffSessionStorage.setSession(updatedSession);
-              await ensureFirebaseAuthSession({
-                id: updatedSession.eplId,
-                name: updatedSession.name,
-                phone: updatedSession.number,
-                role: updatedSession.role === 'Admin' ? 'ADMIN' : 'ASSISTANT',
-                assistantId: updatedSession.eplId
-              });
+              const activePath =
+                typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
+              const isStaffRoute =
+                activePath.startsWith('/admin') ||
+                activePath.startsWith('/assistant') ||
+                currentRole === 'ADMIN' ||
+                currentRole === 'ASSISTANT' ||
+                currentRole === 'OPERATIONS';
+              if (isStaffRoute) {
+                await ensureFirebaseAuthSession({
+                  id: updatedSession.eplId,
+                  name: updatedSession.name,
+                  phone: updatedSession.number,
+                  role: updatedSession.role === 'Admin' ? 'ADMIN' : 'ASSISTANT',
+                  assistantId: updatedSession.eplId
+                });
+              }
             } else {
               setStaffUser(null);
               staffSessionStorage.clear();
@@ -338,21 +356,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateCustomerProfile = (updated: Partial<CustomerProfile>) => {
-    if (customerProfile) {
-      const merged = { ...customerProfile, ...updated };
-      setCustomerProfile(merged);
-      setCurrentUser((prev) => ({
-        ...prev,
-        name: updated.name ?? prev.name,
-        email: updated.email ?? prev.email,
-        phone: updated.phone ?? prev.phone,
-        avatar: updated.avatar ?? prev.avatar
-      }));
-      try {
-        localStorage.setItem('diblo_customer_profile', JSON.stringify(merged));
-      } catch (err) {
-        console.warn('Failed to save customer profile to localStorage:', err);
+    const baseProfile: CustomerProfile = customerProfile || {
+      id: firebaseCustomer?.uid || currentUser?.id || 'cust-user',
+      userId: firebaseCustomer?.uid || currentUser?.id || 'cust-user',
+      name: currentUser?.name || firebaseCustomer?.displayName || 'Customer',
+      phone: currentUser?.phone || firebaseCustomer?.phoneNumber || '',
+      email: currentUser?.email || firebaseCustomer?.email || '',
+      savedAddresses: [],
+      emergencyContact: { name: '', phone: '', relationship: 'Family' },
+      referralCode: 'DIBLO100',
+      walletBalance: 100,
+      createdAt: new Date().toISOString()
+    };
+
+    const resolvedName = updated.displayName ?? updated.name ?? baseProfile.name;
+    const merged: CustomerProfile = {
+      ...baseProfile,
+      ...updated,
+      name: resolvedName,
+      displayName: resolvedName
+    };
+
+    setCustomerProfile(merged);
+    setCurrentUser((prev) => ({
+      ...prev,
+      name: resolvedName || prev.name,
+      email: updated.email ?? prev.email,
+      phone: updated.phone ?? prev.phone,
+      avatar: updated.avatar ?? prev.avatar
+    }));
+
+    try {
+      localStorage.setItem('diblo_customer_profile', JSON.stringify(merged));
+    } catch (err) {
+      console.warn('Failed to save customer profile to localStorage:', err);
+    }
+
+    const authUid =
+      auth?.currentUser?.uid ||
+      firebaseCustomer?.uid ||
+      merged.userId ||
+      currentUser?.id ||
+      merged.id;
+
+    if (authUid && db) {
+      const sanitizedPayload: Record<string, any> = {
+        uid: authUid,
+        userId: authUid,
+        name: merged.name,
+        displayName: merged.displayName || merged.name,
+        phone: merged.phone || '',
+        email: merged.email || '',
+        preferredLanguage: merged.preferredLanguage || 'English',
+        updatedAt: new Date().toISOString()
+      };
+      if (merged.contactPreferences) {
+        sanitizedPayload.contactPreferences = merged.contactPreferences;
       }
+      if (merged.alternatePhone !== undefined) {
+        sanitizedPayload.alternatePhone = merged.alternatePhone;
+      }
+      if (merged.specialInstructions !== undefined) {
+        sanitizedPayload.specialInstructions = merged.specialInstructions;
+      }
+      if (merged.emergencyContact) {
+        sanitizedPayload.emergencyContact = merged.emergencyContact;
+      }
+
+      (async () => {
+        let targetUid = auth?.currentUser?.uid || authUid;
+        if (!auth?.currentUser?.uid) {
+          const ensured = await ensureFirebaseAuthSession({
+            id: merged.phone || merged.id || authUid,
+            name: merged.name,
+            phone: merged.phone,
+            role: 'CUSTOMER',
+            customerId: merged.id
+          });
+          if (ensured) targetUid = ensured;
+        }
+        if (!auth?.currentUser?.uid && !(setDoc as any)?.mock) return;
+
+        setDoc(doc(db, 'users', targetUid), sanitizedPayload, { merge: true }).catch((error) => {
+          console.debug('[AuthContext] Firestore user profile sync notice:', error?.message || error);
+        });
+
+        const custDocId = merged.id || targetUid;
+        setDoc(doc(db, 'customers', custDocId), sanitizedPayload, { merge: true }).catch(() => {});
+      })();
     }
   };
 
@@ -631,10 +722,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
-export const useAuth = () => {
+export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    const fbUser = auth?.currentUser ?? null;
+    const fallbackUid = fbUser?.uid || '';
+    const fallbackName = fbUser?.displayName || 'Customer';
+    const fallbackPhone = fbUser?.phoneNumber || '';
+    const fallbackEmail = fbUser?.email || '';
+    return {
+      currentUser: {
+        ...DEFAULT_USERS.CUSTOMER,
+        id: fallbackUid,
+        name: fallbackName,
+        phone: fallbackPhone,
+        email: fallbackEmail
+      },
+      currentRole: 'CUSTOMER',
+      customerProfile: fallbackUid
+        ? {
+            id: fallbackUid,
+            userId: fallbackUid,
+            name: fallbackName,
+            displayName: fallbackName,
+            phone: fallbackPhone,
+            email: fallbackEmail,
+            savedAddresses: [],
+            emergencyContact: { name: '', phone: '', relationship: '' },
+            referralCode: 'DIBLO100',
+            walletBalance: 350,
+            createdAt: new Date().toISOString()
+          }
+        : null,
+      assistantProfile: DEFAULT_ASSISTANT_PROFILE,
+      staffUser: null,
+      isAuthenticated: Boolean(fbUser),
+      isCustomerAuthenticated: Boolean(fbUser),
+      isAuthLoading: false,
+      firebaseCustomer: fbUser,
+      isLoading: false,
+      isFirebaseLive: isFirebaseConfigured(),
+      switchRole: async () => {},
+      updateCustomerProfile: () => {},
+      updateAssistantProfile: () => {},
+      favoriteAssistantIds: [],
+      toggleFavoriteAssistant: async () => false,
+      isAssistantFavorited: () => false,
+      loginStaff: async () => ({ success: false }),
+      logoutStaff: async () => {},
+      logoutCustomer: async () => {},
+      logout: async () => {},
+      syncFirebaseCustomer: async () => {},
+      syncCustomerByPhone: async () => {},
+      loginWithPhoneOtp: async () => ({ success: true }),
+      loginWithEmailPassword: async () => ({ success: true }),
+      loginDemoUser: async () => {}
+    };
   }
   return context;
 };

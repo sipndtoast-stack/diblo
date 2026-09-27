@@ -2,6 +2,14 @@ import React, { useState, useMemo } from 'react';
 import { useBooking } from '../../context/BookingContext';
 import { useAuth } from '../../context/AuthContext';
 import { Booking } from '../../types';
+
+if (typeof globalThis !== 'undefined' && typeof (globalThis as any).ResizeObserver === 'undefined') {
+  (globalThis as any).ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
 import {
   ResponsiveContainer,
   AreaChart,

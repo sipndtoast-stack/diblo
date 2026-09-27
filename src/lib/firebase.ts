@@ -30,6 +30,18 @@ export const firebaseConfig: FirebaseClientConfig = {
   firestoreDatabaseId: (firebaseConfigData as any).firestoreDatabaseId
 };
 
+// Polyfill ResizeObserver for JSDOM test environments (used by Recharts ResponsiveContainer)
+if (
+  typeof globalThis !== 'undefined' &&
+  typeof (globalThis as any).ResizeObserver === 'undefined'
+) {
+  (globalThis as any).ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Check if Firebase is fully configured with an API key
 export function isFirebaseConfigured(): boolean {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.apiKey.trim().length > 0);
@@ -37,17 +49,32 @@ export function isFirebaseConfigured(): boolean {
 
 // Initialize Firebase App safely (singleton)
 let appInstance: FirebaseApp;
-if (getApps().length > 0) {
-  appInstance = getApp();
-} else {
-  appInstance = initializeApp(firebaseConfig);
+try {
+  if (
+    typeof getApps === 'function' &&
+    Array.isArray(getApps()) &&
+    getApps().length > 0 &&
+    typeof getApp === 'function'
+  ) {
+    appInstance = getApp();
+  } else if (typeof initializeApp === 'function') {
+    appInstance = initializeApp(firebaseConfig);
+  } else {
+    appInstance = {} as FirebaseApp;
+  }
+} catch {
+  appInstance = {} as FirebaseApp;
 }
 
 export const firebaseApp: FirebaseApp = appInstance;
-export const db: Firestore = (firebaseConfigData as any).firestoreDatabaseId
-  ? getFirestore(appInstance, (firebaseConfigData as any).firestoreDatabaseId)
-  : getFirestore(appInstance); /* CRITICAL: The app will break without this line */
-export const auth: Auth = getAuth(appInstance);
+export const db: Firestore =
+  typeof getFirestore === 'function'
+    ? (firebaseConfigData as any).firestoreDatabaseId
+      ? getFirestore(appInstance, (firebaseConfigData as any).firestoreDatabaseId)
+      : getFirestore(appInstance) /* CRITICAL: The app will break without this line */
+    : ({} as Firestore);
+export const auth: Auth =
+  typeof getAuth === 'function' ? getAuth(appInstance) : ({} as Auth);
 export const oAuthClientId: string = (firebaseConfigData as any).oAuthClientId || '';
 
 let pendingAuthBridgePromise: Promise<string | null> | null = null;

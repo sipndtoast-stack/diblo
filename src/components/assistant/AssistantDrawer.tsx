@@ -220,7 +220,7 @@ export const AssistantDrawer: React.FC<AssistantDrawerProps> = ({
         </div>
 
         {/* Menu Navigation Items */}
-        <div id="assistant-drawer-nav-list" className="flex-1 overflow-y-auto py-2 px-3 space-y-1">
+        <nav id="assistant-drawer-nav-list" aria-label="Assistant Sidebar Navigation" className="flex-1 overflow-y-auto py-2 px-3 space-y-1">
           {menuItems.map((item) => {
             const isActive = activeSection === item.id;
             const itemIdSlug = item.id.toLowerCase().replace(/_/g, '-');
@@ -232,13 +232,13 @@ export const AssistantDrawer: React.FC<AssistantDrawerProps> = ({
                   onSelectSection(item.id);
                   onClose();
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-left transition-all min-h-[50px] ${
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-left transform transition-all transition-transform duration-200 ease-in-out hover:scale-105 hover:scale-[1.02] active:scale-95 min-h-[50px] ${
                   isActive
                     ? 'bg-[#FFF0F5] text-[#F42F73] font-black shadow-2xs'
                     : 'text-[#14213D] hover:bg-gray-50 font-bold'
                 }`}
               >
-                <div className="flex items-center gap-3.5">
+                <div className="flex items-center gap-3.5 transform transition-all transition-transform duration-200 ease-in-out hover:scale-105 hover:scale-[1.02]">
                   <div
                     className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                       isActive
@@ -249,7 +249,7 @@ export const AssistantDrawer: React.FC<AssistantDrawerProps> = ({
                     {item.icon}
                   </div>
                   <div>
-                    <div className="text-xs sm:text-sm tracking-wide">{item.label}</div>
+                    <div className="text-xs sm:text-sm tracking-wide transform transition-all transition-transform duration-200 ease-in-out hover:scale-105 hover:scale-[1.02]">{item.label}</div>
                     {item.sublabel && (
                       <div className="text-[10px] text-gray-400 font-normal">
                         {item.sublabel}
@@ -271,7 +271,7 @@ export const AssistantDrawer: React.FC<AssistantDrawerProps> = ({
               </button>
             );
           })}
-        </div>
+        </nav>
 
         {/* Drawer Footer with Logout Button */}
         <div id="assistant-drawer-footer" className="p-3 border-t border-gray-100 bg-gray-50/50">
