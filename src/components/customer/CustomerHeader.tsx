@@ -25,21 +25,31 @@ import { PWAInstallButton } from '../common/PWAInstallButton';
 import { api } from '../../lib/api';
 import { EmergencyAlert } from '../../types';
 import { CustomerDrawer } from './CustomerDrawer';
+import { CustomerRequestFilter } from './CustomerBookings';
 
 interface CustomerHeaderProps {
   onOpenBooking: () => void;
   onSelectTab: (tab: any) => void;
+  onSelectRequestFilter?: (filter: CustomerRequestFilter) => void;
+  requestsFilter?: CustomerRequestFilter;
   activeTab: string;
   onOpenLogout: () => void;
 }
 
-export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, onSelectTab, activeTab, onOpenLogout }) => {
-  const { currentUser, customerProfile, favoriteAssistantIds } = useAuth();
+export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
+  onOpenBooking,
+  onSelectTab,
+  onSelectRequestFilter,
+  requestsFilter = 'UPCOMING',
+  activeTab,
+  onOpenLogout
+}) => {
+  const { currentUser, customerProfile } = useAuth();
   const { activeBooking, pushPermission, requestPushNotificationPermission, addNotification } = useBooking();
   const [selectedArea, setSelectedArea] = useState('Bandra West, Mumbai');
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Emergency SOS distress state
   const [isDispatchingSos, setIsDispatchingSos] = useState(false);
@@ -57,9 +67,9 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
     'Lower Parel, Mumbai'
   ];
 
-  const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'ACTIVITY' | 'FAVORITES' | 'PROFILE' | 'SUPPORT') => {
+  const handleTabClick = (tab: 'HOME' | 'BOOKINGS' | 'REQUESTS' | 'ACTIVITY' | 'TRACK' | 'FAVORITES' | 'PROFILE' | 'NOTIFICATIONS' | 'PAYMENTS' | 'SUPPORT') => {
     onSelectTab(tab);
-    setIsDrawerOpen(false);
+    setIsSidebarOpen(false);
   };
 
   const playDistressChirp = () => {
@@ -117,8 +127,8 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           serviceName: activeBooking?.serviceName,
           triggerSource: 'CUSTOMER_HEADER_SOS',
           userId: currentUser?.id,
-          userName: currentUser?.name || 'Customer',
-          userPhone: currentUser?.phone || '9820123456',
+          userName: customerProfile?.name || currentUser?.name || 'Customer',
+          userPhone: customerProfile?.phone || currentUser?.phone || '',
           userRole: currentUser?.role || 'CUSTOMER'
         });
 
@@ -178,80 +188,87 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-100 transition-all">
-      <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
-        {/* Brand Logo, Sidebar Drawer Toggle & Location */}
-        <div className="flex items-center gap-2 sm:gap-4">
-          {/* Hamburger Drawer Toggle Button (Visible on all screen sizes, matching AssistantPanel) */}
-          <button
-            id="customer-header-menu-btn"
-            type="button"
-            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-            className="p-2 sm:p-2.5 rounded-2xl bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-[#14213D] transition-all min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] flex items-center justify-center shadow-2xs relative cursor-pointer"
-            aria-label={isDrawerOpen ? 'Close Navigation Drawer' : 'Open Navigation Drawer'}
-            title="Open Sidebar Menu"
-          >
-            {isDrawerOpen ? (
-              <X className="w-5 h-5 text-[#14213D]" />
-            ) : (
-              <Menu className="w-5 h-5 text-[#14213D]" />
-            )}
-            {activeBooking && !isDrawerOpen && (
-              <span
-                id="customer-header-active-badge"
-                className="absolute -top-1 -right-1 w-3 h-3 bg-[#10B981] rounded-full border-2 border-white animate-pulse"
-              />
-            )}
-          </button>
-
-          <div
-            onClick={() => handleTabClick('HOME')}
-            className="cursor-pointer flex items-baseline gap-1 select-none py-1 lg:hidden"
-          >
-            <span className="text-2xl sm:text-3xl font-black text-[#F42F73] tracking-tighter lowercase">
-              diblo
-            </span>
-            <span className="text-[10px] sm:text-xs font-extrabold uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] px-1.5 py-0.5 rounded ml-1 hidden xs:inline-block">
-              Mumbai
-            </span>
-          </div>
-
-          {/* Location Selector */}
-          <div className="relative">
+    <>
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-100 transition-all">
+        <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
+          {/* Brand Logo, Top-Left Hamburger Toggle & Location Selector */}
+          <div className="flex items-center gap-2 sm:gap-3.5 min-w-0">
+            {/* Existing Top-Left 3-Line Hamburger Button */}
             <button
-              onClick={() => setIsLocationDropdownOpen(!isLocationDropdownOpen)}
-              className="flex items-center gap-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold text-[#14213D] transition-colors min-h-[36px]"
-              aria-label="Select Operating Zone"
+              id="customer-header-menu-btn"
+              type="button"
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              aria-expanded={isSidebarOpen}
+              aria-controls="customer-drawer-container"
+              className="p-2 sm:p-2.5 rounded-2xl bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-[#14213D] transition-all min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] flex items-center justify-center shadow-2xs relative cursor-pointer shrink-0"
+              aria-label={isSidebarOpen ? 'Close Navigation Sidebar' : 'Open Navigation Sidebar'}
+              title={isSidebarOpen ? 'Close Sidebar Menu' : 'Open Sidebar Menu'}
             >
-              <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
-              <span className="max-w-[100px] sm:max-w-[150px] md:max-w-[180px] truncate text-left">{selectedArea}</span>
-              <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
+              {isSidebarOpen ? (
+                <X className="w-5 h-5 text-[#14213D]" />
+              ) : (
+                <Menu className="w-5 h-5 text-[#14213D]" />
+              )}
+              {activeBooking && !isSidebarOpen && (
+                <span
+                  id="customer-header-active-badge"
+                  className="absolute -top-1 -right-1 w-3 h-3 bg-[#10B981] rounded-full border-2 border-white animate-pulse"
+                />
+              )}
             </button>
 
-            {isLocationDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50">
-                <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                  Select Mumbai Operating Zone
+            <div
+              onClick={() => handleTabClick('HOME')}
+              className="cursor-pointer flex items-baseline gap-1 select-none py-1 lg:hidden shrink-0"
+            >
+              <span className="text-2xl sm:text-3xl font-black text-[#F42F73] tracking-tighter lowercase">
+                diblo
+              </span>
+              <span className="text-[10px] sm:text-xs font-extrabold uppercase tracking-wider bg-[#FFF0F5] text-[#F42F73] px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">
+                Mumbai
+              </span>
+            </div>
+
+            {/* Location Selector */}
+            <div className="relative min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsLocationDropdownOpen(!isLocationDropdownOpen)}
+                className="flex items-center gap-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold text-[#14213D] transition-colors min-h-[36px] max-w-full cursor-pointer"
+                aria-label="Select Operating Zone"
+              >
+                <MapPin className="w-3.5 h-3.5 text-[#F42F73] shrink-0" />
+                <span className="max-w-[110px] sm:max-w-[150px] md:max-w-[180px] truncate text-left">
+                  {selectedArea}
+                </span>
+                <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
+              </button>
+
+              {isLocationDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50">
+                  <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                    Select Mumbai Operating Zone
+                  </div>
+                  {mumbaiAreas.map((area) => (
+                    <button
+                      key={area}
+                      type="button"
+                      onClick={() => {
+                        setSelectedArea(area);
+                        setIsLocationDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-[#FFF0F5] hover:text-[#F42F73] transition-colors flex items-center justify-between cursor-pointer ${
+                        selectedArea === area ? 'text-[#F42F73] font-bold bg-[#FFF0F5]/50' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>{area}</span>
+                      {selectedArea === area && <span className="text-[#F42F73] text-xs font-bold">✓</span>}
+                    </button>
+                  ))}
                 </div>
-                {mumbaiAreas.map((area) => (
-                  <button
-                    key={area}
-                    onClick={() => {
-                      setSelectedArea(area);
-                      setIsLocationDropdownOpen(false);
-                    }}
-                    className={`w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-[#FFF0F5] hover:text-[#F42F73] transition-colors flex items-center justify-between ${
-                      selectedArea === area ? 'text-[#F42F73] font-bold bg-[#FFF0F5]/50' : 'text-gray-700'
-                    }`}
-                  >
-                    <span>{area}</span>
-                    {selectedArea === area && <span className="text-[#F42F73] text-xs font-bold">✓</span>}
-                  </button>
-                ))}
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
 
 
         {/* Right CTA & Emergency Safety Buttons */}
@@ -327,6 +344,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
 
           {/* User Avatar Circle */}
           <button
+            type="button"
             onClick={() => onSelectTab('PROFILE')}
             className="w-9 h-9 rounded-full bg-[#14213D] text-white text-xs font-bold flex items-center justify-center hover:ring-2 hover:ring-[#F42F73] transition-all shrink-0 min-w-[36px] min-h-[36px] overflow-hidden cursor-pointer shadow-xs border border-gray-100"
             title="My Profile"
@@ -338,39 +356,44 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
                 alt="Profile"
                 className="w-full h-full object-cover rounded-full"
               />
-            ) : currentUser?.name ? (
-              currentUser.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+            ) : (customerProfile?.name || currentUser?.name) ? (
+              (customerProfile?.name || currentUser?.name || 'C')
+                .split(' ')
+                .map((n) => n[0])
+                .join('')
+                .slice(0, 2)
+                .toUpperCase()
             ) : (
-              'CU'
+              <User className="w-4 h-4 text-white" />
             )}
-          </button>
-
-          {/* Mobile Menu Hamburger Button (Hidden on Desktop) */}
-          <button
-            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-            className="lg:hidden p-2 rounded-xl text-gray-700 hover:bg-gray-100 transition-colors min-w-[40px] min-h-[40px] flex items-center justify-center ml-0.5 cursor-pointer"
-            aria-label="Open Menu"
-            title="Menu"
-          >
-            {isDrawerOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </div>
+      </header>
 
-      {/* Customer Sidebar Menu Drawer (Full-featured sidebar like AssistantPanel) */}
+      {/* Customer Portal Sidebar Drawer (Connected to top-left hamburger button) */}
       <CustomerDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
         activeTab={activeTab as any}
+        requestsFilter={requestsFilter}
         onSelectTab={(tab) => {
           handleTabClick(tab);
         }}
+        onSelectRequestFilter={(filter) => {
+          if (onSelectRequestFilter) {
+            onSelectRequestFilter(filter);
+          } else {
+            onSelectTab('REQUESTS');
+          }
+          setIsSidebarOpen(false);
+        }}
         onOpenBooking={() => {
-          setIsDrawerOpen(false);
+          setIsSidebarOpen(false);
           onOpenBooking();
         }}
         onTriggerSos={() => {
-          setIsDrawerOpen(false);
+          setIsSidebarOpen(false);
           handleTriggerEmergencySos();
         }}
         onOpenLogout={onOpenLogout}
@@ -558,6 +581,6 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onOpenBooking, o
           </div>
         </div>
       )}
-    </header>
+    </>
   );
 };

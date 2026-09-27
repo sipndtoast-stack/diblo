@@ -101,49 +101,94 @@ async function startServer() {
   // ==========================================
   // GOOGLE MAPS PLATFORM PROXY & CONFIG
   // ==========================================
+  const KNOWN_FIREBASE_ONLY_KEY = 'AIzaSyBZgAbbS7_cTo7ml3EkUf5yKxPiADy5k1U';
+
   const isValidGoogleMapsKey = (key: string | null | undefined): boolean => {
     if (!key || typeof key !== 'string') return false;
     const trimmed = key.trim();
-    // Valid Google Maps API keys are at least 25 characters and start with AIza
-    return trimmed.startsWith('AIza') && trimmed.length >= 25;
+    if (trimmed === KNOWN_FIREBASE_ONLY_KEY) return false;
+    if (trimmed === (process.env.FIREBASE_API_KEY || '').trim()) return false;
+    if (trimmed === (process.env.VITE_FIREBASE_API_KEY || '').trim()) return false;
+    return /^AIza[0-9A-Za-z_-]{33,45}$/.test(trimmed);
   };
 
   const getConfiguredGoogleMapsKey = (): string => {
     const candidates = [
       process.env.GOOGLE_MAPS_API_KEY,
-      process.env.VITE_GOOGLE_MAPS_API_KEY,
-      process.env.FIREBASE_API_KEY,
-      process.env.VITE_FIREBASE_API_KEY
+      process.env.VITE_GOOGLE_MAPS_API_KEY
     ];
     for (const c of candidates) {
       if (isValidGoogleMapsKey(c)) return c!.trim();
-    }
-    try {
-      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (isValidGoogleMapsKey(config?.apiKey)) {
-          return config.apiKey.trim();
-        }
-      }
-    } catch {
-      // Ignore read error
     }
     return '';
   };
 
   const MAPS_REFERER_HEADER = 'https://diblo-39440.web.app/';
+  const verifiedKeysCache = new Map<string, boolean>();
 
-  app.get('/api/maps/config', (req, res) => {
+  const verifyGoogleMapsKeyWorks = async (key: string): Promise<boolean> => {
+    if (!isValidGoogleMapsKey(key)) return false;
+    if (verifiedKeysCache.has(key)) {
+      return verifiedKeysCache.get(key)!;
+    }
+    try {
+      const testUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=19.076,72.8777&key=${encodeURIComponent(key)}`;
+      const resp = await fetch(testUrl, {
+        headers: { Referer: MAPS_REFERER_HEADER }
+      });
+      const data = await resp.json();
+      const works = data && (data.status === 'OK' || data.status === 'ZERO_RESULTS');
+      verifiedKeysCache.set(key, Boolean(works));
+      return Boolean(works);
+    } catch {
+      return false;
+    }
+  };
+
+  const MUMBAI_AREAS_LOOKUP = [
+    { area: 'Bandra West', address: 'Hill Road, Bandra West, Mumbai, Maharashtra 400050', lat: 19.0596, lng: 72.8295 },
+    { area: 'Bandra East', address: 'Bandra Kurla Complex (BKC), Bandra East, Mumbai, Maharashtra 400051', lat: 19.0654, lng: 72.8681 },
+    { area: 'Andheri West', address: 'Lokhandwala Complex, Andheri West, Mumbai, Maharashtra 400053', lat: 19.1364, lng: 72.8296 },
+    { area: 'Andheri East', address: 'Chakala, Andheri East, Mumbai, Maharashtra 400099', lat: 19.1136, lng: 72.8697 },
+    { area: 'Juhu', address: 'Juhu Tara Road, Juhu, Mumbai, Maharashtra 400049', lat: 19.1075, lng: 72.8263 },
+    { area: 'Powai', address: 'Hiranandani Gardens, Powai, Mumbai, Maharashtra 400076', lat: 19.1176, lng: 72.9060 },
+    { area: 'Dadar West', address: 'Shivaji Park, Dadar West, Mumbai, Maharashtra 400028', lat: 19.0213, lng: 72.8424 },
+    { area: 'Lower Parel', address: 'Senapati Bapat Marg, Lower Parel, Mumbai, Maharashtra 400013', lat: 18.9953, lng: 72.8300 },
+    { area: 'Worli', address: 'Worli Sea Face, Worli, Mumbai, Maharashtra 400030', lat: 19.0176, lng: 72.8150 },
+    { area: 'Colaba', address: 'Colaba Causeway, Colaba, Mumbai, Maharashtra 400005', lat: 18.9067, lng: 72.8147 },
+    { area: 'Malad West', address: 'Link Road, Malad West, Mumbai, Maharashtra 400064', lat: 19.1874, lng: 72.8484 },
+    { area: 'Goregaon East', address: 'Oberoi Garden City, Goregaon East, Mumbai, Maharashtra 400063', lat: 19.1663, lng: 72.8526 },
+    { area: 'Borivali West', address: 'IC Colony, Borivali West, Mumbai, Maharashtra 400103', lat: 19.2307, lng: 72.8567 },
+    { area: 'Chembur', address: 'Diamond Garden, Chembur, Mumbai, Maharashtra 400071', lat: 19.0522, lng: 72.9005 },
+    { area: 'Ghatkopar East', address: 'Pant Nagar, Ghatkopar East, Mumbai, Maharashtra 400075', lat: 19.0790, lng: 72.9080 },
+    { area: 'Santacruz West', address: 'Linking Road, Santacruz West, Mumbai, Maharashtra 400054', lat: 19.0843, lng: 72.8360 },
+    { area: 'Khar West', address: 'Carter Road, Khar West, Mumbai, Maharashtra 400052', lat: 19.0700, lng: 72.8290 },
+    { area: 'Mulund West', address: 'LBS Marg, Mulund West, Mumbai, Maharashtra 400080', lat: 19.1726, lng: 72.9425 }
+  ];
+
+  const findNearestMumbaiArea = (lat: number, lng: number) => {
+    let best = MUMBAI_AREAS_LOOKUP[0];
+    let minSq = Infinity;
+    for (const item of MUMBAI_AREAS_LOOKUP) {
+      const d = (item.lat - lat) ** 2 + (item.lng - lng) ** 2;
+      if (d < minSq) {
+        minSq = d;
+        best = item;
+      }
+    }
+    return best;
+  };
+
+  app.get('/api/maps/config', async (req, res) => {
     const mapsKey = getConfiguredGoogleMapsKey();
-    const isValid = isValidGoogleMapsKey(mapsKey);
+    const isValid = await verifyGoogleMapsKeyWorks(mapsKey);
     res.json({
       configured: isValid,
       apiKey: isValid ? mapsKey : null
     });
   });
 
-  // Reverse Geocoding Proxy (lat/lng -> formatted address via Google Geocoding API)
+  // Reverse Geocoding Proxy (lat/lng -> formatted address via Google Geocoding API with Nominatim fallback)
   app.get('/api/maps/reverse-geocode', async (req, res) => {
     const { lat, lng } = req.query;
     if (!lat || !lng) {
@@ -154,44 +199,80 @@ async function startServer() {
     const longitude = Number(lng);
     const mapsKey = getConfiguredGoogleMapsKey();
 
-    if (!isValidGoogleMapsKey(mapsKey)) {
-      return res.status(503).json({ error: 'Google Maps API key is not configured' });
+    if (await verifyGoogleMapsKeyWorks(mapsKey)) {
+      try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(mapsKey)}`;
+        const response = await fetch(url, {
+          headers: { Referer: MAPS_REFERER_HEADER }
+        });
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.results && data.results.length > 0) {
+          const result = data.results[0];
+          let area = 'Mumbai';
+          for (const comp of result.address_components || []) {
+            if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
+              area = comp.long_name;
+              break;
+            } else if (comp.types.includes('locality')) {
+              area = comp.long_name;
+            }
+          }
+
+          return res.json({
+            formattedAddress: result.formatted_address,
+            placeId: result.place_id,
+            area,
+            lat: result.geometry.location.lat,
+            lng: result.geometry.location.lng,
+            isFallback: false
+          });
+        }
+      } catch {
+        // Fall through to OpenStreetMap Nominatim
+      }
     }
 
     try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(mapsKey)}`;
-      const response = await fetch(url, {
-        headers: { Referer: MAPS_REFERER_HEADER }
+      const osmUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
+      const osmResp = await fetch(osmUrl, {
+        headers: { 'User-Agent': 'DibloUrbanAssist/1.0' }
       });
-      const data = await response.json();
-
-      if (data.status === 'OK' && data.results && data.results.length > 0) {
-        const result = data.results[0];
-        let area = 'Mumbai';
-        for (const comp of result.address_components || []) {
-          if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
-            area = comp.long_name;
-            break;
-          } else if (comp.types.includes('locality')) {
-            area = comp.long_name;
-          }
+      if (osmResp.ok) {
+        const osmData = await osmResp.json();
+        if (osmData && osmData.display_name) {
+          const addr = osmData.address || {};
+          const nearest = findNearestMumbaiArea(latitude, longitude);
+          const area =
+            addr.suburb ||
+            addr.neighbourhood ||
+            addr.city_district ||
+            addr.town ||
+            nearest.area ||
+            'Mumbai';
+          return res.json({
+            formattedAddress: osmData.display_name,
+            placeId: `osm-${osmData.place_id || Date.now()}`,
+            area,
+            lat: latitude,
+            lng: longitude,
+            isFallback: true
+          });
         }
-
-        return res.json({
-          formattedAddress: result.formatted_address,
-          placeId: result.place_id,
-          area,
-          lat: result.geometry.location.lat,
-          lng: result.geometry.location.lng,
-          isFallback: false
-        });
       }
-
-      return res.status(404).json({ error: 'No address found for coordinates', status: data.status });
-    } catch (err: any) {
-      console.error('[MAPS PROXY] Reverse geocode error occurred:', err?.message);
-      return res.status(500).json({ error: 'Reverse geocoding failed' });
+    } catch {
+      // Fall through to nearest Mumbai locality lookup
     }
+
+    const nearest = findNearestMumbaiArea(latitude, longitude);
+    return res.json({
+      formattedAddress: nearest.address,
+      placeId: `mumbai-${nearest.area.toLowerCase().replace(/\s+/g, '-')}`,
+      area: nearest.area,
+      lat: latitude,
+      lng: longitude,
+      isFallback: true
+    });
   });
 
   // Places API (New) Autocomplete & Forward Geocoding Search Proxy
@@ -204,98 +285,145 @@ async function startServer() {
     const mapsKey = getConfiguredGoogleMapsKey();
     const query = address.trim();
 
-    if (!isValidGoogleMapsKey(mapsKey)) {
-      return res.status(503).json({ error: 'Google Maps API key is not configured', results: [] });
-    }
+    if (await verifyGoogleMapsKeyWorks(mapsKey)) {
+      try {
+        // 1. Try Google Places API (New) Text Search first for rich place + coordinates resolution
+        const placesUrl = 'https://places.googleapis.com/v1/places:searchText';
+        const placesResp = await fetch(placesUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': mapsKey,
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.addressComponents',
+            Referer: MAPS_REFERER_HEADER
+          },
+          body: JSON.stringify({
+            textQuery: query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai`,
+            locationBias: {
+              circle: {
+                center: { latitude: 19.076, longitude: 72.8777 },
+                radius: 50000.0
+              }
+            }
+          })
+        });
 
-    try {
-      // 1. Try Google Places API (New) Text Search first for rich place + coordinates resolution
-      const placesUrl = 'https://places.googleapis.com/v1/places:searchText';
-      const placesResp = await fetch(placesUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': mapsKey,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.addressComponents',
-          Referer: MAPS_REFERER_HEADER
-        },
-        body: JSON.stringify({
-          textQuery: query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai`,
-          locationBias: {
-            circle: {
-              center: { latitude: 19.076, longitude: 72.8777 },
-              radius: 50000.0
+        if (placesResp.ok) {
+          const placesData = await placesResp.json();
+          if (placesData.places && placesData.places.length > 0) {
+            const results = placesData.places.slice(0, 6).map((p: any) => {
+              let area = p.displayName?.text || 'Mumbai';
+              if (Array.isArray(p.addressComponents)) {
+                for (const comp of p.addressComponents) {
+                  if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
+                    area = comp.longText || comp.shortText || area;
+                    break;
+                  }
+                }
+              }
+              return {
+                formattedAddress: p.formattedAddress ? `${p.displayName?.text ? p.displayName.text + ', ' : ''}${p.formattedAddress}` : (p.displayName?.text || query),
+                placeId: p.id,
+                area,
+                lat: p.location?.latitude,
+                lng: p.location?.longitude,
+                isFallback: false
+              };
+            }).filter((r: any) => typeof r.lat === 'number' && typeof r.lng === 'number');
+
+            if (results.length > 0) {
+              return res.json({ results });
             }
           }
-        })
-      });
+        }
 
-      if (placesResp.ok) {
-        const placesData = await placesResp.json();
-        if (placesData.places && placesData.places.length > 0) {
-          const results = placesData.places.slice(0, 6).map((p: any) => {
-            let area = p.displayName?.text || 'Mumbai';
-            if (Array.isArray(p.addressComponents)) {
-              for (const comp of p.addressComponents) {
-                if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
-                  area = comp.longText || comp.shortText || area;
-                  break;
-                }
+        // 2. Fallback to Google Geocoding API
+        const searchQuery = query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai, India`;
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(mapsKey)}`;
+        const response = await fetch(url, {
+          headers: { Referer: MAPS_REFERER_HEADER }
+        });
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.results && data.results.length > 0) {
+          const results = data.results.slice(0, 5).map((r: any) => {
+            let area = 'Mumbai';
+            for (const comp of r.address_components || []) {
+              if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
+                area = comp.long_name;
+                break;
+              } else if (comp.types.includes('locality')) {
+                area = comp.long_name;
               }
             }
             return {
-              formattedAddress: p.formattedAddress ? `${p.displayName?.text ? p.displayName.text + ', ' : ''}${p.formattedAddress}` : (p.displayName?.text || query),
-              placeId: p.id,
+              formattedAddress: r.formatted_address,
+              placeId: r.place_id,
               area,
-              lat: p.location?.latitude,
-              lng: p.location?.longitude,
+              lat: r.geometry.location.lat,
+              lng: r.geometry.location.lng,
               isFallback: false
             };
-          }).filter((r: any) => typeof r.lat === 'number' && typeof r.lng === 'number');
+          });
 
-          if (results.length > 0) {
-            return res.json({ results });
-          }
+          return res.json({ results });
+        }
+      } catch {
+        // Fall through to OpenStreetMap / Mumbai localities
+      }
+    }
+
+    const qLower = query.toLowerCase();
+    const matchedLocalities = MUMBAI_AREAS_LOOKUP.filter(
+      (item) => item.area.toLowerCase().includes(qLower) || item.address.toLowerCase().includes(qLower)
+    ).map((item, idx) => ({
+      formattedAddress: item.address,
+      placeId: `mumbai-loc-${idx}`,
+      area: item.area,
+      lat: item.lat,
+      lng: item.lng,
+      isFallback: true
+    }));
+
+    try {
+      const searchQ = qLower.includes('mumbai') ? query : `${query}, Mumbai`;
+      const osmUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQ)}&limit=5&addressdetails=1`;
+      const osmResp = await fetch(osmUrl, {
+        headers: { 'User-Agent': 'DibloUrbanAssist/1.0' }
+      });
+      if (osmResp.ok) {
+        const osmData = await osmResp.json();
+        if (Array.isArray(osmData) && osmData.length > 0) {
+          const osmResults = osmData.map((r: any, idx: number) => {
+            const lat = Number(r.lat);
+            const lng = Number(r.lon);
+            const nearest = findNearestMumbaiArea(lat, lng);
+            return {
+              formattedAddress: r.display_name,
+              placeId: `osm-search-${r.place_id || idx}`,
+              area: r.address?.suburb || r.address?.neighbourhood || nearest.area || 'Mumbai',
+              lat,
+              lng,
+              isFallback: true
+            };
+          });
+          return res.json({ results: [...matchedLocalities, ...osmResults].slice(0, 6) });
         }
       }
-
-      // 2. Fallback to Google Geocoding API
-      const searchQuery = query.toLowerCase().includes('mumbai') ? query : `${query}, Mumbai, India`;
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(mapsKey)}`;
-      const response = await fetch(url, {
-        headers: { Referer: MAPS_REFERER_HEADER }
-      });
-      const data = await response.json();
-
-      if (data.status === 'OK' && data.results && data.results.length > 0) {
-        const results = data.results.slice(0, 5).map((r: any) => {
-          let area = 'Mumbai';
-          for (const comp of r.address_components || []) {
-            if (comp.types.includes('sublocality') || comp.types.includes('sublocality_level_1')) {
-              area = comp.long_name;
-              break;
-            } else if (comp.types.includes('locality')) {
-              area = comp.long_name;
-            }
-          }
-          return {
-            formattedAddress: r.formatted_address,
-            placeId: r.place_id,
-            area,
-            lat: r.geometry.location.lat,
-            lng: r.geometry.location.lng,
-            isFallback: false
-          };
-        });
-
-        return res.json({ results });
-      }
-
-      return res.json({ results: [] });
-    } catch (err: any) {
-      console.error('[MAPS PROXY] Geocode error occurred:', err?.message);
-      return res.json({ results: [] });
+    } catch {
+      // Ignore Nominatim error
     }
+
+    return res.json({
+      results: matchedLocalities.length > 0 ? matchedLocalities : MUMBAI_AREAS_LOOKUP.slice(0, 4).map((item, idx) => ({
+        formattedAddress: item.address,
+        placeId: `mumbai-default-${idx}`,
+        area: item.area,
+        lat: item.lat,
+        lng: item.lng,
+        isFallback: true
+      }))
+    });
   });
 
   // Places API (New) Autocomplete endpoint
@@ -306,89 +434,136 @@ async function startServer() {
     }
 
     const mapsKey = getConfiguredGoogleMapsKey();
-    if (!isValidGoogleMapsKey(mapsKey)) {
-      return res.status(503).json({ error: 'Google Maps API key not configured', suggestions: [] });
-    }
-
-    try {
-      const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': mapsKey,
-          Referer: MAPS_REFERER_HEADER
-        },
-        body: JSON.stringify({
-          input: input.trim(),
-          locationBias: {
-            circle: {
-              center: {
-                latitude: typeof lat === 'number' ? lat : 19.076,
-                longitude: typeof lng === 'number' ? lng : 72.8777
-              },
-              radius: 50000.0
+    if (await verifyGoogleMapsKeyWorks(mapsKey)) {
+      try {
+        const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': mapsKey,
+            Referer: MAPS_REFERER_HEADER
+          },
+          body: JSON.stringify({
+            input: input.trim(),
+            locationBias: {
+              circle: {
+                center: {
+                  latitude: typeof lat === 'number' ? lat : 19.076,
+                  longitude: typeof lng === 'number' ? lng : 72.8777
+                },
+                radius: 50000.0
+              }
             }
-          }
-        })
-      });
+          })
+        });
 
-      if (!response.ok) {
-        return res.json({ suggestions: [] });
-      }
+        if (response.ok) {
+          const data = await response.json();
+          const rawSuggestions = (data.suggestions || []).slice(0, 5);
+          const resolved = await Promise.all(
+            rawSuggestions.map(async (item: any) => {
+              const pred = item.placePrediction;
+              if (!pred) return null;
+              const placeId = pred.placeId;
+              const mainText = pred.structuredFormat?.mainText?.text || pred.text?.text || input;
+              const fullText = pred.text?.text || mainText;
 
-      const data = await response.json();
-      const rawSuggestions = (data.suggestions || []).slice(0, 5);
-      const resolved = await Promise.all(
-        rawSuggestions.map(async (item: any) => {
-          const pred = item.placePrediction;
-          if (!pred) return null;
-          const placeId = pred.placeId;
-          const mainText = pred.structuredFormat?.mainText?.text || pred.text?.text || input;
-          const fullText = pred.text?.text || mainText;
-
-          if (placeId) {
-            try {
-              const detailRes = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-                headers: {
-                  'X-Goog-Api-Key': mapsKey,
-                  'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents',
-                  Referer: MAPS_REFERER_HEADER
-                }
-              });
-              if (detailRes.ok) {
-                const detail = await detailRes.json();
-                if (detail.location) {
-                  let area = mainText;
-                  for (const comp of detail.addressComponents || []) {
-                    if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
-                      area = comp.longText || comp.shortText || area;
-                      break;
+              if (placeId) {
+                try {
+                  const detailRes = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+                    headers: {
+                      'X-Goog-Api-Key': mapsKey,
+                      'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents',
+                      Referer: MAPS_REFERER_HEADER
+                    }
+                  });
+                  if (detailRes.ok) {
+                    const detail = await detailRes.json();
+                    if (detail.location) {
+                      let area = mainText;
+                      for (const comp of detail.addressComponents || []) {
+                        if (comp.types?.includes('sublocality_level_1') || comp.types?.includes('sublocality')) {
+                          area = comp.longText || comp.shortText || area;
+                          break;
+                        }
+                      }
+                      return {
+                        placeId,
+                        area,
+                        mainText: area,
+                        secondaryText: detail.formattedAddress || fullText,
+                        description: detail.formattedAddress || fullText,
+                        formattedAddress: detail.formattedAddress || fullText,
+                        lat: detail.location.latitude,
+                        lng: detail.location.longitude
+                      };
                     }
                   }
-                  return {
-                    placeId,
-                    area,
-                    formattedAddress: detail.formattedAddress || fullText,
-                    lat: detail.location.latitude,
-                    lng: detail.location.longitude
-                  };
+                } catch {
+                  // ignore individual place detail error
                 }
               }
-            } catch {
-              // ignore individual place detail error
-            }
-          }
-          return null;
-        })
-      );
+              return null;
+            })
+          );
 
-      return res.json({
-        suggestions: resolved.filter(Boolean)
-      });
-    } catch (err: any) {
-      console.error('[MAPS PROXY] Places Autocomplete error:', err?.message);
-      return res.json({ suggestions: [] });
+          const validResolved = resolved.filter(Boolean);
+          if (validResolved.length > 0) {
+            return res.json({ suggestions: validResolved });
+          }
+        }
+      } catch {
+        // Fall through to OpenStreetMap / Mumbai localities
+      }
     }
+
+    const qLower = input.trim().toLowerCase();
+    const matchedLocalities = MUMBAI_AREAS_LOOKUP.filter(
+      (item) => item.area.toLowerCase().includes(qLower) || item.address.toLowerCase().includes(qLower)
+    ).map((item, idx) => ({
+      placeId: `mumbai-auto-${idx}`,
+      area: item.area,
+      mainText: item.area,
+      secondaryText: item.address,
+      description: item.address,
+      formattedAddress: item.address,
+      lat: item.lat,
+      lng: item.lng
+    }));
+
+    try {
+      const searchQ = qLower.includes('mumbai') ? input.trim() : `${input.trim()}, Mumbai`;
+      const osmUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQ)}&limit=5&addressdetails=1`;
+      const osmResp = await fetch(osmUrl, {
+        headers: { 'User-Agent': 'DibloUrbanAssist/1.0' }
+      });
+      if (osmResp.ok) {
+        const osmData = await osmResp.json();
+        if (Array.isArray(osmData) && osmData.length > 0) {
+          const osmSuggestions = osmData.map((r: any, idx: number) => {
+            const pLat = Number(r.lat);
+            const pLng = Number(r.lon);
+            const nearest = findNearestMumbaiArea(pLat, pLng);
+            const area = r.address?.suburb || r.address?.neighbourhood || nearest.area || 'Mumbai';
+            return {
+              placeId: `osm-auto-${r.place_id || idx}`,
+              area,
+              mainText: r.name || area,
+              secondaryText: r.display_name,
+              description: r.display_name,
+              formattedAddress: r.display_name,
+              lat: pLat,
+              lng: pLng
+            };
+          });
+          return res.json({ suggestions: [...matchedLocalities, ...osmSuggestions].slice(0, 6) });
+        }
+      }
+    } catch {
+      // Ignore Nominatim error
+    }
+
+    return res.json({ suggestions: matchedLocalities.slice(0, 5) });
   });
 
   // Routes API Proxy (origin -> destination distance, duration & encoded polyline)
@@ -409,69 +584,110 @@ async function startServer() {
 
     const mapsKey = getConfiguredGoogleMapsKey();
 
-    if (!isValidGoogleMapsKey(mapsKey)) {
-      return res.status(503).json({ error: 'Google Maps API key is not configured' });
+    if (await verifyGoogleMapsKeyWorks(mapsKey)) {
+      try {
+        const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+        const bodyPayload = {
+          origin: {
+            location: {
+              latLng: { latitude: oLat, longitude: oLng }
+            }
+          },
+          destination: {
+            location: {
+              latLng: { latitude: dLat, longitude: dLng }
+            }
+          },
+          travelMode: travelMode === 'TWO_WHEELER' ? 'TWO_WHEELER' : travelMode === 'WALK' ? 'WALK' : 'DRIVE',
+          routingPreference: travelMode === 'WALK' ? undefined : 'TRAFFIC_AWARE'
+        };
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': mapsKey,
+            'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+            Referer: MAPS_REFERER_HEADER
+          },
+          body: JSON.stringify(bodyPayload)
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            const meters = route.distanceMeters || 0;
+            const distKm = Number((meters / 1000).toFixed(1));
+            const durationSec = parseInt(route.duration?.replace('s', '') || '60', 10);
+            const durationMins = Math.max(1, Math.round(durationSec / 60));
+
+            return res.json({
+              success: true,
+              distanceMeters: meters,
+              distanceKm: distKm,
+              distanceText: `${distKm} km`,
+              durationMinutes: durationMins,
+              durationText: `${durationMins} min`,
+              polyline: route.polyline?.encodedPolyline || null,
+              isFallback: false
+            });
+          }
+        }
+      } catch {
+        // Fall through to OSRM / Haversine route calculation
+      }
     }
 
     try {
-      const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
-      const bodyPayload = {
-        origin: {
-          location: {
-            latLng: { latitude: oLat, longitude: oLng }
-          }
-        },
-        destination: {
-          location: {
-            latLng: { latitude: dLat, longitude: dLng }
-          }
-        },
-        travelMode: travelMode === 'TWO_WHEELER' ? 'TWO_WHEELER' : travelMode === 'WALK' ? 'WALK' : 'DRIVE',
-        routingPreference: travelMode === 'WALK' ? undefined : 'TRAFFIC_AWARE'
-      };
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': mapsKey,
-          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
-          Referer: MAPS_REFERER_HEADER
-        },
-        body: JSON.stringify(bodyPayload)
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${oLng},${oLat};${dLng},${dLat}?overview=full&geometries=polyline`;
+      const osrmResp = await fetch(osrmUrl, {
+        headers: { 'User-Agent': 'DibloUrbanAssist/1.0' }
       });
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        console.warn(`[MAPS PROXY] Routes API returned status ${response.status}: ${errBody}`);
-        return res.status(response.status).json({ error: 'Routes API calculation failed' });
+      if (osrmResp.ok) {
+        const osrmData = await osrmResp.json();
+        if (osrmData.routes && osrmData.routes.length > 0) {
+          const r = osrmData.routes[0];
+          const meters = Math.round(r.distance || 1000);
+          const distKm = Number((meters / 1000).toFixed(1));
+          const durationMins = Math.max(2, Math.round((r.duration || 180) / 60));
+          return res.json({
+            success: true,
+            distanceMeters: meters,
+            distanceKm: distKm,
+            distanceText: `${distKm} km`,
+            durationMinutes: durationMins,
+            durationText: `${durationMins} min`,
+            polyline: r.geometry || null,
+            isFallback: true
+          });
+        }
       }
-
-      const data = await response.json();
-      if (data.routes && data.routes.length > 0) {
-        const route = data.routes[0];
-        const meters = route.distanceMeters || 0;
-        const distKm = Number((meters / 1000).toFixed(1));
-        const durationSec = parseInt(route.duration?.replace('s', '') || '60', 10);
-        const durationMins = Math.max(1, Math.round(durationSec / 60));
-
-        return res.json({
-          success: true,
-          distanceMeters: meters,
-          distanceKm: distKm,
-          distanceText: `${distKm} km`,
-          durationMinutes: durationMins,
-          durationText: `${durationMins} min`,
-          polyline: route.polyline?.encodedPolyline || null,
-          isFallback: false
-        });
-      }
-
-      return res.status(404).json({ error: 'No route found between the specified locations' });
-    } catch (err: any) {
-      console.error('[MAPS PROXY] Routes API request error:', err?.message);
-      return res.status(500).json({ error: 'Failed to compute route' });
+    } catch {
+      // Fall through to Haversine road estimate
     }
+
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const R = 6371;
+    const dLatRad = toRad(dLat - oLat);
+    const dLngRad = toRad(dLng - oLng);
+    const a =
+      Math.sin(dLatRad / 2) ** 2 +
+      Math.cos(toRad(oLat)) * Math.cos(toRad(dLat)) * Math.sin(dLngRad / 2) ** 2;
+    const straightKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const roadKm = Math.max(0.5, Number((straightKm * 1.32).toFixed(1)));
+    const estMins = Math.max(3, Math.round(roadKm * 3.5));
+
+    return res.json({
+      success: true,
+      distanceMeters: Math.round(roadKm * 1000),
+      distanceKm: roadKm,
+      distanceText: `${roadKm} km`,
+      durationMinutes: estMins,
+      durationText: `${estMins} min`,
+      polyline: null,
+      isFallback: true
+    });
   });
 
   // ==========================================

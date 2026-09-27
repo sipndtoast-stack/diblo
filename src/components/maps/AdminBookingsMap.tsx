@@ -53,6 +53,7 @@ const AdminMapBoundsController: React.FC<{
 
 const LeafletAdminBookingsMapInner: React.FC<{
   bookings: Booking[];
+  selectedBooking?: Booking | null;
   onBookingSelect?: (bookingId: string) => void;
   getStatusColor: (status: string) => string;
 }> = ({ bookings, onBookingSelect, getStatusColor }) => {

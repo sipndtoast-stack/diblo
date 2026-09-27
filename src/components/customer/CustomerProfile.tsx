@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import {
@@ -125,6 +125,35 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     relationship: customerProfile?.emergencyContact?.relationship || '',
     phone: customerProfile?.emergencyContact?.phone || ''
   });
+
+  // Sync form state when real Firebase customerProfile / currentUser loads or updates
+  useEffect(() => {
+    if (!isEditingPersonalInfo) {
+      setFormData({
+        name:
+          customerProfile?.name ||
+          (currentUser?.name && currentUser.name !== 'Customer' ? currentUser.name : ''),
+        phone: customerProfile?.phone || currentUser?.phone || '',
+        email: customerProfile?.email || currentUser?.email || '',
+        alternatePhone: customerProfile?.alternatePhone || '',
+        gender: customerProfile?.gender || '',
+        dob: customerProfile?.dob || '',
+        preferredLanguage: customerProfile?.preferredLanguage || 'English',
+        bloodGroup: customerProfile?.bloodGroup || '',
+        specialInstructions: customerProfile?.specialInstructions || ''
+      });
+    }
+  }, [customerProfile, currentUser, isEditingPersonalInfo]);
+
+  useEffect(() => {
+    if (!isEditingEmergencyContact && customerProfile?.emergencyContact) {
+      setEmergencyData({
+        name: customerProfile.emergencyContact.name || '',
+        relationship: customerProfile.emergencyContact.relationship || '',
+        phone: customerProfile.emergencyContact.phone || ''
+      });
+    }
+  }, [customerProfile, isEditingEmergencyContact]);
 
   // Address State
   const [showAddAddress, setShowAddAddress] = useState(false);
@@ -339,7 +368,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         {/* Profile Header Details */}
         <div className="flex-1 text-center md:text-left space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-center md:justify-start">
-            <h2 className="text-xl sm:text-2xl font-black text-[#14213D]">{formData.name}</h2>
+            <h2 className="text-xl sm:text-2xl font-black text-[#14213D]">
+              {formData.name || 'Customer'}
+            </h2>
             <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full mx-auto sm:mx-0 w-fit">
               <ShieldCheck className="w-3 h-3 text-emerald-600" />
               <span>Verified Customer</span>
@@ -518,7 +549,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-[#F42F73] outline-hidden min-h-[44px]"
-                  placeholder="aarav.mehta@gmail.com"
+                  placeholder="your.email@example.com"
                   required
                 />
               </div>

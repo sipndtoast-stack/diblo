@@ -27,12 +27,21 @@ import {
   isDemoBookingRecord
 } from '../../lib/firestoreBookings';
 
+export type CustomerRequestFilter = 'UPCOMING' | 'ACTIVE' | 'COMPLETED';
+
 interface CustomerBookingsProps {
   onSelectBooking: (booking: Booking) => void;
   onOpenBooking: () => void;
+  activeFilter?: CustomerRequestFilter;
+  onFilterChange?: (filter: CustomerRequestFilter) => void;
 }
 
-export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBooking, onOpenBooking }) => {
+export const CustomerBookings: React.FC<CustomerBookingsProps> = ({
+  onSelectBooking,
+  onOpenBooking,
+  activeFilter,
+  onFilterChange
+}) => {
   const {
     bookings,
     pushPermission,
@@ -43,7 +52,16 @@ export const CustomerBookings: React.FC<CustomerBookingsProps> = ({ onSelectBook
   } = useBooking();
   const { toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
 
-  const [filter, setFilter] = useState<'UPCOMING' | 'ACTIVE' | 'COMPLETED'>('UPCOMING');
+  const [internalFilter, setInternalFilter] = useState<CustomerRequestFilter>(
+    activeFilter || 'UPCOMING'
+  );
+  const filter: CustomerRequestFilter = activeFilter ?? internalFilter;
+  const setFilter = (nextFilter: CustomerRequestFilter) => {
+    setInternalFilter(nextFilter);
+    if (onFilterChange) {
+      onFilterChange(nextFilter);
+    }
+  };
   const [selectedInvoiceBooking, setSelectedInvoiceBooking] = useState<Booking | null>(null);
   const [ratingBooking, setRatingBooking] = useState<Booking | null>(null);
   const [testAlertFeedback, setTestAlertFeedback] = useState<string | null>(null);

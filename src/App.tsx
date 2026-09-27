@@ -7,7 +7,7 @@ import { NotificationToast } from './components/common/NotificationToast';
 import { CustomerHeader } from './components/customer/CustomerHeader';
 import { CustomerBottomNav } from './components/customer/CustomerBottomNav';
 import { CustomerHome } from './components/customer/CustomerHome';
-import { CustomerBookings } from './components/customer/CustomerBookings';
+import { CustomerBookings, CustomerRequestFilter } from './components/customer/CustomerBookings';
 import { ActiveBookingView } from './components/customer/ActiveBookingView';
 import { CustomerProfile } from './components/customer/CustomerProfile';
 import { CustomerSupport } from './components/customer/CustomerSupport';
@@ -79,6 +79,18 @@ const MainAppContent: React.FC = () => {
     return 'HOME';
   });
 
+  // Customer My Requests Filter State (Upcoming | Active | Completed)
+  const [requestsFilter, setRequestsFilter] = useState<CustomerRequestFilter>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const f = (params.get('filter') || '').toUpperCase();
+      if (f === 'UPCOMING' || f === 'ACTIVE' || f === 'COMPLETED') {
+        return f as CustomerRequestFilter;
+      }
+    }
+    return 'UPCOMING';
+  });
+
   // Logout Confirmation Dialog State
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -116,6 +128,17 @@ const MainAppContent: React.FC = () => {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
       setCurrentPath(path);
+    }
+  };
+
+  // Handle selecting Upcoming / Active / Completed under My Requests
+  const handleSelectRequestFilter = (filter: CustomerRequestFilter) => {
+    setRequestsFilter(filter);
+    setCustomerTab('REQUESTS');
+    const path = `/customer/requests?filter=${filter.toLowerCase()}`;
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', path);
+      setCurrentPath('/customer/requests');
     }
   };
 
@@ -416,23 +439,14 @@ const MainAppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#fcfcfc] flex font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
-      {/* Desktop Customer Sidebar (Visible on Desktop >= lg, left side, Diblo logo + 8 navigation items) */}
-      <CustomerSidebar
-        activeTab={customerTab}
-        onSelectTab={(tab) => handleCustomerTabChange(tab)}
-        onOpenLogout={() => setShowLogoutConfirm(true)}
-        onOpenBooking={() => {
-          setPreSelectedAssistant(null);
-          setIsBookingModalOpen(true);
-        }}
-      />
-
-      {/* Main Content View (Header + Active Tab Content) */}
+      {/* Main Content View (Header with Hamburger Drawer + Active Tab Content) */}
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         {/* Customer Header */}
         <CustomerHeader
           onOpenBooking={() => setIsBookingModalOpen(true)}
           onSelectTab={(tab) => handleCustomerTabChange(tab)}
+          onSelectRequestFilter={handleSelectRequestFilter}
+          requestsFilter={requestsFilter}
           activeTab={customerTab}
           onOpenLogout={() => setShowLogoutConfirm(true)}
         />
@@ -453,6 +467,8 @@ const MainAppContent: React.FC = () => {
 
           {(customerTab === 'REQUESTS' || customerTab === 'BOOKINGS') && (
             <CustomerBookings
+              activeFilter={requestsFilter}
+              onFilterChange={(nextFilter) => setRequestsFilter(nextFilter)}
               onSelectBooking={handleSelectBookingFromList}
               onOpenBooking={() => {
                 setPreSelectedAssistant(null);

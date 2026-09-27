@@ -219,10 +219,93 @@ export function subscribeToRealtimeBookings(
     if (isCancelled) return;
 
     const bookingsCol = collection(db, 'bookings');
-    const qRef =
-      params.role === 'CUSTOMER' && uid
-        ? query(bookingsCol, where('customerUid', '==', uid))
-        : query(bookingsCol);
+
+    if (params.role === 'CUSTOMER' && uid) {
+      const byUidMap = new Map<string, Booking>();
+      const byIdMap = new Map<string, Booking>();
+
+      const emitMergedCustomerBookings = () => {
+        const mergedMap = new Map<string, Booking>();
+        byUidMap.forEach((v, k) => mergedMap.set(k, v));
+        byIdMap.forEach((v, k) => mergedMap.set(k, v));
+        const list = Array.from(mergedMap.values());
+        list.sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime()
+        );
+        onBookingsUpdate(list);
+      };
+
+      const filterCustomerRecord = (docId: string, data: Booking): Booking | null => {
+        const record: Booking = {
+          ...data,
+          id: docId || data.id
+        };
+        if (isDemoBookingRecord(record)) return null;
+        const cleanCustPhone = (params.customerPhone || '').replace(/\D/g, '').slice(-10);
+        const recPhone = (record.customerPhone || '').replace(/\D/g, '').slice(-10);
+        const matchesId =
+          (params.customerId && record.customerId === params.customerId) ||
+          record.customerId === uid;
+        const matchesPhone = Boolean(cleanCustPhone && recPhone === cleanCustPhone);
+        const matchesUid = Boolean(uid && record.customerUid === uid);
+        if (matchesUid || matchesId || matchesPhone) {
+          return record;
+        }
+        return null;
+      };
+
+      const qByUid = query(bookingsCol, where('customerUid', '==', uid));
+      const qById = query(bookingsCol, where('customerId', '==', uid));
+
+      const unsubUid = onSnapshot(
+        qByUid,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('diblo-firebase-connection', {
+                detail: { connected: !snapshot.metadata.fromCache || navigator.onLine }
+              })
+            );
+          }
+          byUidMap.clear();
+          snapshot.forEach((docSnap) => {
+            const rec = filterCustomerRecord(docSnap.id, docSnap.data() as Booking);
+            if (rec) byUidMap.set(rec.id, rec);
+          });
+          emitMergedCustomerBookings();
+        },
+        (err) => {
+          console.debug('[FirestoreBookings] customerUid listener notice:', err.message);
+        }
+      );
+
+      const unsubId = onSnapshot(
+        qById,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          byIdMap.clear();
+          snapshot.forEach((docSnap) => {
+            const rec = filterCustomerRecord(docSnap.id, docSnap.data() as Booking);
+            if (rec) byIdMap.set(rec.id, rec);
+          });
+          emitMergedCustomerBookings();
+        },
+        (err) => {
+          console.debug('[FirestoreBookings] customerId listener notice:', err.message);
+        }
+      );
+
+      innerUnsub = () => {
+        unsubUid();
+        unsubId();
+      };
+      return;
+    }
+
+    const qRef = query(bookingsCol);
 
     innerUnsub = onSnapshot(
       qRef,

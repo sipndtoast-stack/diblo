@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   MapPin,
   Crosshair,
@@ -137,6 +138,187 @@ const MapController: React.FC<{
   return null;
 };
 
+const LeafletLocationPickerInner: React.FC<{
+  pickupPos: { lat: number; lng: number };
+  destPos?: { lat: number; lng: number } | null;
+  encodedPolyline?: string | null;
+  shouldPan: boolean;
+  onPanComplete: () => void;
+  onMapClickCoords: (lat: number, lng: number) => void;
+  onPickupDragEnd: (lat: number, lng: number) => void;
+  onDestDragEnd: (lat: number, lng: number) => void;
+}> = ({
+  pickupPos,
+  destPos,
+  encodedPolyline,
+  shouldPan,
+  onPanComplete,
+  onMapClickCoords,
+  onPickupDragEnd,
+  onDestDragEnd
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const pickupMarkerRef = useRef<L.Marker | null>(null);
+  const destMarkerRef = useRef<L.Marker | null>(null);
+  const polylineRef = useRef<L.Polyline | null>(null);
+
+  const clickCallbackRef = useRef(onMapClickCoords);
+  const pickupDragRef = useRef(onPickupDragEnd);
+  const destDragRef = useRef(onDestDragEnd);
+
+  useEffect(() => {
+    clickCallbackRef.current = onMapClickCoords;
+    pickupDragRef.current = onPickupDragEnd;
+    destDragRef.current = onDestDragEnd;
+  }, [onMapClickCoords, onPickupDragEnd, onDestDragEnd]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    if (!mapRef.current) {
+      const map = L.map(containerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([pickupPos.lat, pickupPos.lng], 15);
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      map.on('click', (e: L.LeafletMouseEvent) => {
+        const lat = Number(e.latlng.lat.toFixed(6));
+        const lng = Number(e.latlng.lng.toFixed(6));
+        clickCallbackRef.current(lat, lng);
+      });
+
+      mapRef.current = map;
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 150);
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        pickupMarkerRef.current = null;
+        destMarkerRef.current = null;
+        polylineRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Update or create Pickup marker
+    const pickupIcon = L.divIcon({
+      className: 'diblo-pickup-leaflet-pin',
+      html: `
+        <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+          <div style="background:#059669;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(0,0,0,0.2);margin-bottom:4px;white-space:nowrap;">
+            Pickup Location
+          </div>
+          <div style="width:36px;height:36px;border-radius:9999px;background:#059669;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;">
+            📍
+          </div>
+        </div>
+      `,
+      iconSize: [0, 0],
+      iconAnchor: [0, 0]
+    });
+
+    if (!pickupMarkerRef.current) {
+      const m = L.marker([pickupPos.lat, pickupPos.lng], {
+        icon: pickupIcon,
+        draggable: true
+      }).addTo(map);
+
+      m.on('dragend', () => {
+        const pos = m.getLatLng();
+        pickupDragRef.current(Number(pos.lat.toFixed(6)), Number(pos.lng.toFixed(6)));
+      });
+      pickupMarkerRef.current = m;
+    } else {
+      pickupMarkerRef.current.setLatLng([pickupPos.lat, pickupPos.lng]);
+    }
+
+    // Update or create Destination marker
+    if (destPos) {
+      const destIcon = L.divIcon({
+        className: 'diblo-dest-leaflet-pin',
+        html: `
+          <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+            <div style="background:#4F46E5;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(0,0,0,0.2);margin-bottom:4px;white-space:nowrap;">
+              Destination
+            </div>
+            <div style="width:36px;height:36px;border-radius:9999px;background:#4F46E5;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;">
+              🏁
+            </div>
+          </div>
+        `,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0]
+      });
+
+      if (!destMarkerRef.current) {
+        const dm = L.marker([destPos.lat, destPos.lng], {
+          icon: destIcon,
+          draggable: true
+        }).addTo(map);
+        dm.on('dragend', () => {
+          const pos = dm.getLatLng();
+          destDragRef.current(Number(pos.lat.toFixed(6)), Number(pos.lng.toFixed(6)));
+        });
+        destMarkerRef.current = dm;
+      } else {
+        destMarkerRef.current.setLatLng([destPos.lat, destPos.lng]);
+      }
+    } else if (destMarkerRef.current) {
+      map.removeLayer(destMarkerRef.current);
+      destMarkerRef.current = null;
+    }
+
+    // Update route polyline
+    if (polylineRef.current) {
+      map.removeLayer(polylineRef.current);
+      polylineRef.current = null;
+    }
+
+    if (destPos) {
+      const pts = encodedPolyline
+        ? decodeGooglePolyline(encodedPolyline).map((p) => [p.lat, p.lng] as [number, number])
+        : ([
+            [pickupPos.lat, pickupPos.lng],
+            [destPos.lat, destPos.lng]
+          ] as [number, number][]);
+
+      polylineRef.current = L.polyline(pts, {
+        color: '#4F46E5',
+        weight: 5,
+        opacity: 0.9
+      }).addTo(map);
+    }
+
+    if (shouldPan) {
+      if (destPos) {
+        const bounds = L.latLngBounds([
+          [pickupPos.lat, pickupPos.lng],
+          [destPos.lat, destPos.lng]
+        ]);
+        map.fitBounds(bounds, { padding: [45, 45] });
+      } else {
+        map.setView([pickupPos.lat, pickupPos.lng], Math.max(map.getZoom(), 15));
+      }
+      onPanComplete();
+    }
+  }, [pickupPos, destPos, encodedPolyline, shouldPan, onPanComplete]);
+
+  return <div ref={containerRef} className="w-full h-full" />;
+};
+
 interface PlaceSuggestionItem {
   placeId: string;
   mainText: string;
@@ -157,7 +339,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   showDestinationInput = false,
   height = '260px'
 }) => {
-  const { isConfigured, isLoading: isConfigLoading } = useGoogleMapsConfig();
+  const { isConfigured, isLoading: isConfigLoading, authError } = useGoogleMapsConfig();
 
   const [activePinMode, setActivePinMode] = useState<'PICKUP' | 'DESTINATION'>('PICKUP');
   const [markerPos, setMarkerPos] = useState<{ lat: number; lng: number }>({
@@ -186,7 +368,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   const [destResolvedAddress, setDestResolvedAddress] = useState<string>(destinationLocation?.address || '');
   const [destResolvedArea, setDestResolvedArea] = useState<string>(destinationLocation?.area || '');
 
-  // Route State (Google Routes API)
+  // Route State
   const [routeSummary, setRouteSummary] = useState<RouteCalculationSummary | null>(null);
   const [isCalculatingRoute, setIsCalculatingRoute] = useState<boolean>(false);
 
@@ -194,13 +376,16 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   const destTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (initialLat && initialLng && (Math.abs(initialLat - markerPos.lat) > 0.0001 || Math.abs(initialLng - markerPos.lng) > 0.0001)) {
+    if (
+      initialLat &&
+      initialLng &&
+      (Math.abs(initialLat - markerPos.lat) > 0.0001 || Math.abs(initialLng - markerPos.lng) > 0.0001)
+    ) {
       setMarkerPos({ lat: initialLat, lng: initialLng });
       setShouldPan(true);
     }
   }, [initialLat, initialLng]);
 
-  // Calculate real route via Google Routes API whenever both pickup and destination are set
   const computeRouteBetweenPoints = useCallback(
     async (
       pickup: { lat: number; lng: number },
@@ -241,7 +426,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     [onDestinationSelect]
   );
 
-  // Reverse geocode coordinates using Google Geocoding API
   const fetchAddressForCoords = useCallback(
     async (lat: number, lng: number, target: 'PICKUP' | 'DESTINATION' = 'PICKUP') => {
       setIsReverseGeocoding(true);
@@ -289,14 +473,12 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     [onLocationSelect, destMarkerPos, destResolvedAddress, destResolvedArea, markerPos, computeRouteBetweenPoints]
   );
 
-  // Initial reverse geocode if address is empty
   useEffect(() => {
     if (!initialAddress && initialLat && initialLng) {
       fetchAddressForCoords(initialLat, initialLng, 'PICKUP');
     }
   }, []);
 
-  // Search Places using Google Places API (New) Autocomplete + Geocoding fallback
   const performPlacesSearch = async (
     queryText: string,
     setResults: React.Dispatch<React.SetStateAction<PlaceSuggestionItem[]>>,
@@ -315,7 +497,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         return;
       }
 
-      // Fallback to Geocoding API
       const geoData = await api.geocodeAddress(queryText);
       const mapped: PlaceSuggestionItem[] = (geoData.results || []).map((r, i) => ({
         placeId: r.placeId || `geo-${i}`,
@@ -467,11 +648,8 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     );
   };
 
-  const handleMapClick = (e: any) => {
-    const latLng = e?.detail?.latLng;
-    if (latLng && typeof latLng.lat === 'number' && typeof latLng.lng === 'number') {
-      const lat = Number(latLng.lat.toFixed(6));
-      const lng = Number(latLng.lng.toFixed(6));
+  const handleCoordinatesSelectedFromMap = useCallback(
+    (lat: number, lng: number) => {
       if (activePinMode === 'DESTINATION' && showDestinationInput) {
         setDestMarkerPos({ lat, lng });
         fetchAddressForCoords(lat, lng, 'DESTINATION');
@@ -479,12 +657,24 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         setMarkerPos({ lat, lng });
         fetchAddressForCoords(lat, lng, 'PICKUP');
       }
+    },
+    [activePinMode, showDestinationInput, fetchAddressForCoords]
+  );
+
+  const handleMapClick = (e: any) => {
+    const latLng = e?.detail?.latLng;
+    if (latLng && typeof latLng.lat === 'number' && typeof latLng.lng === 'number') {
+      const lat = Number(latLng.lat.toFixed(6));
+      const lng = Number(latLng.lng.toFixed(6));
+      handleCoordinatesSelectedFromMap(lat, lng);
     }
   };
 
+  const useGoogleMapCanvas = isConfigured && !authError;
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-      {/* Pickup & Destination Search Header (Google Places API New) */}
+      {/* Pickup & Destination Search Header */}
       <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
         <div className="flex flex-col sm:flex-row gap-2 relative">
           <div className="relative flex-1">
@@ -494,7 +684,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
               onFocus={() => setActivePinMode('PICKUP')}
-              placeholder="Search pickup / current location on Google Places..."
+              placeholder="Search pickup / current location in Mumbai..."
               className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             {isSearching && (
@@ -537,7 +727,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           </div>
         )}
 
-        {/* Destination Search Input (Google Places API New) */}
+        {/* Destination Search Input */}
         {showDestinationInput && (
           <div className="relative">
             <Flag className="w-4 h-4 text-indigo-600 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -615,13 +805,13 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         )}
       </div>
 
-      {/* Real Interactive Google Map Canvas */}
+      {/* Interactive Map Canvas */}
       <div className="relative w-full bg-slate-100" style={{ height }}>
         {isConfigLoading ? (
           <div className="w-full h-full flex items-center justify-center bg-slate-100">
             <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
           </div>
-        ) : isConfigured ? (
+        ) : useGoogleMapCanvas ? (
           <Map
             defaultCenter={markerPos}
             defaultZoom={15}
@@ -693,24 +883,37 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             )}
           </Map>
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-slate-100 text-xs text-slate-500 p-4 text-center">
-            Loading Google Maps...
-          </div>
+          <LeafletLocationPickerInner
+            pickupPos={markerPos}
+            destPos={destMarkerPos}
+            encodedPolyline={routeSummary?.polyline}
+            shouldPan={shouldPan}
+            onPanComplete={() => setShouldPan(false)}
+            onMapClickCoords={handleCoordinatesSelectedFromMap}
+            onPickupDragEnd={(lat, lng) => {
+              setMarkerPos({ lat, lng });
+              fetchAddressForCoords(lat, lng, 'PICKUP');
+            }}
+            onDestDragEnd={(lat, lng) => {
+              setDestMarkerPos({ lat, lng });
+              fetchAddressForCoords(lat, lng, 'DESTINATION');
+            }}
+          />
         )}
 
-        {/* Live Google Maps Badge */}
-        <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-sm flex items-center gap-1.5 pointer-events-none">
+        {/* Live Map Badge */}
+        <div className="absolute top-3 left-3 z-[400] bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-sm flex items-center gap-1.5 pointer-events-none">
           <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-          <span className="text-[11px] font-bold text-slate-700">Google Maps Live</span>
+          <span className="text-[11px] font-bold text-slate-700">Live Map</span>
         </div>
 
         {/* Route Distance & Travel Time Overlay when Destination is set */}
         {(routeSummary || isCalculatingRoute) && (
-          <div className="absolute bottom-3 left-3 right-3 bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2 rounded-xl shadow-lg flex items-center justify-between gap-2">
+          <div className="absolute bottom-3 left-3 right-3 z-[400] bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2 rounded-xl shadow-lg flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <RouteIcon className="w-4 h-4 text-indigo-400 shrink-0" />
               <span className="text-xs font-semibold">
-                {isCalculatingRoute ? 'Calculating Google Route...' : `Route Distance: ${routeSummary?.distanceText}`}
+                {isCalculatingRoute ? 'Calculating Route...' : `Route Distance: ${routeSummary?.distanceText}`}
               </span>
             </div>
             {routeSummary && !isCalculatingRoute && (
@@ -742,7 +945,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-600 truncate">
-                {resolvedAddress || 'Tap on the Google Map or search above to pin pickup location'}
+                {resolvedAddress || 'Tap on the map or search above to pin pickup location'}
               </p>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   Navigation,
   MapPin,
@@ -139,6 +140,159 @@ const RouteLineRenderer: React.FC<{
   return null;
 };
 
+const LeafletAssistantTaskMapInner: React.FC<{
+  assistantCoords: { lat: number; lng: number } | null;
+  pickupCoords: { lat: number; lng: number };
+  destCoords: { lat: number; lng: number } | null;
+  encodedPolyline: string | null;
+  customerName: string;
+  assistantName: string;
+}> = ({
+  assistantCoords,
+  pickupCoords,
+  destCoords,
+  encodedPolyline,
+  customerName,
+  assistantName
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    if (!mapRef.current) {
+      const map = L.map(containerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([pickupCoords.lat, pickupCoords.lng], 14);
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      mapRef.current = map;
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 150);
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.eachLayer((layer) => {
+      if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+        map.removeLayer(layer);
+      }
+    });
+
+    const bounds: [number, number][] = [];
+
+    if (assistantCoords) {
+      const asstIcon = L.divIcon({
+        className: 'diblo-assistant-leaflet-pin',
+        html: `
+          <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+            <div style="background:#4F46E5;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(0,0,0,0.2);margin-bottom:4px;white-space:nowrap;">
+              ${assistantName} (Live GPS)
+            </div>
+            <div style="width:36px;height:36px;border-radius:9999px;background:#4F46E5;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;">
+              🛵
+            </div>
+          </div>
+        `,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0]
+      });
+      L.marker([assistantCoords.lat, assistantCoords.lng], { icon: asstIcon }).addTo(map);
+      bounds.push([assistantCoords.lat, assistantCoords.lng]);
+    }
+
+    const pickupIcon = L.divIcon({
+      className: 'diblo-pickup-task-pin',
+      html: `
+        <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+          <div style="background:#059669;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(0,0,0,0.2);margin-bottom:4px;white-space:nowrap;">
+            Pickup: ${customerName}
+          </div>
+          <div style="width:36px;height:36px;border-radius:9999px;background:#059669;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;">
+            📍
+          </div>
+        </div>
+      `,
+      iconSize: [0, 0],
+      iconAnchor: [0, 0]
+    });
+    L.marker([pickupCoords.lat, pickupCoords.lng], { icon: pickupIcon }).addTo(map);
+    bounds.push([pickupCoords.lat, pickupCoords.lng]);
+
+    if (destCoords) {
+      const destIcon = L.divIcon({
+        className: 'diblo-dest-task-pin',
+        html: `
+          <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+            <div style="background:#D97706;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(0,0,0,0.2);margin-bottom:4px;white-space:nowrap;">
+              Destination
+            </div>
+            <div style="width:36px;height:36px;border-radius:9999px;background:#D97706;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;">
+              🏁
+            </div>
+          </div>
+        `,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0]
+      });
+      L.marker([destCoords.lat, destCoords.lng], { icon: destIcon }).addTo(map);
+      bounds.push([destCoords.lat, destCoords.lng]);
+    }
+
+    const startPoint = assistantCoords || pickupCoords;
+    const endPoint = assistantCoords ? pickupCoords : destCoords;
+
+    if (startPoint && endPoint) {
+      const pts = encodedPolyline
+        ? decodePolyline(encodedPolyline).map((p) => [p.lat, p.lng] as [number, number])
+        : ([
+            [startPoint.lat, startPoint.lng],
+            [endPoint.lat, endPoint.lng]
+          ] as [number, number][]);
+
+      L.polyline(pts, {
+        color: '#4F46E5',
+        weight: 5,
+        opacity: 0.9
+      }).addTo(map);
+    }
+
+    if (bounds.length > 1) {
+      map.fitBounds(bounds, { padding: [45, 45] });
+    } else if (bounds.length === 1) {
+      map.setView(bounds[0], 15);
+    }
+  }, [
+    assistantCoords?.lat,
+    assistantCoords?.lng,
+    pickupCoords.lat,
+    pickupCoords.lng,
+    destCoords?.lat,
+    destCoords?.lng,
+    encodedPolyline,
+    customerName,
+    assistantName
+  ]);
+
+  return <div ref={containerRef} className="w-full h-full" />;
+};
+
 export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
   assistantLocation,
   customerLocation,
@@ -148,7 +302,7 @@ export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
   bookingStatus = 'accepted',
   height = '260px'
 }) => {
-  const { isConfigured } = useGoogleMapsConfig();
+  const { isConfigured, authError } = useGoogleMapsConfig();
 
   const [routeData, setRouteData] = useState<{
     distanceText: string;
@@ -231,6 +385,8 @@ export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
       }
     : pickupCoords;
 
+  const useGoogleMapCanvas = isConfigured && !authError;
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
       {/* Top Route Telemetry Bar */}
@@ -250,7 +406,7 @@ export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
                   ? 'Arrived at Pickup'
                   : bookingStatus === 'IN_PROGRESS' || bookingStatus === 'in_progress'
                   ? 'Assistance in Progress'
-                  : 'Google Routes Live Dispatch'}
+                  : 'Live Dispatch Route'}
               </span>
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold">
                 <Sparkles className="w-2.5 h-2.5" /> Live
@@ -282,9 +438,9 @@ export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
         </button>
       </div>
 
-      {/* Real Google Map Viewport */}
+      {/* Interactive Map Viewport */}
       <div className="relative w-full bg-slate-100" style={{ height }}>
-        {isConfigured ? (
+        {useGoogleMapCanvas ? (
           <Map
             defaultCenter={center}
             defaultZoom={14}
@@ -344,9 +500,14 @@ export const AssistantTaskMap: React.FC<AssistantTaskMapProps> = ({
             )}
           </Map>
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-slate-100 text-xs text-slate-500">
-            Loading Google Maps...
-          </div>
+          <LeafletAssistantTaskMapInner
+            assistantCoords={assistantCoords}
+            pickupCoords={pickupCoords}
+            destCoords={destCoords}
+            encodedPolyline={routeData?.polyline || null}
+            customerName={customerName}
+            assistantName={assistantName}
+          />
         )}
       </div>
 
