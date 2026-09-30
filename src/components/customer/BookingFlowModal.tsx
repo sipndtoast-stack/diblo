@@ -1034,12 +1034,18 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
               <div className="space-y-5 py-2">
                 {!isAssistantAssignedLive ? (
                   <div className="text-center space-y-2">
-                    <div className="w-16 h-16 rounded-full bg-amber-50 border-2 border-amber-200 flex items-center justify-center mx-auto text-amber-600">
-                      <Sparkles className="w-8 h-8 animate-pulse" />
+                    <div className="relative w-16 h-16 rounded-full bg-[#FFF0F5] border-2 border-[#F42F73]/30 flex items-center justify-center mx-auto text-[#F42F73]">
+                      <span className="absolute inset-0 rounded-full bg-[#F42F73]/20 animate-ping" />
+                      <Sparkles className="w-8 h-8 animate-pulse relative z-10" />
                     </div>
-                    <h3 className="text-lg sm:text-xl font-black text-[#14213D]">Booking Request Sent</h3>
+                    <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-wider">
+                      Booking Request Sent
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-black text-[#14213D]">
+                      Finding your assistant...
+                    </h3>
                     <p className="text-xs sm:text-sm text-gray-600">
-                      Your request has been sent to available assistants.
+                      Matching your request simultaneously with nearby available Diblo assistants.
                     </p>
                   </div>
                 ) : (
@@ -1047,7 +1053,12 @@ export const BookingFlowModal: React.FC<BookingFlowModalProps> = ({
                     <div className="w-16 h-16 rounded-full bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center mx-auto text-emerald-600">
                       <CheckCircle2 className="w-8 h-8" />
                     </div>
-                    <h3 className="text-lg sm:text-xl font-black text-[#14213D]">Assistant Assigned</h3>
+                    <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider">
+                      Assistant Assigned
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-black text-[#14213D]">
+                      Assistant Found
+                    </h3>
                     <p className="text-xs sm:text-sm text-emerald-700 font-semibold">
                       Your Diblo assistant has accepted your request!
                     </p>

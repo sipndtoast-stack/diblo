@@ -9,7 +9,15 @@ import {
   subscribeToRealtimeBookings,
   subscribeToBookingLiveLocation,
   isDemoBookingRecord,
-  normalizeBookingStatus
+  normalizeBookingStatus,
+  findEligibleNearbyAssistantsInFirestore,
+  acceptBookingAtomicallyInFirestore,
+  declineBookingForAssistantInFirestore,
+  expireBookingForAssistantInFirestore,
+  AtomicAcceptResult,
+  PARALLEL_REQUEST_WINDOW_MS,
+  DEFAULT_SERVICE_RADIUS_KM,
+  MAX_DISPATCH_RETRIES
 } from '../lib/firestoreBookings';
 import { useAuth } from './AuthContext';
 import {
@@ -60,8 +68,10 @@ interface BookingContextType {
       assistantPhoto?: string;
       assistantRating?: number;
     }
-  ) => Promise<void>;
+  ) => Promise<AtomicAcceptResult>;
   rejectBooking: (bookingId: string, assistantId?: string) => Promise<void>;
+  expireBookingForAssistant: (bookingId: string, assistantId?: string) => Promise<void>;
+  retryBookingDispatch: (bookingId: string, manualRetry?: boolean) => Promise<Booking | null>;
   startAssistance: (bookingId: string) => Promise<void>;
   updateAssistantLiveLocation: (
     bookingId: string,
@@ -98,7 +108,14 @@ const BookingContext = createContext<BookingContextType | undefined>(undefined);
 
 function isActiveBookingStatus(status: string | undefined): boolean {
   const norm = normalizeBookingStatus(status);
-  return norm === 'pending' || norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress';
+  return (
+    norm === 'pending' ||
+    norm === 'accepted' ||
+    norm === 'on_the_way' ||
+    norm === 'arrived' ||
+    norm === 'in_progress' ||
+    norm === 'no_assistant_available'
+  );
 }
 
 export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -556,29 +573,78 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       bookingData.customerId || customerProfile?.id || (cleanPhone ? `cust-${cleanPhone}` : currentUser?.id || `cust-${Date.now()}`);
     const resolvedCustomerUid = auth.currentUser?.uid || bookingData.customerUid || currentUser?.id || resolvedCustomerId;
 
+    const pickupLat = Number(bookingData.pickupLocation?.lat ?? bookingData.location?.lat ?? 19.0596);
+    const pickupLng = Number(bookingData.pickupLocation?.lng ?? bookingData.location?.lng ?? 72.8295);
+
+    // 1. Immediately find ALL eligible nearby assistants in parallel
+    const { candidateAssistantIds } = await findEligibleNearbyAssistantsInFirestore({
+      pickupLat,
+      pickupLng,
+      radiusKm: DEFAULT_SERVICE_RADIUS_KM
+    });
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const expiresMs = nowMs + PARALLEL_REQUEST_WINDOW_MS;
+    const expiresIso = new Date(expiresMs).toISOString();
+
     const enrichedPayload: Partial<Booking> = {
       ...bookingData,
       customerId: resolvedCustomerId,
       customerUid: resolvedCustomerUid,
       customerName: bookingData.customerName || customerProfile?.name || currentUser?.name || 'Customer',
       customerPhone: cleanPhone || bookingData.customerPhone || '',
-      status: 'pending'
+      status: 'REQUEST_SENT',
+      bookingStatus: 'REQUEST_SENT',
+      candidateAssistantIds,
+      candidateAssistantsCount: candidateAssistantIds.length,
+      requestSentAt: nowIso,
+      requestSentAtMs: nowMs,
+      requestExpiresAt: expiresIso,
+      requestExpiresAtMs: expiresMs,
+      assignedAssistantId: null,
+      assistantId: null,
+      assignedAt: null,
+      declinedAssistantIds: [],
+      expiredAssistantIds: [],
+      dispatchRetryCount: 0,
+      maxDispatchRetries: MAX_DISPATCH_RETRIES,
+      serviceRadiusKm: DEFAULT_SERVICE_RADIUS_KM
     };
 
     const created = await api.createBooking(enrichedPayload);
+    const finalId = created.id || `bk-${nowMs}`;
+    const mergedCandidates = Array.from(
+      new Set([...candidateAssistantIds, ...(created.candidateAssistantIds || [])])
+    );
+
     const finalBooking: Booking = {
       ...enrichedPayload,
       ...created,
-      id: created.id || `bk-${Date.now()}`,
-      requestId: created.requestId || created.bookingNumber || `REQ-${Date.now()}`,
-      bookingNumber: created.bookingNumber || created.requestId || `DBL-${Date.now()}`,
+      id: finalId,
+      bookingId: finalId,
+      requestId: created.requestId || created.bookingNumber || `REQ-${nowMs}`,
+      bookingNumber: created.bookingNumber || created.requestId || `DBL-${nowMs}`,
       customerId: resolvedCustomerId,
       customerUid: resolvedCustomerUid,
-      status: 'pending',
-      createdAt: created.createdAt || new Date().toISOString()
+      status: 'REQUEST_SENT',
+      bookingStatus: 'REQUEST_SENT',
+      candidateAssistantIds: mergedCandidates,
+      candidateAssistantsCount: mergedCandidates.length,
+      requestSentAt: created.requestSentAt || nowIso,
+      requestSentAtMs: created.requestSentAtMs || nowMs,
+      requestExpiresAt: created.requestExpiresAt || expiresIso,
+      requestExpiresAtMs: created.requestExpiresAtMs || expiresMs,
+      assignedAssistantId: null,
+      assistantId: null,
+      assignedAt: null,
+      dispatchRetryCount: 0,
+      maxDispatchRetries: MAX_DISPATCH_RETRIES,
+      serviceRadiusKm: DEFAULT_SERVICE_RADIUS_KM,
+      createdAt: created.createdAt || nowIso
     } as Booking;
 
-    // Immediately write to Firestore so Assistant Portal's real-time onSnapshot listener receives it without refresh
+    // 2. Simultaneously broadcast to ALL nearby assistants in Firestore
     await saveBookingToFirestore(finalBooking);
 
     prevBookingStatusesRef.current.set(finalBooking.id, 'pending');
@@ -586,8 +652,8 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setActiveBooking(finalBooking);
 
     addNotification(
-      'Booking Request Sent',
-      `Your request (${finalBooking.bookingNumber}) for ${finalBooking.serviceName} has been sent to available assistants.`,
+      'Finding Your Assistant...',
+      `Your request (${finalBooking.bookingNumber}) for ${finalBooking.serviceName} has been broadcast simultaneously to nearby available assistants.`,
       'BOOKING',
       finalBooking.id
     );
@@ -605,12 +671,12 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       assistantPhoto?: string;
       assistantRating?: number;
     }
-  ) => {
+  ): Promise<AtomicAcceptResult> => {
     const resolvedAsstId = assistantId || staffUser?.eplId || assistantProfile?.id || 'asst-1';
     const resolvedDetails = {
       assistantUid: assistantDetails?.assistantUid || auth.currentUser?.uid || resolvedAsstId,
-      assistantName: assistantDetails?.assistantName || staffUser?.name || assistantProfile?.name || 'Rajesh Sharma',
-      assistantPhone: assistantDetails?.assistantPhone || staffUser?.number || assistantProfile?.phone || '9820554433',
+      assistantName: assistantDetails?.assistantName || staffUser?.name || assistantProfile?.name || 'Verified Assistant',
+      assistantPhone: assistantDetails?.assistantPhone || staffUser?.number || assistantProfile?.phone || '',
       assistantPhoto:
         assistantDetails?.assistantPhoto ||
         assistantProfile?.photo ||
@@ -618,24 +684,66 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       assistantRating: assistantDetails?.assistantRating || assistantProfile?.rating || 4.95
     };
 
-    const acceptedAt = new Date().toISOString();
-    await Promise.all([
-      api.acceptBooking(bookingId, resolvedAsstId, resolvedDetails),
-      updateBookingInFirestore(bookingId, {
-        status: 'accepted',
+    // 1. Atomic Server-Side Lock & Check first
+    const apiRes = await api.acceptBooking(bookingId, resolvedAsstId, resolvedDetails);
+    if (!apiRes.success) {
+      if (apiRes.code === 'ALREADY_ASSIGNED') {
+        await refreshBookings();
+        return {
+          success: false,
+          code: 'ALREADY_ASSIGNED',
+          message: 'This trip has already been accepted by another assistant.',
+          booking: apiRes.booking
+        };
+      }
+      if (apiRes.code === 'REQUEST_EXPIRED') {
+        await refreshBookings();
+        return {
+          success: false,
+          code: 'REQUEST_EXPIRED',
+          message: 'The 15-second request window for this trip has expired.',
+          booking: apiRes.booking
+        };
+      }
+      if (apiRes.code === 'CANCELLED') {
+        await refreshBookings();
+        return {
+          success: false,
+          code: 'CANCELLED',
+          message: 'This trip request was cancelled by the customer.',
+          booking: apiRes.booking
+        };
+      }
+    }
+
+    // 2. Atomic Firestore Transaction Check & Lock
+    const txRes = await acceptBookingAtomicallyInFirestore(bookingId, resolvedAsstId, resolvedDetails);
+    if (!txRes.success && (txRes.code === 'ALREADY_ASSIGNED' || txRes.code === 'REQUEST_EXPIRED' || txRes.code === 'CANCELLED')) {
+      await refreshBookings();
+      return txRes;
+    }
+
+    // If Firestore doc didn't exist yet or tx succeeded, ensure Firestore is synced with ASSIGNED state
+    const assignedAt = apiRes.booking?.assignedAt || txRes.booking?.assignedAt || new Date().toISOString();
+    if (!txRes.success) {
+      await updateBookingInFirestore(bookingId, {
+        status: 'ASSIGNED',
+        bookingStatus: 'ASSIGNED',
+        assignedAssistantId: resolvedAsstId,
         assistantId: resolvedAsstId,
         ...resolvedDetails,
-        acceptedAt
-      })
-    ]);
+        assignedAt,
+        acceptedAt: assignedAt
+      });
+    }
 
     const target = bookings.find((b) => b.id === bookingId) || activeBooking || {
       id: bookingId,
       assistantName: resolvedDetails.assistantName,
-      status: 'accepted' as any
+      status: 'ASSIGNED' as any
     };
     sendBookingUpdatePushNotification(
-      { ...(target as any), ...resolvedDetails, status: 'accepted' },
+      { ...(target as any), ...resolvedDetails, status: 'ASSIGNED' },
       'ACCEPTED',
       { dedupeKey: `${bookingId}:accepted` }
     )
@@ -643,20 +751,105 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       .catch(() => {});
 
     await refreshBookings();
+    return {
+      success: true,
+      code: 'ASSIGNED',
+      message: 'Trip assigned to you!',
+      booking: txRes.booking || apiRes.booking
+    };
   };
 
   const rejectBooking = async (bookingId: string, assistantId?: string) => {
     const resolvedAsstId = assistantId || staffUser?.eplId || assistantProfile?.id || 'asst-1';
-    const rejectedAt = new Date().toISOString();
-    await Promise.all([
+    const [apiRes] = await Promise.all([
       api.rejectBooking(bookingId, resolvedAsstId),
-      updateBookingInFirestore(bookingId, {
-        status: 'rejected',
-        rejectedAt
-      })
+      declineBookingForAssistantInFirestore(bookingId, resolvedAsstId)
     ]);
+    if (apiRes?.booking?.status === 'NO_ASSISTANT_AVAILABLE' || apiRes?.booking?.status === 'SEARCHING') {
+      await updateBookingInFirestore(bookingId, {
+        status: apiRes.booking.status,
+        bookingStatus: apiRes.booking.bookingStatus || apiRes.booking.status
+      });
+    }
     await refreshBookings();
   };
+
+  const expireBookingForAssistant = useCallback(
+    async (bookingId: string, assistantId?: string) => {
+      const resolvedAsstId = assistantId || staffUser?.eplId || assistantProfile?.id || 'asst-1';
+      await Promise.all([
+        api.expireBookingAssistant(bookingId, resolvedAsstId),
+        expireBookingForAssistantInFirestore(bookingId, resolvedAsstId)
+      ]);
+    },
+    [staffUser?.eplId, assistantProfile?.id]
+  );
+
+  const retryBookingDispatch = useCallback(
+    async (bookingId: string, manualRetry = false): Promise<Booking | null> => {
+      const res = await api.retryBookingDispatch(bookingId, manualRetry);
+      if (res.booking) {
+        const b = res.booking;
+        await updateBookingInFirestore(bookingId, {
+          status: b.status,
+          bookingStatus: b.bookingStatus || b.status,
+          dispatchRetryCount: b.dispatchRetryCount,
+          serviceRadiusKm: b.serviceRadiusKm,
+          candidateAssistantIds: b.candidateAssistantIds || [],
+          candidateAssistantsCount: b.candidateAssistantsCount ?? (b.candidateAssistantIds?.length || 0),
+          requestSentAt: b.requestSentAt,
+          requestSentAtMs: b.requestSentAtMs,
+          requestExpiresAt: b.requestExpiresAt,
+          requestExpiresAtMs: b.requestExpiresAtMs,
+          expiredAssistantIds: b.expiredAssistantIds || [],
+          ...(manualRetry
+            ? {
+                declinedAssistantIds: [],
+                rejectedByAssistantIds: [],
+                rejectedAssistantIds: []
+              }
+            : {})
+        });
+        await refreshBookings();
+        return b;
+      }
+      return null;
+    },
+    [refreshBookings]
+  );
+
+  // Automatic 15-Second Parallel Wave Monitor for Customer's Active Booking
+  const retryingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (currentRole !== 'CUSTOMER' || !activeBooking?.id) return;
+    const norm = normalizeBookingStatus(activeBooking.status);
+    if (norm !== 'pending') return;
+
+    const checkInterval = setInterval(() => {
+      const expiresAtMs =
+        activeBooking.requestExpiresAtMs ||
+        (activeBooking.requestExpiresAt ? new Date(activeBooking.requestExpiresAt).getTime() : 0);
+      if (!expiresAtMs) return;
+
+      if (Date.now() > expiresAtMs + 500) {
+        const waveKey = `${activeBooking.id}:${activeBooking.dispatchRetryCount || 0}:${expiresAtMs}`;
+        if (!retryingRef.current.has(waveKey)) {
+          retryingRef.current.add(waveKey);
+          retryBookingDispatch(activeBooking.id, false).catch(() => {});
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(checkInterval);
+  }, [
+    currentRole,
+    activeBooking?.id,
+    activeBooking?.status,
+    activeBooking?.requestExpiresAtMs,
+    activeBooking?.requestExpiresAt,
+    activeBooking?.dispatchRetryCount,
+    retryBookingDispatch
+  ]);
 
   const startAssistance = async (bookingId: string) => {
     const startedAt = new Date().toISOString();
@@ -859,6 +1052,8 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         createBooking,
         acceptBooking,
         rejectBooking,
+        expireBookingForAssistant,
+        retryBookingDispatch,
         startAssistance,
         updateAssistantLiveLocation,
         verifyStartOtp,
@@ -924,8 +1119,14 @@ export const useBooking = (): BookingContextType => {
       dismissFeedbackModal: () => {},
       refreshBookings: async () => {},
       createBooking: async (data: any) => data as Booking,
-      acceptBooking: async () => {},
+      acceptBooking: async () => ({
+        success: true,
+        code: 'ASSIGNED',
+        message: 'Assigned'
+      }),
       rejectBooking: async () => {},
+      expireBookingForAssistant: async () => {},
+      retryBookingDispatch: async () => null,
       startAssistance: async () => {},
       updateAssistantLiveLocation: async () => {},
       verifyStartOtp: async () => true,

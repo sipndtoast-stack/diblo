@@ -24,7 +24,9 @@ import {
   Flag,
   Route as RouteIcon,
   Bell,
-  BellRing
+  BellRing,
+  RefreshCw,
+  XCircle
 } from 'lucide-react';
 import { useBooking } from '../../context/BookingContext';
 import { useAuth } from '../../context/AuthContext';
@@ -77,7 +79,8 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
     pushPermission: contextPushPermission,
     requestPushNotificationPermission,
     extendBooking,
-    cancelBooking
+    cancelBooking,
+    retryBookingDispatch
   } = useBooking();
   const { currentUser, customerProfile, toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
 
@@ -93,6 +96,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('Change of schedule');
   const [isExtending, setIsExtending] = useState(false);
+  const [isRetryingDispatch, setIsRetryingDispatch] = useState(false);
 
   const prevStatusRef = useRef<string | null>(null);
 
@@ -406,6 +410,13 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
 
   const normStatus = normalizeBookingStatus(activeBooking.status);
   const isPending = normStatus === 'pending';
+  const isNoAssistantAvailable =
+    normStatus === 'no_assistant_available' ||
+    String(activeBooking.status).toUpperCase() === 'NO_ASSISTANT_AVAILABLE';
+  const isRetryingWave =
+    isPending &&
+    (Number(activeBooking.dispatchRetryCount || 0) > 0 ||
+      String(activeBooking.status).toUpperCase() === 'SEARCHING');
   const isAcceptedOrActive =
     normStatus === 'accepted' ||
     normStatus === 'on_the_way' ||
@@ -432,6 +443,16 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
     setShowCancelModal(false);
   };
 
+  const handleRetrySearch = async () => {
+    if (isRetryingDispatch) return;
+    setIsRetryingDispatch(true);
+    try {
+      await retryBookingDispatch(activeBooking.id, true);
+    } finally {
+      setIsRetryingDispatch(false);
+    }
+  };
+
   const statusSteps = [
     { key: 'pending', label: 'Request Sent' },
     { key: 'accepted', label: 'Assistant Assigned' },
@@ -440,7 +461,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
   ];
 
   const getStepIndex = () => {
-    if (normStatus === 'pending') return 0;
+    if (normStatus === 'pending' || isNoAssistantAvailable) return 0;
     if (normStatus === 'accepted' || normStatus === 'on_the_way' || normStatus === 'arrived') return 1;
     if (normStatus === 'in_progress') return 2;
     if (normStatus === 'completed') return 3;
@@ -474,7 +495,7 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
             className={`px-2.5 py-1 rounded-full text-[11px] font-bold uppercase ${
               isCompleted
                 ? 'bg-emerald-100 text-emerald-800'
-                : isCancelledOrRejected
+                : isCancelledOrRejected || isNoAssistantAvailable
                 ? 'bg-red-100 text-red-700'
                 : isAcceptedOrActive
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -482,9 +503,13 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
             }`}
           >
             {isPending
-              ? 'Finding an assistant'
+              ? isRetryingWave
+                ? 'Finding an available assistant...'
+                : 'Finding your assistant...'
+              : isNoAssistantAvailable
+              ? 'No Assistant Available'
               : normStatus === 'accepted'
-              ? 'Assistant Assigned'
+              ? 'Assistant Found • Assigned'
               : normStatus === 'in_progress'
               ? 'Assistance in Progress'
               : activeBooking.status.replace('_', ' ')}
@@ -596,24 +621,44 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
       </div>
 
       {/* ================================================================= */}
-      {/* STATE 1: BOOKING REQUEST SENT (PENDING - WAITING FOR ASSISTANT)   */}
+      {/* STATE 1: LIVE PARALLEL MATCHING SCREEN (FINDING YOUR ASSISTANT)   */}
       {/* ================================================================= */}
       {isPending && (
-        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-amber-200 shadow-sm space-y-4">
+        <div
+          data-testid="customer-matching-screen"
+          className="bg-white rounded-3xl p-5 sm:p-6 border border-amber-200 shadow-sm space-y-4"
+        >
           <div className="flex items-start gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
-              <Sparkles className="w-6 h-6 animate-pulse" />
+            <div className="relative w-12 h-12 rounded-2xl bg-[#FFF0F5] border border-[#F42F73]/30 flex items-center justify-center text-[#F42F73] shrink-0">
+              <span className="absolute inset-0 rounded-2xl bg-[#F42F73]/15 animate-ping" />
+              <Sparkles className="w-6 h-6 animate-pulse relative z-10" />
             </div>
             <div className="flex-1">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <h2 className="text-lg sm:text-xl font-black text-[#14213D]">Booking Request Sent</h2>
+                <div>
+                  <span className="inline-block text-[10px] font-extrabold uppercase tracking-wider text-[#F42F73] bg-[#FFF0F5] px-2.5 py-0.5 rounded-full mb-1">
+                    Booking Request Sent
+                  </span>
+                  <h2
+                    data-testid="customer-matching-title"
+                    className="text-lg sm:text-xl font-black text-[#14213D]"
+                  >
+                    {isRetryingWave
+                      ? 'Finding an available assistant...'
+                      : 'Finding your assistant...'}
+                  </h2>
+                </div>
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
                   <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                  Status: Finding an assistant
+                  {isRetryingWave
+                    ? 'Status: Finding an available assistant...'
+                    : 'Status: Finding your assistant...'}
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                Your request has been sent to available assistants. This screen will update automatically in real time as soon as an assistant accepts.
+                {isRetryingWave
+                  ? 'Expanding search across nearby zones to connect you with an available verified assistant...'
+                  : 'Matching you with nearby available Diblo assistants in real time. This screen will update automatically as soon as your assistant accepts.'}
               </p>
             </div>
           </div>
@@ -659,10 +704,65 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
       )}
 
       {/* ================================================================= */}
-      {/* STATE 2: ASSISTANT ASSIGNED & LIVE TRACKING BANNER                */}
+      {/* STATE 1B: NO ASSISTANT CURRENTLY AVAILABLE IN YOUR AREA           */}
+      {/* ================================================================= */}
+      {isNoAssistantAvailable && (
+        <div
+          data-testid="no-assistant-available-card"
+          className="bg-white rounded-3xl p-6 border-2 border-amber-200 shadow-sm space-y-4 text-center sm:text-left"
+        >
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+              <Clock className="w-7 h-7" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <span className="inline-block text-[10px] font-extrabold uppercase tracking-wider text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                High Demand in Your Area
+              </span>
+              <h2
+                data-testid="no-assistant-available-title"
+                className="text-lg sm:text-xl font-black text-[#14213D]"
+              >
+                No assistant is currently available in your area.
+              </h2>
+              <p className="text-xs sm:text-sm text-gray-600">
+                All nearby assistants are currently occupied or did not respond within the request window. You can retry searching for nearby assistants right now or cancel this booking.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+            <button
+              type="button"
+              data-testid="retry-assistant-search-btn"
+              onClick={handleRetrySearch}
+              disabled={isRetryingDispatch}
+              className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#d92563] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer disabled:opacity-60 min-h-[48px]"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRetryingDispatch ? 'animate-spin' : ''}`} />
+              <span>{isRetryingDispatch ? 'Searching Nearby...' : 'Retry Search'}</span>
+            </button>
+            <button
+              type="button"
+              data-testid="cancel-unavailable-booking-btn"
+              onClick={() => setShowCancelModal(true)}
+              className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer min-h-[48px]"
+            >
+              <XCircle className="w-4 h-4 text-gray-500" />
+              <span>Cancel Booking</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* STATE 2: ASSISTANT FOUND / ASSIGNED & LIVE TRACKING BANNER        */}
       {/* ================================================================= */}
       {isAcceptedOrActive && (
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-5 sm:p-6 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div
+          data-testid="assistant-found-banner"
+          className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-5 sm:p-6 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
           <div className="flex items-center gap-3.5">
             <img
               src={
@@ -675,10 +775,14 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
             <div>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-black uppercase tracking-wider mb-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-ping" />
-                {normStatus === 'in_progress' ? 'Assistance in Progress' : 'Assistant Assigned'}
+                {normStatus === 'in_progress'
+                  ? 'Assistance in Progress'
+                  : 'Assistant Found • Assistant Assigned'}
               </div>
               <h2 className="text-lg sm:text-xl font-black text-white">
-                Your Assistant is on the way
+                {normStatus === 'in_progress'
+                  ? 'Assistance is Currently Active'
+                  : 'Assistant Found — Your Assistant is on the way'}
               </h2>
               <p className="text-xs text-emerald-100 mt-0.5">
                 <strong>{activeBooking.assistantName || 'Rajesh Sharma'}</strong> • {activeBooking.serviceName}

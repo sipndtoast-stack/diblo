@@ -43,8 +43,8 @@ service cloud.firestore {
     }
     function isValidBookingStatus(status) {
       return status in [
-        'pending', 'upcoming', 'confirmed', 'accepted', 'on_the_way', 'arrived', 'active', 'ongoing', 'in_progress', 'completed', 'rejected', 'cancelled', 'scheduled',
-        'PENDING', 'UPCOMING', 'CONFIRMED', 'SEARCHING', 'ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'ACTIVE', 'ONGOING', 'OTP_VERIFIED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED', 'SCHEDULED'
+        'pending', 'searching', 'request_sent', 'upcoming', 'confirmed', 'assigned', 'accepted', 'on_the_way', 'arrived', 'active', 'ongoing', 'in_progress', 'completed', 'rejected', 'cancelled', 'scheduled', 'no_assistant_available',
+        'PENDING', 'SEARCHING', 'REQUEST_SENT', 'UPCOMING', 'CONFIRMED', 'ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'ACTIVE', 'ONGOING', 'OTP_VERIFIED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED', 'SCHEDULED', 'NO_ASSISTANT_AVAILABLE'
       ];
     }
 
@@ -103,7 +103,7 @@ service cloud.firestore {
               existing().assistantUid == null ||
               existing().assistantUid == '' ||
               existing().assistantUid == request.auth.uid ||
-              existing().status in ['pending', 'PENDING', 'SEARCHING', 'ASSIGNED', 'rejected', 'REJECTED']
+              existing().status in ['pending', 'PENDING', 'SEARCHING', 'searching', 'REQUEST_SENT', 'request_sent', 'NO_ASSISTANT_AVAILABLE', 'no_assistant_available', 'rejected', 'REJECTED']
             )
           ) ||
           (

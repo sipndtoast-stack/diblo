@@ -150,6 +150,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   const {
     syncFirebaseCustomer,
     updateCustomerProfile,
+    loginWithEmailPassword,
     loginStaff,
     staffUser,
     isCustomerAuthenticated,
@@ -183,8 +184,15 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   }, [isAuthLoading, isCustomerAuthenticated, staffUser, mode, onCustomerSuccess, onStaffSuccess]);
 
   // -------------------------------------------------------------
-  // CUSTOMER STATE & FIREBASE PHONE AUTH LOGIC
+  // CUSTOMER STATE (EMAIL/MOBILE + PASSWORD & FIREBASE PHONE OTP)
   // -------------------------------------------------------------
+  const [customerAuthMethod, setCustomerAuthMethod] = useState<'PASSWORD' | 'OTP'>('PASSWORD');
+  const [isCustomerSignUp, setIsCustomerSignUp] = useState(false);
+  const [customerFullName, setCustomerFullName] = useState('');
+  const [customerIdentifier, setCustomerIdentifier] = useState('');
+  const [customerPassword, setCustomerPassword] = useState('');
+  const [showCustomerPassword, setShowCustomerPassword] = useState(false);
+
   const [customerStep, setCustomerStep] = useState<'PHONE' | 'OTP'>('PHONE');
   const [customerPhone, setCustomerPhone] = useState('');
   const [otp, setOtp] = useState<string[]>(['', '', '', '', '', '']);
@@ -391,22 +399,25 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     try {
       const res = await connectGoogleWorkspace();
       if (res.success && res.user) {
+        const gUser = res.user as any;
+        const resolvedName = gUser.name || gUser.displayName || 'Customer';
+        const resolvedPicture = gUser.picture || gUser.photoURL || '';
         isVerifiedSuccessRef.current = true;
         if (auth?.currentUser) {
           await syncFirebaseCustomer(auth.currentUser);
         } else {
           await syncFirebaseCustomer({
-            uid: res.user.email || `google-${Date.now()}`,
-            email: res.user.email || '',
-            displayName: res.user.name || 'Customer',
+            uid: gUser.email || `google-${Date.now()}`,
+            email: gUser.email || '',
+            displayName: resolvedName,
             phoneNumber: '',
-            photoURL: res.user.picture || ''
+            photoURL: resolvedPicture
           } as any);
         }
         updateCustomerProfile({
-          name: res.user.name || 'Customer',
-          email: res.user.email || '',
-          avatar: res.user.picture || ''
+          name: resolvedName,
+          email: gUser.email || '',
+          avatar: resolvedPicture
         });
         onCustomerSuccess();
       } else {
@@ -534,6 +545,47 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
       setErrorMessage(formatFirebasePhoneError(err, 'VERIFY'));
     } finally {
       isVerifyingOtpRef.current = false;
+      setIsLoading(false);
+    }
+  };
+
+  // Customer: Handle Email/Mobile + Password Login or Registration
+  const handleCustomerPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isLoading) return;
+    setErrorMessage('');
+    setResendSuccessMessage('');
+
+    const trimmedId = customerIdentifier.trim();
+    const trimmedPass = customerPassword.trim();
+
+    if (!trimmedId) {
+      setErrorMessage('Please enter your email address or 10-digit mobile number.');
+      return;
+    }
+    if (!trimmedPass || trimmedPass.length < 6) {
+      setErrorMessage('Password must be at least 6 characters.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await loginWithEmailPassword(
+        trimmedId,
+        trimmedPass,
+        'CUSTOMER',
+        customerFullName.trim() || undefined,
+        isCustomerSignUp
+      );
+      if (res.success) {
+        isVerifiedSuccessRef.current = true;
+        onCustomerSuccess();
+      } else {
+        setErrorMessage(res.error || 'Unable to sign in. Please check your credentials.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Customer authentication failed. Please try again.');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -732,7 +784,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                 transition={{ duration: 0.18 }}
                 className="space-y-5"
               >
-                {customerStep === 'PHONE' ? (
+                {customerAuthMethod === 'PASSWORD' ? (
                   <>
                     {/* Customer Icon Badge */}
                     <div className="text-center">
@@ -740,7 +792,243 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                         <User className="w-6 h-6 sm:w-7 sm:h-7" />
                       </div>
                       <h2 className="text-xl sm:text-2xl font-black text-[#14213D] tracking-tight">
-                        Customer Login
+                        {isCustomerSignUp ? 'Create Customer Account' : 'Customer Login'}
+                      </h2>
+                      <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-xs mx-auto leading-relaxed">
+                        {isCustomerSignUp
+                          ? 'Register with your email or mobile number and password.'
+                          : 'Enter your email or mobile number and password to continue.'}
+                      </p>
+                    </div>
+
+                    {/* Login / Register Mode Switch */}
+                    <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100/90 rounded-2xl border border-gray-200/70">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCustomerSignUp(false);
+                          setErrorMessage('');
+                        }}
+                        className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          !isCustomerSignUp
+                            ? 'bg-white text-[#14213D] shadow-xs'
+                            : 'text-gray-500 hover:text-[#14213D]'
+                        }`}
+                      >
+                        Login
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCustomerSignUp(true);
+                          setErrorMessage('');
+                        }}
+                        className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          isCustomerSignUp
+                            ? 'bg-white text-[#F42F73] shadow-xs'
+                            : 'text-gray-500 hover:text-[#14213D]'
+                        }`}
+                      >
+                        New Customer / Sign Up
+                      </button>
+                    </div>
+
+                    {/* Email / Mobile + Password Form */}
+                    <form onSubmit={handleCustomerPasswordSubmit} className="space-y-3.5">
+                      {isCustomerSignUp && (
+                        <div>
+                          <label
+                            htmlFor="input-customer-fullname"
+                            className="block text-xs font-bold text-gray-700 mb-1.5 text-left"
+                          >
+                            Full Name (Optional)
+                          </label>
+                          <div className="h-12 sm:h-13 rounded-2xl border border-gray-200 bg-white flex items-center px-4 hover:border-gray-300 focus-within:border-[#F42F73] focus-within:ring-2 focus-within:ring-[#F42F73]/15 transition-all">
+                            <User className="w-4 h-4 text-gray-400 mr-2.5 shrink-0" />
+                            <input
+                              id="input-customer-fullname"
+                              type="text"
+                              autoComplete="name"
+                              placeholder="Enter your full name"
+                              value={customerFullName}
+                              onChange={(e) => {
+                                setErrorMessage('');
+                                setCustomerFullName(e.target.value);
+                              }}
+                              className="flex-1 bg-transparent text-sm sm:text-base font-semibold text-[#14213D] placeholder-gray-400 outline-none w-full"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <label
+                          htmlFor="input-customer-identifier"
+                          className="block text-xs font-bold text-gray-700 mb-1.5 text-left"
+                        >
+                          Email or Mobile Number
+                        </label>
+                        <div className="h-12 sm:h-13 rounded-2xl border border-gray-200 bg-white flex items-center px-4 hover:border-gray-300 focus-within:border-[#F42F73] focus-within:ring-2 focus-within:ring-[#F42F73]/15 transition-all">
+                          <Smartphone className="w-4 h-4 text-gray-400 mr-2.5 shrink-0" />
+                          <input
+                            id="input-customer-identifier"
+                            type="text"
+                            autoComplete="username"
+                            autoFocus
+                            required
+                            placeholder="Email address or 10-digit mobile"
+                            value={customerIdentifier}
+                            onChange={(e) => {
+                              setErrorMessage('');
+                              setCustomerIdentifier(e.target.value);
+                            }}
+                            className="flex-1 bg-transparent text-sm sm:text-base font-semibold text-[#14213D] placeholder-gray-400 outline-none w-full"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="input-customer-password"
+                          className="block text-xs font-bold text-gray-700 mb-1.5 text-left"
+                        >
+                          Password
+                        </label>
+                        <div className="h-12 sm:h-13 rounded-2xl border border-gray-200 bg-white flex items-center px-4 hover:border-gray-300 focus-within:border-[#F42F73] focus-within:ring-2 focus-within:ring-[#F42F73]/15 transition-all">
+                          <Lock className="w-4 h-4 text-gray-400 mr-2.5 shrink-0" />
+                          <input
+                            id="input-customer-password"
+                            type={showCustomerPassword ? 'text' : 'password'}
+                            autoComplete={isCustomerSignUp ? 'new-password' : 'current-password'}
+                            required
+                            placeholder="Enter password (min 6 chars)"
+                            value={customerPassword}
+                            onChange={(e) => {
+                              setErrorMessage('');
+                              setCustomerPassword(e.target.value);
+                            }}
+                            className="flex-1 bg-transparent text-sm sm:text-base font-semibold text-[#14213D] placeholder-gray-400 outline-none w-full"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCustomerPassword(!showCustomerPassword)}
+                            className="text-gray-400 hover:text-gray-600 transition-colors ml-2 cursor-pointer p-1"
+                            aria-label={showCustomerPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showCustomerPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="mt-1 text-[11px] text-gray-400 text-left">
+                          New customers are registered automatically and directed to profile setup.
+                        </p>
+                      </div>
+
+                      {/* Primary Pink Submit Button */}
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        id="btn-customer-password-submit"
+                        className="w-full h-12 sm:h-13 bg-[#F42F73] hover:bg-[#E01E62] text-white rounded-2xl font-bold text-sm sm:text-base shadow-lg shadow-[#F42F73]/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>
+                              {isCustomerSignUp ? 'Creating Account...' : 'Signing In...'}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span>
+                              {isCustomerSignUp ? 'Register & Continue' : 'Continue'}
+                            </span>
+                            <ArrowRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </form>
+
+                    {/* Switch to Mobile OTP Option */}
+                    <div className="text-center pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomerAuthMethod('OTP');
+                          setErrorMessage('');
+                        }}
+                        className="text-xs font-bold text-[#F42F73] hover:underline cursor-pointer"
+                      >
+                        Use Mobile SMS OTP instead
+                      </button>
+                    </div>
+
+                    {/* Official Sign in with Google button */}
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={handleGoogleSignIn}
+                        disabled={isLoading}
+                        id="btn-customer-google-signin"
+                        className="w-full h-12 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-2xl font-bold text-xs sm:text-sm shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-3 cursor-pointer active:scale-[0.99] disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="#4285F4"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="#34A853"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="#FBBC05"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                          />
+                          <path
+                            fill="#EA4335"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                        <span>Sign in with Google</span>
+                      </button>
+                    </div>
+
+                    {/* OR Divider Line */}
+                    <div className="my-4 flex items-center before:flex-1 before:border-t before:border-gray-200 after:flex-1 after:border-t after:border-gray-200 text-[11px] font-bold tracking-widest text-gray-400 px-1 gap-3">
+                      OR
+                    </div>
+
+                    {/* Assistant Login Option Button right below Google Sign-In */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleMode('STAFF')}
+                      id="btn-switch-to-assistant-login"
+                      className="w-full h-12 bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-[#14213D] rounded-2xl font-bold text-xs sm:text-sm shadow-xs hover:shadow-sm transition-all flex items-center justify-between px-4 cursor-pointer active:scale-[0.99] group"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[#14213D] group-hover:text-[#F42F73] transition-colors">
+                          <Shield className="w-4 h-4" />
+                        </div>
+                        <span className="font-semibold text-gray-800 group-hover:text-[#14213D]">
+                          Assistants Log In
+                        </span>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#F42F73] group-hover:translate-x-0.5 transition-all" />
+                    </button>
+                  </>
+                ) : customerStep === 'PHONE' ? (
+                  <>
+                    {/* Customer Icon Badge */}
+                    <div className="text-center">
+                      <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-[#FFF0F5] border border-pink-100 flex items-center justify-center text-[#F42F73] mx-auto mb-2.5 shadow-xs">
+                        <User className="w-6 h-6 sm:w-7 sm:h-7" />
+                      </div>
+                      <h2 className="text-xl sm:text-2xl font-black text-[#14213D] tracking-tight">
+                        Customer OTP Login
                       </h2>
                       <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-xs mx-auto leading-relaxed">
                         Enter your mobile number to receive an OTP and access your account.
@@ -816,8 +1104,21 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                       </button>
                     </form>
 
+                    <div className="text-center pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomerAuthMethod('PASSWORD');
+                          setErrorMessage('');
+                        }}
+                        className="text-xs font-bold text-[#F42F73] hover:underline cursor-pointer"
+                      >
+                        ← Use Email / Mobile & Password instead
+                      </button>
+                    </div>
+
                     {/* Official Sign in with Google button */}
-                    <div className="mt-3">
+                    <div className="mt-2">
                       <button
                         type="button"
                         onClick={handleGoogleSignIn}

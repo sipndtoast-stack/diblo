@@ -72,6 +72,9 @@ export interface CustomerProfile {
   notificationPreferences?: NotificationPreferences;
   referralCode: string;
   walletBalance: number;
+  profileCompleted?: boolean;
+  profileCompletion?: number;
+  updatedAt?: string;
   createdAt: string;
 }
 
@@ -152,6 +155,7 @@ export interface ServiceItem {
 export type BookingStatus =
   | 'PENDING'
   | 'SEARCHING'
+  | 'REQUEST_SENT'
   | 'SCHEDULED'
   | 'ASSIGNED'
   | 'ACCEPTED'
@@ -162,15 +166,20 @@ export type BookingStatus =
   | 'COMPLETED'
   | 'REJECTED'
   | 'CANCELLED'
+  | 'NO_ASSISTANT_AVAILABLE'
   | 'pending'
+  | 'searching'
+  | 'request_sent'
   | 'scheduled'
+  | 'assigned'
   | 'accepted'
   | 'on_the_way'
   | 'arrived'
   | 'in_progress'
   | 'completed'
   | 'rejected'
-  | 'cancelled';
+  | 'cancelled'
+  | 'no_assistant_available';
 
 export interface BookingLocation {
   address: string;
@@ -240,6 +249,21 @@ export interface Booking {
   };
   genderPreference: 'ANY' | 'MALE' | 'FEMALE';
   status: BookingStatus;
+  bookingStatus?: BookingStatus;
+  bookingId?: string;
+  candidateAssistantIds?: string[];
+  candidateAssistantsCount?: number;
+  requestSentAt?: string | null;
+  requestSentAtMs?: number | null;
+  requestExpiresAt?: string | null;
+  requestExpiresAtMs?: number | null;
+  assignedAssistantId?: string | null;
+  assignedAt?: string | null;
+  declinedAssistantIds?: string[];
+  expiredAssistantIds?: string[];
+  dispatchRetryCount?: number;
+  maxDispatchRetries?: number;
+  serviceRadiusKm?: number;
   assistantId?: string | null;
   assistantUid?: string | null;
   assistantName?: string | null;

@@ -40,12 +40,39 @@ export const AssistantOrdersView: React.FC<AssistantOrdersViewProps> = ({
   const cleanBookings = bookings.filter((b) => !isDemoBookingRecord(b));
 
   // Filter orders assigned to this assistant
-  const assistantBookings = cleanBookings.filter((b) => b.assistantId === assistantId);
+  const assistantBookings = cleanBookings.filter(
+    (b) => (b.assignedAssistantId || b.assistantId) === assistantId
+  );
 
-  // New available orders (pending/searching or assigned to this assistant)
+  // New available orders (pending/searching/request_sent and eligible for this assistant)
   const availableOrders = cleanBookings.filter((b) => {
     const norm = normalizeBookingStatus(b.status);
-    return norm === 'pending' && (!b.assistantId || b.assistantId === assistantId);
+    const assignedId = b.assignedAssistantId || b.assistantId;
+    const declinedList: string[] = Array.isArray(b.declinedAssistantIds)
+      ? b.declinedAssistantIds
+      : Array.isArray(b.rejectedByAssistantIds)
+      ? b.rejectedByAssistantIds
+      : [];
+    const expiredList: string[] = Array.isArray(b.expiredAssistantIds)
+      ? b.expiredAssistantIds
+      : [];
+    const candidates: string[] = Array.isArray(b.candidateAssistantIds)
+      ? b.candidateAssistantIds
+      : [];
+    const isCandidate = candidates.length === 0 || candidates.includes(assistantId);
+    const expiresAtMs =
+      b.requestExpiresAtMs ||
+      (b.requestExpiresAt ? new Date(b.requestExpiresAt).getTime() : 0);
+    const isWindowExpired = expiresAtMs > 0 && Date.now() > expiresAtMs;
+
+    return (
+      norm === 'pending' &&
+      (!assignedId || assignedId === assistantId) &&
+      !declinedList.includes(assistantId) &&
+      !expiredList.includes(assistantId) &&
+      !isWindowExpired &&
+      isCandidate
+    );
   });
 
   const activeOrders = assistantBookings.filter((b) => {

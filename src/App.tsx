@@ -76,13 +76,15 @@ const MainAppContent: React.FC = () => {
   // Access denied notification banner
   const [accessDeniedNotice, setAccessDeniedNotice] = useState<string | null>(null);
   const [profileIncompleteNotice, setProfileIncompleteNotice] = useState<string | null>(null);
+  const [userOpenedProfileTab, setUserOpenedProfileTab] = useState<boolean>(false);
 
   // Customer Navigation Tab with URL preservation
   const [customerTab, setCustomerTab] = useState<CustomerTabType>(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname || '/';
       if (path.startsWith('/customer')) {
-        return getTabFromPath(path);
+        const initialTab = getTabFromPath(path);
+        return initialTab === 'PROFILE' ? 'HOME' : initialTab;
       }
     }
     return 'HOME';
@@ -130,12 +132,13 @@ const MainAppContent: React.FC = () => {
         `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) to unlock Home and all app options.`
       );
       if (typeof window !== 'undefined' && window.location.pathname !== '/customer/profile') {
-        window.history.pushState({}, '', '/customer/profile');
+        window.history.replaceState({}, '', '/customer/profile');
         setCurrentPath('/customer/profile');
       }
       return;
     }
     setProfileIncompleteNotice(null);
+    setUserOpenedProfileTab(tab === 'PROFILE');
     setCustomerTab(tab);
     let path = '/customer';
     if (tab === 'REQUESTS' || tab === 'BOOKINGS') path = '/customer/requests';
@@ -233,6 +236,7 @@ const MainAppContent: React.FC = () => {
       } else {
         switchRole('ASSISTANT');
       }
+      return;
     }
 
     // 2. /admin: Protected. Allowed Role: Admin only.
@@ -245,33 +249,13 @@ const MainAppContent: React.FC = () => {
       } else {
         switchRole('ADMIN');
       }
+      return;
     }
 
-    // 3. /customer: Protected Customer Route
-    // If authenticated: switch role to CUSTOMER
-    // If not authenticated (and auth is loaded): redirect to /customer-login
-    if (currentPath.startsWith('/customer')) {
-      if (!isAuthLoading) {
-        if (!isCustomerAuthenticated) {
-          navigateTo('/customer-login');
-        } else {
-          switchRole('CUSTOMER');
-          if (!isCustomerProfileComplete) {
-            setCustomerTab('PROFILE');
-            if (currentPath !== '/customer/profile') {
-              window.history.replaceState({}, '', '/customer/profile');
-              setCurrentPath('/customer/profile');
-            }
-          } else {
-            setProfileIncompleteNotice(null);
-            setCustomerTab(getTabFromPath(currentPath));
-          }
-        }
-      }
-    }
+    if (isAuthLoading) return;
 
-    // 4. If already authenticated as Staff (Assistant/Admin) on this device, open their workspace directly
-    if (!isAuthLoading && staffUser && staffUser.authenticated) {
+    // 3. If already authenticated as Staff (Assistant/Admin) on this device, open their workspace directly
+    if (staffUser && staffUser.authenticated && !isCustomerAuthenticated) {
       if (
         currentPath === '/' ||
         currentPath === '/staff-login' ||
@@ -288,19 +272,53 @@ const MainAppContent: React.FC = () => {
       }
     }
 
-    // 5. If already authenticated with Firebase as Customer on this device, restore session and open Customer Profile (if < 100%) or Customer Home
-    if (!isAuthLoading && isCustomerAuthenticated) {
-      if (currentPath === '/' || currentPath === '/customer-login') {
+    // 4. CENTRAL CUSTOMER AUTHENTICATION & PROFILE GUARD
+    const isStaffOnlyRoute =
+      currentPath === '/assistance-login' ||
+      currentPath === '/staff-login' ||
+      currentPath === '/apply-assistant';
+
+    if (!isStaffOnlyRoute) {
+      if (!isCustomerAuthenticated) {
+        // NOT AUTHENTICATED -> Redirect any protected customer route to Login
+        if (currentPath.startsWith('/customer')) {
+          window.history.replaceState({}, '', '/customer-login');
+          setCurrentPath('/customer-login');
+        }
+      } else {
         switchRole('CUSTOMER');
         if (!isCustomerProfileComplete) {
+          // AUTHENTICATED + PROFILE INCOMPLETE (< 100%) -> Always redirect to Profile Completion
           setCustomerTab('PROFILE');
-          navigateTo('/customer/profile');
+          if (currentPath !== '/customer/profile') {
+            window.history.replaceState({}, '', '/customer/profile');
+            setCurrentPath('/customer/profile');
+          }
         } else {
-          navigateTo('/customer');
+          // AUTHENTICATED + PROFILE 100% COMPLETE -> Open Main Customer App
+          setProfileIncompleteNotice(null);
+          if (
+            currentPath === '/' ||
+            currentPath === '/customer-login' ||
+            (currentPath === '/customer/profile' && !userOpenedProfileTab)
+          ) {
+            setCustomerTab('HOME');
+            window.history.replaceState({}, '', '/customer');
+            setCurrentPath('/customer');
+          } else if (currentPath.startsWith('/customer')) {
+            setCustomerTab(getTabFromPath(currentPath));
+          }
         }
       }
     }
-  }, [currentPath, staffUser, isCustomerAuthenticated, isCustomerProfileComplete, isAuthLoading]);
+  }, [
+    currentPath,
+    staffUser,
+    isCustomerAuthenticated,
+    isCustomerProfileComplete,
+    isAuthLoading,
+    userOpenedProfileTab
+  ]);
 
   const handleOpenBookingWithService = (service: ServiceItem) => {
     setPreSelectedService(service);
@@ -325,51 +343,37 @@ const MainAppContent: React.FC = () => {
     setCustomerTab('ACTIVITY');
   };
 
-  // VIEW 1: FIRST SCREEN — UNIFIED LOGIN (/)
-  if (currentPath === '/') {
-    if (isCustomerAuthenticated) {
-      // Will redirect via useEffect to /customer
+  const handleCustomerLoginSuccess = () => {
+    if (!isCustomerProfileComplete) {
+      setCustomerTab('PROFILE');
+      navigateTo('/customer/profile');
     } else {
-      return (
-        <UnifiedLogin
-          initialMode="CUSTOMER"
-          onCustomerSuccess={() => {
-            navigateTo('/customer');
-          }}
-          onStaffSuccess={(role) => {
-            if (role === 'Admin') {
-              navigateTo('/admin');
-            } else {
-              navigateTo('/assistant');
-            }
-          }}
-          onApplyAssistant={() => {
-            navigateTo('/apply-assistant');
-          }}
-        />
-      );
+      setCustomerTab('HOME');
+      navigateTo('/customer');
     }
-  }
+  };
 
-  // VIEW 1.5: CUSTOMER OTP LOGIN (/customer-login)
-  if (currentPath === '/customer-login') {
+  // INITIAL AUTH & PROFILE LOADING STATE (Prevents flashing Login before Firebase checks session)
+  if (
+    isAuthLoading &&
+    currentPath !== '/assistant' &&
+    currentPath !== '/admin' &&
+    currentPath !== '/assistance-login' &&
+    currentPath !== '/staff-login' &&
+    currentPath !== '/apply-assistant'
+  ) {
     return (
-      <UnifiedLogin
-        initialMode="CUSTOMER"
-        onCustomerSuccess={() => {
-          navigateTo('/customer');
-        }}
-        onStaffSuccess={(role) => {
-          if (role === 'Admin') {
-            navigateTo('/admin');
-          } else {
-            navigateTo('/assistant');
-          }
-        }}
-        onApplyAssistant={() => {
-          navigateTo('/apply-assistant');
-        }}
-      />
+      <div className="min-h-screen bg-[#FAF9FB] flex flex-col items-center justify-center p-6 font-sans text-[#14213D]">
+        <div className="flex flex-col items-center gap-3.5 bg-white px-8 py-7 rounded-3xl shadow-xl shadow-pink-950/[0.04] border border-gray-100">
+          <div className="text-3xl font-black text-[#F42F73] tracking-tight select-none">
+            Diblo
+          </div>
+          <Loader2 className="w-7 h-7 animate-spin text-[#F42F73]" />
+          <p className="text-xs font-semibold text-gray-500">
+            Checking your session...
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -392,9 +396,7 @@ const MainAppContent: React.FC = () => {
     return (
       <UnifiedLogin
         initialMode="STAFF"
-        onCustomerSuccess={() => {
-          navigateTo('/customer');
-        }}
+        onCustomerSuccess={handleCustomerLoginSuccess}
         onStaffSuccess={(role) => {
           if (role === 'Admin') {
             navigateTo('/admin');
@@ -470,15 +472,13 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // VIEW 4: CUSTOMER PANEL (/customer)
-  // Protected Customer Route: Never render CustomerHome unless authenticated
+  // CENTRAL CUSTOMER AUTHENTICATION & PROFILE GUARD
+  // 1. If NOT authenticated -> Always show Customer Login
   if (!isCustomerAuthenticated) {
     return (
       <UnifiedLogin
         initialMode="CUSTOMER"
-        onCustomerSuccess={() => {
-          navigateTo('/customer');
-        }}
+        onCustomerSuccess={handleCustomerLoginSuccess}
         onStaffSuccess={(role) => {
           if (role === 'Admin') {
             navigateTo('/admin');
@@ -493,7 +493,13 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  const activeCustomerTab: CustomerTabType = !isCustomerProfileComplete ? 'PROFILE' : customerTab;
+  // 2. If authenticated & profile < 100% -> Force Profile Completion
+  // 3. If authenticated & profile === 100% -> Open Main Customer App
+  const activeCustomerTab: CustomerTabType = !isCustomerProfileComplete
+    ? 'PROFILE'
+    : customerTab === 'PROFILE' && !userOpenedProfileTab
+    ? 'HOME'
+    : customerTab;
 
   return (
     <div className="min-h-screen bg-[#fcfcfc] flex font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">

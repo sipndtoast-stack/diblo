@@ -5,7 +5,9 @@ import {
   RecaptchaVerifier,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  setPersistence,
+  browserLocalPersistence
 } from 'firebase/auth';
 import { getFirestore, Firestore, doc, getDocFromServer, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getMessaging, isSupported as isMessagingSupported, Messaging } from 'firebase/messaging';
@@ -76,6 +78,9 @@ export const db: Firestore =
     : ({} as Firestore);
 export const auth: Auth =
   typeof getAuth === 'function' ? getAuth(appInstance) : ({} as Auth);
+if (auth && typeof setPersistence === 'function' && browserLocalPersistence) {
+  setPersistence(auth, browserLocalPersistence).catch(() => {});
+}
 export const oAuthClientId: string = (firebaseConfigData as any).oAuthClientId || '';
 
 let pendingAuthBridgePromise: Promise<string | null> | null = null;

@@ -26,7 +26,7 @@ import { useBooking } from '../../context/BookingContext';
 import { api } from '../../lib/api';
 import { AssistantTaskMap } from '../maps/AssistantTaskMap';
 import { AssistantDrawer, AssistantSection } from './AssistantDrawer';
-import { NewOrderModal } from './NewOrderModal';
+import { NewOrderModal, TripMatchedModal, TripMatchedNotice } from './NewOrderModal';
 import { AssistantOrdersView } from './AssistantOrdersView';
 import { AssistantEarningsView } from './AssistantEarningsView';
 import { AssistantLocationView } from './AssistantLocationView';
@@ -62,6 +62,7 @@ export const AssistantPanel: React.FC = () => {
     refreshBookings,
     acceptBooking,
     rejectBooking,
+    expireBookingForAssistant,
     startAssistance,
     updateAssistantLiveLocation,
     verifyStartOtp,
@@ -84,6 +85,10 @@ export const AssistantPanel: React.FC = () => {
   const [popupOrder, setPopupOrder] = useState<Booking | null>(null);
   const [isAcceptingOrder, setIsAcceptingOrder] = useState<boolean>(false);
   const [rejectedOrderIds, setRejectedOrderIds] = useState<Set<string>>(new Set());
+  const [expiredOrderIds, setExpiredOrderIds] = useState<Set<string>>(new Set());
+  const [tripMatchedNotice, setTripMatchedNotice] = useState<TripMatchedNotice | null>(null);
+  const seenPendingOrderIdsRef = useRef<Set<string>>(new Set());
+  const notifiedMatchedOrderIdsRef = useRef<Set<string>>(new Set());
 
   // OTP Verification Modal State
   const [enteredOtp, setEnteredOtp] = useState('');
@@ -109,8 +114,9 @@ export const AssistantPanel: React.FC = () => {
   // Identify current active task assigned to this assistant
   const activeTask = realBookings.find((b) => {
     const norm = normalizeBookingStatus(b.status);
+    const assignedId = b.assignedAssistantId || b.assistantId;
     return (
-      b.assistantId === assistantId &&
+      assignedId === assistantId &&
       (norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress')
     );
   });
@@ -121,13 +127,36 @@ export const AssistantPanel: React.FC = () => {
     activeTaskNormStatus === 'on_the_way' ||
     activeTaskNormStatus === 'arrived';
 
-  // Available new incoming requests in real time from Firebase
+  // Available new incoming requests in real time from Firebase (simultaneous parallel dispatch)
   const incomingRequests = realBookings.filter((b) => {
     const norm = normalizeBookingStatus(b.status);
+    const assignedId = b.assignedAssistantId || b.assistantId;
+    const declinedList: string[] = Array.isArray(b.declinedAssistantIds)
+      ? b.declinedAssistantIds
+      : Array.isArray(b.rejectedByAssistantIds)
+      ? b.rejectedByAssistantIds
+      : [];
+    const expiredList: string[] = Array.isArray(b.expiredAssistantIds)
+      ? b.expiredAssistantIds
+      : [];
+    const candidates: string[] = Array.isArray(b.candidateAssistantIds)
+      ? b.candidateAssistantIds
+      : [];
+    const isCandidate = candidates.length === 0 || candidates.includes(assistantId);
+    const expiresAtMs =
+      b.requestExpiresAtMs ||
+      (b.requestExpiresAt ? new Date(b.requestExpiresAt).getTime() : 0);
+    const isWindowExpired = expiresAtMs > 0 && Date.now() > expiresAtMs;
+
     return (
       !rejectedOrderIds.has(b.id) &&
+      !expiredOrderIds.has(b.id) &&
+      !declinedList.includes(assistantId) &&
+      !expiredList.includes(assistantId) &&
+      !isWindowExpired &&
       norm === 'pending' &&
-      (!b.assistantId || b.assistantId === assistantId)
+      (!assignedId || assignedId === assistantId) &&
+      isCandidate
     );
   });
 
@@ -248,6 +277,53 @@ export const AssistantPanel: React.FC = () => {
 
   // Auto-detect New Order from Firebase for Popup & Sound/Browser/Vibration Alert
   useEffect(() => {
+    incomingRequests.forEach((req) => {
+      seenPendingOrderIdsRef.current.add(req.id);
+    });
+  }, [incomingRequests]);
+
+  // Detect in real time when an active incoming request disappears because ANOTHER assistant accepted first
+  useEffect(() => {
+    if (!isOnline) return;
+
+    for (const b of realBookings) {
+      const wasSeenByMe =
+        seenPendingOrderIdsRef.current.has(b.id) || popupOrder?.id === b.id;
+      if (!wasSeenByMe) continue;
+      if (rejectedOrderIds.has(b.id) || expiredOrderIds.has(b.id)) continue;
+      if (notifiedMatchedOrderIdsRef.current.has(b.id)) continue;
+
+      const norm = normalizeBookingStatus(b.status);
+      const assignedId = b.assignedAssistantId || b.assistantId;
+
+      if (
+        (norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress') &&
+        assignedId &&
+        assignedId !== assistantId
+      ) {
+        notifiedMatchedOrderIdsRef.current.add(b.id);
+        if (popupOrder?.id === b.id) {
+          stopAlert();
+          setPopupOrder(null);
+        }
+        setTripMatchedNotice({
+          variant: 'DISAPPEARED_ACCEPTED_BY_OTHER',
+          title: 'Trip Matched ✓',
+          message: 'Another assistant has accepted this trip.',
+          bookingNumber: b.bookingNumber || b.id
+        });
+      }
+    }
+  }, [
+    isOnline,
+    realBookings,
+    popupOrder?.id,
+    rejectedOrderIds,
+    expiredOrderIds,
+    assistantId
+  ]);
+
+  useEffect(() => {
     if (!isOnline || activeTask) {
       if (popupOrder) {
         stopAlert();
@@ -256,9 +332,12 @@ export const AssistantPanel: React.FC = () => {
       return;
     }
 
-    const newCandidate = incomingRequests.find((b) => !rejectedOrderIds.has(b.id));
+    const newCandidate = incomingRequests.find(
+      (b) => !rejectedOrderIds.has(b.id) && !expiredOrderIds.has(b.id)
+    );
 
     if (newCandidate) {
+      seenPendingOrderIdsRef.current.add(newCandidate.id);
       if (!popupOrder || popupOrder.id !== newCandidate.id) {
         setPopupOrder(newCandidate);
         if (!hasOrderBeenAlerted(newCandidate.id)) {
@@ -270,6 +349,9 @@ export const AssistantPanel: React.FC = () => {
             totalAmount: newCandidate.totalAmount
           });
         }
+      } else {
+        // Keep popupOrder updated with latest server timestamps
+        setPopupOrder(newCandidate);
       }
     } else {
       if (popupOrder) {
@@ -277,7 +359,7 @@ export const AssistantPanel: React.FC = () => {
         setPopupOrder(null);
       }
     }
-  }, [isOnline, activeTask, incomingRequests, rejectedOrderIds, popupOrder]);
+  }, [isOnline, activeTask, incomingRequests, rejectedOrderIds, expiredOrderIds, popupOrder]);
 
   /**
    * Google Routes API Calculator
@@ -424,12 +506,15 @@ export const AssistantPanel: React.FC = () => {
     }
   };
 
-  // Handle Order Accept (from Popup or List) -> updates Firebase status = 'accepted'
+  // Handle Order Accept (First Accept Wins - Atomic Transaction)
   const handleAcceptOrder = async (orderId: string) => {
+    if (isAcceptingOrder) return;
     setIsAcceptingOrder(true);
     stopAlert();
+    notifiedMatchedOrderIdsRef.current.add(orderId);
+
     try {
-      await acceptBooking(orderId, assistantId, {
+      const result = await acceptBooking(orderId, assistantId, {
         assistantName: staffUser?.name || assistantProfile?.name || 'Rajesh Sharma',
         assistantPhone: staffUser?.number || assistantProfile?.phone || '9820554433',
         assistantPhoto:
@@ -439,6 +524,21 @@ export const AssistantPanel: React.FC = () => {
       });
 
       setPopupOrder(null);
+
+      if (result && !result.success) {
+        if (result.code === 'ALREADY_ASSIGNED') {
+          setTripMatchedNotice({
+            variant: 'CLICKED_ALREADY_ASSIGNED',
+            title: 'Trip Matched',
+            message: 'This trip has already been accepted by another assistant.',
+            bookingNumber: orderId
+          });
+        } else if (result.code === 'REQUEST_EXPIRED') {
+          setExpiredOrderIds((prev) => new Set([...prev, orderId]));
+        }
+        return;
+      }
+
       setCurrentSection('HOME');
     } catch (e) {
       console.error('Failed to accept order:', e);
@@ -447,7 +547,7 @@ export const AssistantPanel: React.FC = () => {
     }
   };
 
-  // Handle Order Reject -> updates Firebase status = 'rejected'
+  // Handle Order Decline -> removes from this assistant's queue while keeping trip available for other nearby assistants
   const handleRejectOrder = async (orderId: string) => {
     stopAlert();
     setPopupOrder(null);
@@ -456,6 +556,20 @@ export const AssistantPanel: React.FC = () => {
       await rejectBooking(orderId, assistantId);
     } catch (e) {
       console.debug('Reject booking sync error:', e);
+    }
+  };
+
+  // Handle 15-Second Server Countdown Expiry for this assistant
+  const handleExpireOrder = async (orderId: string) => {
+    stopAlert();
+    if (popupOrder?.id === orderId) {
+      setPopupOrder(null);
+    }
+    setExpiredOrderIds((prev) => new Set([...prev, orderId]));
+    try {
+      await expireBookingForAssistant(orderId, assistantId);
+    } catch (e) {
+      console.debug('Expire booking sync error:', e);
     }
   };
 
@@ -530,17 +644,24 @@ export const AssistantPanel: React.FC = () => {
         onLogout={() => logoutStaff()}
       />
 
-      {/* New Assistance Request Popup Alert Modal */}
+      {/* New Assistance Request Popup Alert Modal (15s Server Window) */}
       <NewOrderModal
         order={popupOrder}
         onAccept={handleAcceptOrder}
         onReject={handleRejectOrder}
+        onExpire={handleExpireOrder}
         isAccepting={isAcceptingOrder}
         distanceText={
           popupOrder?.estimatedDistance ||
           routeEstimate?.distanceText ||
           'Nearby'
         }
+      />
+
+      {/* Professional "Trip Matched" Popup when another assistant accepts first */}
+      <TripMatchedModal
+        notice={tripMatchedNotice}
+        onClose={() => setTripMatchedNotice(null)}
       />
 
       {/* Top Assistant Header with Hamburger & Online/Offline Control */}

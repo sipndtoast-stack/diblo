@@ -1025,6 +1025,142 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   };
 
   const completionPercent = calculateProfileCompletion();
+  const prevCompletionRef = useRef<number>(completionPercent);
+
+  // Auto-redirect to Main Customer App when profile transitions from < 100% to 100%
+  useEffect(() => {
+    if (prevCompletionRef.current < 100 && completionPercent === 100 && onContinueToHome) {
+      prevCompletionRef.current = 100;
+      const timer = setTimeout(() => {
+        onContinueToHome();
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+    prevCompletionRef.current = completionPercent;
+  }, [completionPercent, onContinueToHome]);
+
+  const [quickAddressLine, setQuickAddressLine] = useState(
+    () => customerProfile?.savedAddresses?.[0]?.address || ''
+  );
+  const [quickAddressArea, setQuickAddressArea] = useState(
+    () => customerProfile?.savedAddresses?.[0]?.area || 'Bandra West'
+  );
+  const [quickSetupError, setQuickSetupError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (customerProfile?.savedAddresses?.[0]?.address && !quickAddressLine) {
+      setQuickAddressLine(customerProfile.savedAddresses[0].address);
+      if (customerProfile.savedAddresses[0].area) {
+        setQuickAddressArea(customerProfile.savedAddresses[0].area);
+      }
+    }
+  }, [customerProfile?.savedAddresses]);
+
+  const buildOnboardingPayload = (requireAll: boolean): { valid: boolean; error?: string; payload?: Partial<CustomerProfileType> } => {
+    const cleanName = String(formData.name || inlineDisplayName || '').trim();
+    const cleanPhone = String(formData.phone || inlinePhone || '').replace(/\D/g, '').slice(-10);
+    const cleanEmail = String(formData.email || '').trim().toLowerCase();
+    const chosenAvatar = customerProfile?.avatar || currentUser?.avatar || (requireAll ? PRESET_AVATARS[0].url : '');
+    const cleanAddr = String(quickAddressLine || customerProfile?.savedAddresses?.[0]?.address || '').trim();
+    const cleanArea = String(quickAddressArea || customerProfile?.savedAddresses?.[0]?.area || 'Mumbai').trim();
+    const cleanEmName = String(emergencyData.name || customerProfile?.emergencyContact?.name || '').trim();
+    const cleanEmPhone = String(emergencyData.phone || customerProfile?.emergencyContact?.phone || '').replace(/\D/g, '').slice(-10);
+    const cleanEmRel = String(emergencyData.relationship || customerProfile?.emergencyContact?.relationship || 'Family').trim();
+    const cleanNotes = String(formData.specialInstructions || customerProfile?.specialInstructions || '').trim();
+
+    if (requireAll) {
+      if (!cleanName || cleanName.length < 3 || cleanName.toLowerCase() === 'customer') {
+        return { valid: false, error: 'Please enter your Full Name (at least 3 characters).' };
+      }
+      if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+        return { valid: false, error: 'Please enter a valid 10-digit Indian mobile number.' };
+      }
+      if (
+        !cleanEmail ||
+        !cleanEmail.includes('@') ||
+        !cleanEmail.includes('.') ||
+        cleanEmail.endsWith('@diblo.in') ||
+        cleanEmail.endsWith('@diblo-39440.firebaseapp.com')
+      ) {
+        return { valid: false, error: 'Please enter your valid Email ID.' };
+      }
+      if (!cleanAddr || cleanAddr.length < 3) {
+        return { valid: false, error: 'Please enter your Primary Address in Mumbai.' };
+      }
+      if (!cleanEmName || cleanEmName.length < 2 || !/^[6-9]\d{9}$/.test(cleanEmPhone)) {
+        return { valid: false, error: 'Please enter Emergency Contact Name and valid 10-digit Mobile Number.' };
+      }
+      if (!cleanNotes || cleanNotes.length < 2) {
+        return { valid: false, error: 'Please enter Special Instructions / Assistance Notes.' };
+      }
+    }
+
+    const existingAddresses = customerProfile?.savedAddresses || [];
+    const updatedAddresses =
+      cleanAddr.length >= 3
+        ? existingAddresses.length > 0
+          ? [{ ...existingAddresses[0], address: cleanAddr, area: cleanArea || 'Mumbai' }, ...existingAddresses.slice(1)]
+          : [
+              {
+                id: `addr-${Date.now()}`,
+                title: 'Home',
+                address: cleanAddr,
+                area: cleanArea || 'Mumbai',
+                lat: 19.0607,
+                lng: 72.8362,
+                isDefault: true
+              }
+            ]
+        : existingAddresses;
+
+    const payload: Partial<CustomerProfileType> = {
+      name: cleanName || customerProfile?.name || 'Customer',
+      displayName: cleanName || customerProfile?.displayName || 'Customer',
+      phone: cleanPhone || customerProfile?.phone || '',
+      email: cleanEmail || customerProfile?.email || '',
+      avatar: chosenAvatar || customerProfile?.avatar || '',
+      savedAddresses: updatedAddresses,
+      emergencyContact: {
+        name: cleanEmName,
+        phone: cleanEmPhone,
+        relationship: cleanEmRel || 'Family'
+      },
+      specialInstructions: cleanNotes
+    };
+
+    const score = calculateCustomerProfileCompletion(payload);
+    payload.profileCompletion = score;
+    payload.profileCompleted = score === 100;
+
+    return { valid: true, payload };
+  };
+
+  const handleSaveOnboardingProfile = async (require100Percent: boolean) => {
+    setQuickSetupError(null);
+    const res = buildOnboardingPayload(require100Percent);
+    if (!res.valid || !res.payload) {
+      setQuickSetupError(res.error || 'Please fill in all mandatory profile fields.');
+      return;
+    }
+
+    if (res.payload.name && res.payload.name !== 'Customer') {
+      setInlineDisplayName(res.payload.name);
+    }
+    if (res.payload.phone) {
+      setInlinePhone(res.payload.phone);
+    }
+
+    await syncProfileToFirestore(res.payload);
+
+    if (res.payload.profileCompleted) {
+      showToast('Profile 100% Completed! Redirecting to Main App...');
+      if (onContinueToHome) {
+        onContinueToHome();
+      }
+    } else {
+      showToast(`Profile progress saved (${res.payload.profileCompletion}% complete).`);
+    }
+  };
 
   const handleLogout = async () => {
     if (onOpenLogout) {
@@ -1083,9 +1219,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         </div>
       )}
 
-      {/* Mandatory 100% Profile Setup Banner for New Customers / Continue to Home */}
+      {/* Mandatory 100% Profile Setup Banner & Unified Completion Form for New Customers */}
       {completionPercent < 100 ? (
-        <div className="bg-gradient-to-r from-[#14213D] to-[#1E293B] text-white rounded-3xl p-5 sm:p-6 shadow-lg border border-gray-800 space-y-3">
+        <div className="bg-gradient-to-r from-[#14213D] to-[#1E293B] text-white rounded-3xl p-5 sm:p-6 shadow-lg border border-gray-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <Sparkles className="w-5 h-5 text-[#F42F73] shrink-0" />
@@ -1097,17 +1233,226 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               {completionPercent}% Completed
             </span>
           </div>
+
+          {/* Progress Bar */}
+          <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#F42F73] to-emerald-400 transition-all duration-300"
+              style={{ width: `${completionPercent}%` }}
+            />
+          </div>
+
           <p className="text-xs text-gray-300 leading-relaxed">
-            Welcome to Diblo! For verified safety and priority dispatch in Mumbai, please complete all sections below to reach <strong>100% Profile Completion</strong>:
+            Welcome to Diblo! Please complete all mandatory fields below to reach <strong>100% Profile Completion</strong> and unlock the Main Customer App:
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold pt-1">
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">1. Full Name (+20%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">2. Mobile Number (+15%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">3. Email ID (+15%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">4. Photo / Avatar (+15%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">5. Saved Address (+15%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">6. Emergency Contact (+10%)</div>
-            <div className="px-2.5 py-1.5 rounded-xl bg-white/10 sm:col-span-2">7. Special Instructions / Notes (+10%)</div>
+
+          {quickSetupError && (
+            <div className="p-3 rounded-2xl bg-rose-500/20 border border-rose-400/40 text-xs font-bold text-rose-100 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-300 shrink-0" />
+              <span>{quickSetupError}</span>
+            </div>
+          )}
+
+          {/* Unified Quick Completion Form */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3.5 text-left">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  1. Full Name * (+20%)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Rohan Sharma"
+                  value={formData.name === 'Customer' ? '' : formData.name}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    setFormData((prev) => ({ ...prev, name: e.target.value }));
+                    setInlineDisplayName(e.target.value);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  2. Mobile Number * (+15%)
+                </label>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  placeholder="10-digit mobile number"
+                  value={formData.phone}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setFormData((prev) => ({ ...prev, phone: digits }));
+                    setInlinePhone(digits);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  3. Email Address * (+15%)
+                </label>
+                <input
+                  type="email"
+                  placeholder="you@example.com"
+                  value={
+                    formData.email.endsWith('@diblo.in') ||
+                    formData.email.endsWith('@diblo-39440.firebaseapp.com')
+                      ? ''
+                      : formData.email
+                  }
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    setFormData((prev) => ({ ...prev, email: e.target.value }));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+            </div>
+
+            {/* 4. Avatar Preset Selection */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-200 mb-1.5">
+                4. Select Profile Avatar or Upload Photo * (+15%)
+              </label>
+              <div className="flex flex-wrap items-center gap-2.5">
+                {PRESET_AVATARS.map((preset) => {
+                  const isSelected = currentAvatar === preset.url;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleSelectPreset(preset.url)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#F42F73] border-white text-white shadow-sm'
+                          : 'bg-white/10 border-white/20 text-gray-200 hover:bg-white/20'
+                      }`}
+                    >
+                      <img
+                        src={preset.url}
+                        alt={preset.label}
+                        className="w-6 h-6 rounded-full object-cover"
+                      />
+                      <span>{preset.label}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-white cursor-pointer"
+                >
+                  Upload Custom Photo
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  5. Primary Address (Flat / Building / Street in Mumbai) * (+15%)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Flat 402, Sea Breeze Tower, Linking Road"
+                  value={quickAddressLine}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    setQuickAddressLine(e.target.value);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  Area / Locality
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Bandra West"
+                  value={quickAddressArea}
+                  onChange={(e) => setQuickAddressArea(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  6. Emergency Contact Name * (+10%)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Priya Sharma"
+                  value={emergencyData.name}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    setEmergencyData((prev) => ({ ...prev, name: e.target.value }));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  Emergency Contact Mobile *
+                </label>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  placeholder="10-digit mobile number"
+                  value={emergencyData.phone}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setEmergencyData((prev) => ({ ...prev, phone: digits }));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  7. Special Instructions / Notes * (+10%)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Call upon arrival at gate"
+                  value={formData.specialInstructions}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    setFormData((prev) => ({ ...prev, specialInstructions: e.target.value }));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => handleSaveOnboardingProfile(false)}
+                disabled={isSyncingFirestore}
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold transition-all cursor-pointer"
+              >
+                Save Progress
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveOnboardingProfile(true)}
+                disabled={isSyncingFirestore}
+                id="btn-complete-100-profile"
+                className="px-5 py-2.5 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs sm:text-sm font-black shadow-lg shadow-[#F42F73]/30 transition-all cursor-pointer"
+              >
+                {isSyncingFirestore
+                  ? 'Saving Profile...'
+                  : 'Save & Complete 100% Profile →'}
+              </button>
+            </div>
           </div>
         </div>
       ) : (

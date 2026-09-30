@@ -11,6 +11,8 @@
         "email": { "type": "string", "format": "email" },
         "role": { "type": "string", "enum": ["CUSTOMER", "ASSISTANT", "ADMIN", "OPERATIONS"] },
         "avatar": { "type": "string" },
+        "profileCompleted": { "type": "boolean" },
+        "profileCompletion": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "name", "phone", "role", "createdAt"]
@@ -30,6 +32,8 @@
         "fcmTokenUpdatedAt": { "type": "string" },
         "referralCode": { "type": "string" },
         "walletBalance": { "type": "number" },
+        "profileCompleted": { "type": "boolean" },
+        "profileCompletion": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "name", "phone", "createdAt"]
@@ -74,7 +78,14 @@
         "hourlyRate": { "type": "number" },
         "baseAmount": { "type": "number" },
         "totalAmount": { "type": "number" },
-        "status": { "type": "string", "enum": ["PENDING", "SEARCHING", "SCHEDULED", "ASSIGNED", "ACCEPTED", "ON_THE_WAY", "ARRIVED", "OTP_VERIFIED", "IN_PROGRESS", "COMPLETED", "REJECTED", "CANCELLED", "pending", "scheduled", "accepted", "on_the_way", "arrived", "in_progress", "completed", "rejected", "cancelled"] },
+        "status": { "type": "string", "enum": ["PENDING", "SEARCHING", "REQUEST_SENT", "SCHEDULED", "ASSIGNED", "ACCEPTED", "ON_THE_WAY", "ARRIVED", "OTP_VERIFIED", "IN_PROGRESS", "COMPLETED", "REJECTED", "CANCELLED", "NO_ASSISTANT_AVAILABLE", "pending", "searching", "request_sent", "scheduled", "assigned", "accepted", "on_the_way", "arrived", "in_progress", "completed", "rejected", "cancelled", "no_assistant_available"] },
+        "bookingStatus": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "candidateAssistantIds": { "type": "array", "items": { "type": "string" } },
+        "requestSentAt": { "type": "string" },
+        "requestExpiresAt": { "type": "string" },
+        "assignedAssistantId": { "type": "string" },
+        "assignedAt": { "type": "string" },
         "assistantId": { "type": "string" },
         "startOtp": { "type": "string" },
         "paymentStatus": { "type": "string", "enum": ["PENDING", "PAID", "REFUNDED", "FAILED"] },

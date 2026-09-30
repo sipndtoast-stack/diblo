@@ -555,12 +555,44 @@ export const api = {
     return safeJson<Booking>(res);
   },
 
-  async acceptBooking(id: string, assistantId?: string, assistantDetails?: { assistantUid?: string; assistantName?: string; assistantPhone?: string; assistantPhoto?: string; assistantRating?: number }) {
+  async acceptBooking(
+    id: string,
+    assistantId?: string,
+    assistantDetails?: {
+      assistantUid?: string;
+      assistantName?: string;
+      assistantPhone?: string;
+      assistantPhoto?: string;
+      assistantRating?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    code?: 'ASSIGNED' | 'ALREADY_ASSIGNED' | 'REQUEST_EXPIRED' | 'CANCELLED' | string;
+    message?: string;
+    error?: string;
+    booking?: Booking;
+  }> {
     try {
       const res = await authFetch(`/api/bookings/${id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assistantId, ...assistantDetails })
+      });
+      return safeJson(res, { success: res.ok });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async rejectBooking(
+    id: string,
+    assistantId?: string
+  ): Promise<{ success: boolean; booking?: Booking; error?: string }> {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assistantId })
       });
       return safeJson(res, { success: true });
     } catch (e: any) {
@@ -568,12 +600,37 @@ export const api = {
     }
   },
 
-  async rejectBooking(id: string, assistantId?: string) {
+  async expireBookingAssistant(
+    id: string,
+    assistantId?: string
+  ): Promise<{ success: boolean; booking?: Booking; error?: string }> {
     try {
-      const res = await authFetch(`/api/bookings/${id}/reject`, {
+      const res = await authFetch(`/api/bookings/${id}/expire-assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assistantId })
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async retryBookingDispatch(
+    id: string,
+    manualRetry = false
+  ): Promise<{
+    success: boolean;
+    exhausted?: boolean;
+    alreadyHandled?: boolean;
+    booking?: Booking;
+    error?: string;
+  }> {
+    try {
+      const res = await authFetch(`/api/bookings/${id}/retry-dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manualRetry })
       });
       return safeJson(res, { success: true });
     } catch (e: any) {
@@ -784,6 +841,15 @@ export const api = {
   async createCustomerProfile(data: any): Promise<CustomerProfile> {
     const res = await authFetch('/api/customers', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return safeJson<CustomerProfile>(res);
+  },
+
+  async updateCustomer(id: string, data: Partial<CustomerProfile>): Promise<CustomerProfile> {
+    const res = await authFetch(`/api/customers/${id}`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });

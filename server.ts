@@ -1623,29 +1623,117 @@ async function startServer() {
   });
 
   // ==========================================
-  // BOOKINGS & LIFECYCLE
+  // BOOKINGS & REAL-TIME PARALLEL TRIP MATCHING
   // ==========================================
+  const PARALLEL_REQUEST_WINDOW_MS = 15000; // 15-second request window
+  const DEFAULT_SERVICE_RADIUS_KM = 15; // Diblo Mumbai service radius
+  const MAX_DISPATCH_RETRIES = 2; // Up to 3 total waves
+  const activeBookingLocks = new Set<string>();
+
+  const calculateDistanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Number((R * c).toFixed(2));
+  };
+
+  const isBookingAssignedOrActive = (status?: string): boolean => {
+    const s = String(status || '').trim().toLowerCase();
+    return (
+      s === 'assigned' ||
+      s === 'accepted' ||
+      s === 'on_the_way' ||
+      s === 'arrived' ||
+      s === 'in_progress' ||
+      s === 'active' ||
+      s === 'ongoing' ||
+      s === 'otp_verified'
+    );
+  };
+
+  const isBookingSearchingOrRequestSent = (status?: string): boolean => {
+    const s = String(status || 'pending').trim().toLowerCase();
+    return s === 'pending' || s === 'searching' || s === 'request_sent';
+  };
+
+  const findEligibleNearbyAssistantsOnServer = async (params: {
+    pickupLat: number;
+    pickupLng: number;
+    radiusKm?: number;
+    excludedAssistantIds?: string[];
+  }): Promise<{ candidateAssistantIds: string[]; nearbyAssistants: AssistantProfile[] }> => {
+    const radiusKm = params.radiusKm || DEFAULT_SERVICE_RADIUS_KM;
+    const excluded = new Set(params.excludedAssistantIds || []);
+    const [allAssistants, allBookings] = await Promise.all([
+      dbRepository.getAssistants(),
+      dbRepository.getBookings()
+    ]);
+
+    const busyAssistantIds = new Set<string>();
+    for (const b of allBookings) {
+      const assignedId = b.assignedAssistantId || b.assistantId;
+      if (assignedId && isBookingAssignedOrActive(b.bookingStatus || b.status)) {
+        busyAssistantIds.add(assignedId);
+      }
+    }
+
+    const eligible: { assistant: AssistantProfile; distanceKm: number }[] = [];
+    for (const asst of allAssistants) {
+      if (!asst || !asst.id) continue;
+      if (excluded.has(asst.id)) continue;
+      if (asst.isOnline === false) continue;
+      if (asst.verificationStatus === 'SUSPENDED' || asst.verificationStatus === 'REJECTED') continue;
+      if (asst.activeBookingId || busyAssistantIds.has(asst.id)) continue;
+
+      const lat = Number(asst.currentLocation?.lat);
+      const lng = Number(asst.currentLocation?.lng);
+      if (Number.isNaN(lat) || Number.isNaN(lng)) continue;
+
+      const distanceKm = calculateDistanceKm(params.pickupLat, params.pickupLng, lat, lng);
+      if (distanceKm <= radiusKm) {
+        eligible.push({ assistant: asst, distanceKm });
+      }
+    }
+
+    eligible.sort((a, b) => a.distanceKm - b.distanceKm);
+    return {
+      candidateAssistantIds: eligible.map((e) => e.assistant.id),
+      nearbyAssistants: eligible.map((e) => e.assistant)
+    };
+  };
+
   app.get('/api/bookings', async (req: AuthenticatedRequest, res) => {
     try {
       const { customerId, assistantId, status } = req.query;
 
-      // Role check / IDOR defense: If user is customer or assistant, filter appropriately
       let filterCustomerId = customerId as string | undefined;
-      let filterAssistantId = assistantId as string | undefined;
+      const filterAssistantId = (assistantId as string | undefined) || (req.user?.role === 'ASSISTANT' ? req.user.assistantId : undefined);
 
       if (req.user?.role === 'CUSTOMER' && req.user.customerId) {
         filterCustomerId = req.user.customerId;
-      } else if (req.user?.role === 'ASSISTANT' && req.user.assistantId) {
-        filterAssistantId = req.user.assistantId;
       }
 
       const list = await dbRepository.getBookings({
         customerId: filterCustomerId,
-        assistantId: filterAssistantId,
         status: status as string
       });
 
-      res.json(Array.isArray(list) ? list : []);
+      const filteredList = Array.isArray(list)
+        ? list.filter((b) => {
+            if (filterAssistantId && req.user?.role === 'ASSISTANT') {
+              const assignedId = b.assignedAssistantId || b.assistantId;
+              return isBookingSearchingOrRequestSent(b.bookingStatus || b.status) || assignedId === filterAssistantId;
+            }
+            return true;
+          })
+        : [];
+
+      res.json(filteredList);
     } catch (err: any) {
       console.error('[API /api/bookings error]:', err);
       try {
@@ -1665,9 +1753,6 @@ async function startServer() {
       // IDOR validation
       if (req.user) {
         if (req.user.role === 'CUSTOMER' && req.user.customerId && booking.customerId !== req.user.customerId) {
-          return res.status(403).json({ error: 'Unauthorized to view this booking' });
-        }
-        if (req.user.role === 'ASSISTANT' && req.user.assistantId && booking.assistantId !== req.user.assistantId) {
           return res.status(403).json({ error: 'Unauthorized to view this booking' });
         }
       }
@@ -1699,22 +1784,42 @@ async function startServer() {
       const customerName = req.user?.name || body.customerName || 'Customer';
       const customerPhone = req.user?.phone || body.customerPhone || '';
 
+      const resolvedLocation = body.location || {
+        address: 'Bandra West, Mumbai',
+        area: 'Bandra West',
+        lat: 19.0596,
+        lng: 72.8295
+      };
+      const pickupLat = Number(body.pickupLocation?.lat ?? resolvedLocation.lat ?? 19.0596);
+      const pickupLng = Number(body.pickupLocation?.lng ?? resolvedLocation.lng ?? 72.8295);
+      const serviceRadiusKm = Number(body.serviceRadiusKm) || DEFAULT_SERVICE_RADIUS_KM;
+
+      // Immediately find ALL eligible nearby assistants in parallel
+      const { candidateAssistantIds } = await findEligibleNearbyAssistantsOnServer({
+        pickupLat,
+        pickupLng,
+        radiusKm: serviceRadiusKm
+      });
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const expiresMs = nowMs + PARALLEL_REQUEST_WINDOW_MS;
+      const expiresIso = new Date(expiresMs).toISOString();
+      const bookingId = body.id || `bk-${nowMs}`;
+
       const newBooking: Booking = {
-        id: body.id || `bk-${Date.now()}`,
+        id: bookingId,
+        bookingId,
         bookingNumber: body.bookingNumber || bookingNumber,
         customerId,
+        customerUid: body.customerUid || customerId,
         customerName,
         customerPhone,
         serviceId: body.serviceId,
         serviceName: body.serviceName,
         serviceIcon: body.serviceIcon || 'Sparkles',
-        location: body.location || {
-          address: 'Bandra West, Mumbai',
-          area: 'Bandra West',
-          lat: 19.0596,
-          lng: 72.8295
-        },
-        pickupLocation: body.pickupLocation || body.location,
+        location: resolvedLocation,
+        pickupLocation: body.pickupLocation || resolvedLocation,
         destinationLocation: body.destinationLocation,
         estimatedDistance: body.estimatedDistance,
         estimatedDuration: body.estimatedDuration,
@@ -1722,7 +1827,7 @@ async function startServer() {
         estimatedDurationMinutes: body.estimatedDurationMinutes,
         routePolyline: body.routePolyline,
         dateType: body.dateType || 'TODAY',
-        scheduledDate: body.scheduledDate || new Date().toISOString().split('T')[0],
+        scheduledDate: body.scheduledDate || nowIso.split('T')[0],
         startTime: body.startTime || '10:00 AM',
         bookedHours: hours,
         additionalHours: 0,
@@ -1742,10 +1847,34 @@ async function startServer() {
         preferredAssistantName: body.preferredAssistantName || null,
         preferredAssistantPhoto: body.preferredAssistantPhoto || null,
         isPreferredRequested: Boolean(body.preferredAssistantId || body.isPreferredRequested),
-        status: 'pending',
+        status: 'REQUEST_SENT',
+        bookingStatus: 'REQUEST_SENT',
+        candidateAssistantIds:
+          Array.isArray(body.candidateAssistantIds) && body.candidateAssistantIds.length > 0
+            ? body.candidateAssistantIds
+            : candidateAssistantIds,
+        candidateAssistantsCount:
+          Array.isArray(body.candidateAssistantIds) && body.candidateAssistantIds.length > 0
+            ? body.candidateAssistantIds.length
+            : candidateAssistantIds.length,
+        requestSentAt: nowIso,
+        requestSentAtMs: nowMs,
+        requestExpiresAt: expiresIso,
+        requestExpiresAtMs: expiresMs,
+        assignedAssistantId: null,
+        assistantId: null,
+        assignedAt: null,
+        declinedAssistantIds: [],
+        rejectedByAssistantIds: [],
+        rejectedAssistantIds: [],
+        expiredAssistantIds: [],
+        dispatchRetryCount: 0,
+        maxDispatchRetries: MAX_DISPATCH_RETRIES,
+        serviceRadiusKm,
         startOtp: body.startOtp || startOtp,
         paymentStatus: 'PENDING',
-        createdAt: new Date().toISOString()
+        createdAt: nowIso,
+        updatedAt: nowIso
       };
 
       await dbRepository.saveBooking(newBooking);
@@ -1756,63 +1885,278 @@ async function startServer() {
     }
   });
 
-  // Assistant Acceptance
+  // Atomic Assistant Acceptance (FIRST ACCEPT WINS)
   app.post('/api/bookings/:id/accept', async (req: AuthenticatedRequest, res) => {
-    try {
-      const booking = await dbRepository.getBooking(req.params.id);
-      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    const bookingId = req.params.id;
+    const assistantId = req.user?.assistantId || req.body.assistantId;
 
-      const assistantId = req.user?.assistantId || req.body.assistantId || booking.assistantId;
-      if (assistantId) {
-        const assistant = await dbRepository.getAssistant(assistantId);
-        if (assistant) {
-          booking.assistantId = assistant.id;
-          booking.assistantName = assistant.name;
-          booking.assistantPhone = assistant.phone;
-          booking.assistantPhoto = assistant.photo;
-          booking.assistantRating = assistant.rating;
-          booking.assistantLocation = assistant.currentLocation;
-          assistant.activeBookingId = booking.id;
-          await dbRepository.saveAssistant(assistant);
-        } else if (req.body.assistantName) {
-          booking.assistantId = assistantId;
-          booking.assistantName = req.body.assistantName;
-          booking.assistantPhone = req.body.assistantPhone;
-          booking.assistantPhoto = req.body.assistantPhoto;
-        }
+    if (!assistantId) {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_ASSISTANT_ID',
+        error: 'Assistant ID is required'
+      });
+    }
+
+    // Server-side atomic mutex lock per bookingId to prevent race conditions
+    if (activeBookingLocks.has(bookingId)) {
+      return res.status(409).json({
+        success: false,
+        code: 'ALREADY_ASSIGNED',
+        error: 'Trip Already Assigned',
+        message: 'This trip has already been accepted by another assistant.'
+      });
+    }
+
+    activeBookingLocks.add(bookingId);
+    try {
+      const booking = await dbRepository.getBooking(bookingId);
+      if (!booking) {
+        return res.status(404).json({ success: false, error: 'Booking not found' });
       }
 
-      booking.status = 'accepted';
-      booking.acceptedAt = new Date().toISOString();
+      const currentAssigned = booking.assignedAssistantId || booking.assistantId;
+      const currentStatus = String(booking.bookingStatus || booking.status || 'pending').toUpperCase();
+
+      // 1. Check if cancelled
+      if (currentStatus === 'CANCELLED') {
+        return res.status(409).json({
+          success: false,
+          code: 'CANCELLED',
+          error: 'Trip Cancelled',
+          message: 'This trip request was cancelled by the customer.',
+          booking
+        });
+      }
+
+      // 2. Atomic First-Accept-Wins Check: If already assigned to another assistant, reject!
+      if (
+        (currentAssigned && currentAssigned !== assistantId) ||
+        (isBookingAssignedOrActive(booking.bookingStatus || booking.status) && currentAssigned !== assistantId)
+      ) {
+        return res.status(409).json({
+          success: false,
+          code: 'ALREADY_ASSIGNED',
+          error: 'Trip Already Assigned',
+          message: 'This trip has already been accepted by another assistant.',
+          booking
+        });
+      }
+
+      // 3. Server-Timestamped 15-Second Expiry Check
+      const nowMs = Date.now();
+      const expiresAtMs =
+        booking.requestExpiresAtMs ||
+        (booking.requestExpiresAt ? new Date(booking.requestExpiresAt).getTime() : 0);
+      const isExpiredForAssistant =
+        Array.isArray(booking.expiredAssistantIds) && booking.expiredAssistantIds.includes(assistantId);
+
+      if (isExpiredForAssistant || (expiresAtMs > 0 && nowMs > expiresAtMs + 2000)) {
+        return res.status(410).json({
+          success: false,
+          code: 'REQUEST_EXPIRED',
+          error: 'Request Expired',
+          message: 'The 15-second request window for this trip has expired.',
+          booking
+        });
+      }
+
+      // 4. Lock and Assign Booking to this Assistant
+      const assistant = await dbRepository.getAssistant(assistantId);
+      if (assistant) {
+        booking.assistantId = assistant.id;
+        booking.assignedAssistantId = assistant.id;
+        booking.assistantName = assistant.name;
+        booking.assistantPhone = assistant.phone;
+        booking.assistantPhoto = assistant.photo;
+        booking.assistantRating = assistant.rating;
+        booking.assistantLocation = assistant.currentLocation;
+        assistant.activeBookingId = booking.id;
+        await dbRepository.saveAssistant(assistant);
+      } else {
+        booking.assistantId = assistantId;
+        booking.assignedAssistantId = assistantId;
+        booking.assistantName = req.body.assistantName || 'Verified Assistant';
+        booking.assistantPhone = req.body.assistantPhone || '';
+        booking.assistantPhoto = req.body.assistantPhoto || '';
+        booking.assistantRating = req.body.assistantRating || 4.95;
+      }
+
+      if (req.body.assistantUid) {
+        booking.assistantUid = req.body.assistantUid;
+      }
+
+      const nowIso = new Date(nowMs).toISOString();
+      booking.status = 'ASSIGNED';
+      booking.bookingStatus = 'ASSIGNED';
+      booking.assignedAt = nowIso;
+      booking.acceptedAt = nowIso;
+      booking.updatedAt = nowIso;
+
       await dbRepository.saveBooking(booking);
 
-      res.json({ success: true, booking });
+      res.json({
+        success: true,
+        code: 'ASSIGNED',
+        message: 'Trip assigned successfully',
+        booking
+      });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to accept booking', details: err.message });
+    } finally {
+      activeBookingLocks.delete(bookingId);
     }
   });
 
-  // Assistant Reject Booking
+  // Assistant Decline Booking (Removes request for this assistant while keeping trip active for other nearby assistants)
   app.post('/api/bookings/:id/reject', async (req: AuthenticatedRequest, res) => {
     try {
       const booking = await dbRepository.getBooking(req.params.id);
       if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
       const assistantId = req.user?.assistantId || req.body.assistantId;
-      booking.status = 'rejected';
-      booking.rejectedAt = new Date().toISOString();
+      const nowIso = new Date().toISOString();
 
       if (assistantId) {
-        const rejected = booking.rejectedAssistantIds || [];
-        if (!rejected.includes(assistantId)) {
-          booking.rejectedAssistantIds = [...rejected, assistantId];
+        const declined = new Set([
+          ...(booking.declinedAssistantIds || []),
+          ...(booking.rejectedByAssistantIds || []),
+          ...(booking.rejectedAssistantIds || []),
+          assistantId
+        ]);
+        const declinedArr = Array.from(declined);
+        booking.declinedAssistantIds = declinedArr;
+        booking.rejectedByAssistantIds = declinedArr;
+        booking.rejectedAssistantIds = declinedArr;
+      }
+
+      booking.updatedAt = nowIso;
+
+      // Do NOT set booking.status = 'rejected' if the trip is in parallel matching for other assistants!
+      // Only if all candidate assistants have responded (declined or expired), check if we should trigger retry/unavailable
+      const candidates = booking.candidateAssistantIds || [];
+      const respondedSet = new Set([
+        ...(booking.declinedAssistantIds || []),
+        ...(booking.expiredAssistantIds || [])
+      ]);
+      const allCandidatesDeclinedOrExpired =
+        candidates.length > 0 && candidates.every((cId) => respondedSet.has(cId));
+
+      if (allCandidatesDeclinedOrExpired && isBookingSearchingOrRequestSent(booking.bookingStatus || booking.status)) {
+        const retryCount = booking.dispatchRetryCount || 0;
+        const maxRetries = booking.maxDispatchRetries ?? MAX_DISPATCH_RETRIES;
+        if (retryCount >= maxRetries) {
+          booking.status = 'NO_ASSISTANT_AVAILABLE';
+          booking.bookingStatus = 'NO_ASSISTANT_AVAILABLE';
+        } else {
+          booking.status = 'SEARCHING';
+          booking.bookingStatus = 'SEARCHING';
         }
       }
 
       await dbRepository.saveBooking(booking);
-      res.json({ success: true, message: 'Order rejected', booking });
+      res.json({ success: true, message: 'Trip request declined for this assistant', booking });
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to reject booking', details: err.message });
+      res.status(500).json({ error: 'Failed to decline booking', details: err.message });
+    }
+  });
+
+  // Assistant 15-Second Request Window Expiry
+  app.post('/api/bookings/:id/expire-assistant', async (req: AuthenticatedRequest, res) => {
+    try {
+      const booking = await dbRepository.getBooking(req.params.id);
+      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+      const assistantId = req.user?.assistantId || req.body.assistantId;
+      if (assistantId) {
+        const expired = new Set([...(booking.expiredAssistantIds || []), assistantId]);
+        booking.expiredAssistantIds = Array.from(expired);
+      }
+      booking.updatedAt = new Date().toISOString();
+
+      await dbRepository.saveBooking(booking);
+      res.json({ success: true, booking });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to record assistant expiry', details: err.message });
+    }
+  });
+
+  // Parallel Dispatch Retry / Search Wave Endpoint
+  app.post('/api/bookings/:id/retry-dispatch', async (req: AuthenticatedRequest, res) => {
+    try {
+      const booking = await dbRepository.getBooking(req.params.id);
+      if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+      // If already assigned or completed or cancelled, do not overwrite!
+      if (
+        isBookingAssignedOrActive(booking.bookingStatus || booking.status) ||
+        String(booking.status).toLowerCase() === 'completed' ||
+        String(booking.status).toLowerCase() === 'cancelled'
+      ) {
+        return res.json({ success: true, alreadyHandled: true, booking });
+      }
+
+      const manualRetry = Boolean(req.body?.manualRetry);
+      const currentRetry = booking.dispatchRetryCount || 0;
+      const maxRetries = booking.maxDispatchRetries ?? MAX_DISPATCH_RETRIES;
+
+      if (!manualRetry && currentRetry >= maxRetries) {
+        booking.status = 'NO_ASSISTANT_AVAILABLE';
+        booking.bookingStatus = 'NO_ASSISTANT_AVAILABLE';
+        booking.updatedAt = new Date().toISOString();
+        await dbRepository.saveBooking(booking);
+        return res.json({
+          success: true,
+          exhausted: true,
+          booking
+        });
+      }
+
+      const nextRetryCount = manualRetry ? 0 : currentRetry + 1;
+      if (manualRetry) {
+        booking.declinedAssistantIds = [];
+        booking.rejectedByAssistantIds = [];
+        booking.rejectedAssistantIds = [];
+      }
+      booking.expiredAssistantIds = [];
+
+      const pickupLat = Number(booking.pickupLocation?.lat ?? booking.location?.lat ?? 19.0596);
+      const pickupLng = Number(booking.pickupLocation?.lng ?? booking.location?.lng ?? 72.8295);
+      const nextRadiusKm = (booking.serviceRadiusKm || DEFAULT_SERVICE_RADIUS_KM) + nextRetryCount * 5;
+
+      const { candidateAssistantIds } = await findEligibleNearbyAssistantsOnServer({
+        pickupLat,
+        pickupLng,
+        radiusKm: nextRadiusKm,
+        excludedAssistantIds: manualRetry ? [] : booking.declinedAssistantIds || []
+      });
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const expiresMs = nowMs + PARALLEL_REQUEST_WINDOW_MS;
+      const expiresIso = new Date(expiresMs).toISOString();
+
+      booking.status = 'REQUEST_SENT';
+      booking.bookingStatus = 'REQUEST_SENT';
+      booking.dispatchRetryCount = nextRetryCount;
+      booking.serviceRadiusKm = nextRadiusKm;
+      booking.candidateAssistantIds = candidateAssistantIds;
+      booking.candidateAssistantsCount = candidateAssistantIds.length;
+      booking.requestSentAt = nowIso;
+      booking.requestSentAtMs = nowMs;
+      booking.requestExpiresAt = expiresIso;
+      booking.requestExpiresAtMs = expiresMs;
+      booking.updatedAt = nowIso;
+
+      await dbRepository.saveBooking(booking);
+
+      res.json({
+        success: true,
+        exhausted: false,
+        booking
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to retry parallel dispatch', details: err.message });
     }
   });
 
@@ -2263,33 +2607,66 @@ async function startServer() {
         id: data.id || `cust-${Date.now()}`,
         userId: data.userId || `usr-${Date.now()}`,
         name: data.name || 'Customer',
-        phone: data.phone || '9820000000',
-        email: data.email || `${data.phone || Date.now()}@example.com`,
-        avatar: data.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-        savedAddresses: data.addresses || [
-          {
-            id: `addr-${Date.now()}`,
-            title: 'Home',
-            address: 'Mumbai, Maharashtra',
-            area: 'Bandra West',
-            lat: 19.0596,
-            lng: 72.8295,
-            isDefault: true
-          }
-        ],
+        displayName: data.displayName || data.name || 'Customer',
+        phone: data.phone || '',
+        email: data.email || '',
+        avatar: data.avatar || '',
+        savedAddresses: Array.isArray(data.savedAddresses)
+          ? data.savedAddresses
+          : Array.isArray(data.addresses)
+          ? data.addresses
+          : [],
         emergencyContact: data.emergencyContact || {
-          name: 'Emergency Contact',
-          phone: '9820000000',
+          name: '',
+          phone: '',
           relationship: 'Family'
         },
+        specialInstructions: data.specialInstructions || '',
+        alternatePhone: data.alternatePhone || '',
+        gender: data.gender || '',
+        dob: data.dob || '',
+        preferredLanguage: data.preferredLanguage || 'English',
+        bloodGroup: data.bloodGroup || '',
+        contactPreferences: data.contactPreferences,
+        profileCompleted: Boolean(data.profileCompleted),
+        profileCompletion: typeof data.profileCompletion === 'number' ? data.profileCompletion : 0,
         referralCode: data.referralCode || `DIBLO-${(data.phone || '0000').slice(-4)}`,
-        walletBalance: 100,
-        createdAt: new Date().toISOString()
+        walletBalance: typeof data.walletBalance === 'number' ? data.walletBalance : 100,
+        createdAt: data.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
       await dbRepository.saveCustomer(newCustomer);
       res.json(newCustomer);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to create customer', details: err.message });
+    }
+  });
+
+  app.put('/api/customers/:id', async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = req.body || {};
+      const existing = await dbRepository.getCustomer(req.params.id);
+      const updatedCustomer: CustomerProfile = {
+        ...(existing || {
+          id: req.params.id,
+          userId: data.userId || req.params.id,
+          name: 'Customer',
+          phone: '',
+          email: '',
+          savedAddresses: [],
+          emergencyContact: { name: '', phone: '', relationship: 'Family' },
+          referralCode: 'DIBLO100',
+          walletBalance: 100,
+          createdAt: new Date().toISOString()
+        }),
+        ...data,
+        id: existing?.id || req.params.id,
+        updatedAt: new Date().toISOString()
+      };
+      await dbRepository.saveCustomer(updatedCustomer);
+      res.json(updatedCustomer);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update customer', details: err.message });
     }
   });
   app.get('/api/customers', requireAuth, requireRole('ADMIN', 'OPERATIONS'), async (req, res) => {
