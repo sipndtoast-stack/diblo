@@ -54,7 +54,15 @@ const getTabFromPath = (path: string): CustomerTabType => {
 };
 
 const MainAppContent: React.FC = () => {
-  const { staffUser, switchRole, isCustomerAuthenticated, isAuthLoading, logoutCustomer } = useAuth();
+  const {
+    staffUser,
+    switchRole,
+    isCustomerAuthenticated,
+    isCustomerProfileComplete,
+    customerProfileCompletion,
+    isAuthLoading,
+    logoutCustomer
+  } = useAuth();
   const { setActiveBooking, bookings, completedFeedbackBooking, dismissFeedbackModal } = useBooking();
 
   // Current URL Path state
@@ -67,6 +75,7 @@ const MainAppContent: React.FC = () => {
 
   // Access denied notification banner
   const [accessDeniedNotice, setAccessDeniedNotice] = useState<string | null>(null);
+  const [profileIncompleteNotice, setProfileIncompleteNotice] = useState<string | null>(null);
 
   // Customer Navigation Tab with URL preservation
   const [customerTab, setCustomerTab] = useState<CustomerTabType>(() => {
@@ -115,6 +124,18 @@ const MainAppContent: React.FC = () => {
 
   // Handle Tab Switch and sync URL path so refreshing preserves location
   const handleCustomerTabChange = (tab: any) => {
+    if (!isCustomerProfileComplete && tab !== 'PROFILE') {
+      setCustomerTab('PROFILE');
+      setProfileIncompleteNotice(
+        `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) to unlock Home and all app options.`
+      );
+      if (typeof window !== 'undefined' && window.location.pathname !== '/customer/profile') {
+        window.history.pushState({}, '', '/customer/profile');
+        setCurrentPath('/customer/profile');
+      }
+      return;
+    }
+    setProfileIncompleteNotice(null);
     setCustomerTab(tab);
     let path = '/customer';
     if (tab === 'REQUESTS' || tab === 'BOOKINGS') path = '/customer/requests';
@@ -133,6 +154,18 @@ const MainAppContent: React.FC = () => {
 
   // Handle selecting Upcoming / Active / Completed under My Requests
   const handleSelectRequestFilter = (filter: CustomerRequestFilter) => {
+    if (!isCustomerProfileComplete) {
+      setCustomerTab('PROFILE');
+      setProfileIncompleteNotice(
+        `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) to unlock My Requests.`
+      );
+      if (typeof window !== 'undefined' && window.location.pathname !== '/customer/profile') {
+        window.history.pushState({}, '', '/customer/profile');
+        setCurrentPath('/customer/profile');
+      }
+      return;
+    }
+    setProfileIncompleteNotice(null);
     setRequestsFilter(filter);
     setCustomerTab('REQUESTS');
     const path = `/customer/requests?filter=${filter.toLowerCase()}`;
@@ -223,7 +256,16 @@ const MainAppContent: React.FC = () => {
           navigateTo('/customer-login');
         } else {
           switchRole('CUSTOMER');
-          setCustomerTab(getTabFromPath(currentPath));
+          if (!isCustomerProfileComplete) {
+            setCustomerTab('PROFILE');
+            if (currentPath !== '/customer/profile') {
+              window.history.replaceState({}, '', '/customer/profile');
+              setCurrentPath('/customer/profile');
+            }
+          } else {
+            setProfileIncompleteNotice(null);
+            setCustomerTab(getTabFromPath(currentPath));
+          }
         }
       }
     }
@@ -246,14 +288,19 @@ const MainAppContent: React.FC = () => {
       }
     }
 
-    // 5. If already authenticated with Firebase as Customer on this device, restore session and open Customer Panel
+    // 5. If already authenticated with Firebase as Customer on this device, restore session and open Customer Profile (if < 100%) or Customer Home
     if (!isAuthLoading && isCustomerAuthenticated) {
       if (currentPath === '/' || currentPath === '/customer-login') {
         switchRole('CUSTOMER');
-        navigateTo('/customer');
+        if (!isCustomerProfileComplete) {
+          setCustomerTab('PROFILE');
+          navigateTo('/customer/profile');
+        } else {
+          navigateTo('/customer');
+        }
       }
     }
-  }, [currentPath, staffUser, isCustomerAuthenticated, isAuthLoading]);
+  }, [currentPath, staffUser, isCustomerAuthenticated, isCustomerProfileComplete, isAuthLoading]);
 
   const handleOpenBookingWithService = (service: ServiceItem) => {
     setPreSelectedService(service);
@@ -446,22 +493,49 @@ const MainAppContent: React.FC = () => {
     );
   }
 
+  const activeCustomerTab: CustomerTabType = !isCustomerProfileComplete ? 'PROFILE' : customerTab;
+
   return (
     <div className="min-h-screen bg-[#fcfcfc] flex font-sans text-[#14213D] antialiased selection:bg-[#F42F73] selection:text-white">
       {/* Main Content View (Header with Hamburger Drawer + Active Tab Content) */}
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         {/* Customer Header */}
         <CustomerHeader
-          onOpenBooking={() => setIsBookingModalOpen(true)}
+          onOpenBooking={() => {
+            if (!isCustomerProfileComplete) {
+              setCustomerTab('PROFILE');
+              setProfileIncompleteNotice(
+                `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) before booking an assistant.`
+              );
+              return;
+            }
+            setIsBookingModalOpen(true);
+          }}
           onSelectTab={(tab) => handleCustomerTabChange(tab)}
           onSelectRequestFilter={handleSelectRequestFilter}
           requestsFilter={requestsFilter}
-          activeTab={customerTab}
+          activeTab={activeCustomerTab}
           onOpenLogout={() => setShowLogoutConfirm(true)}
         />
 
+        {profileIncompleteNotice && !isCustomerProfileComplete && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 text-amber-900 text-xs sm:text-sm font-bold flex items-center justify-between shadow-2xs">
+            <div className="flex items-center gap-2 max-w-4xl mx-auto w-full">
+              <AlertCircle className="w-4 h-4 text-[#F42F73] shrink-0" />
+              <span>{profileIncompleteNotice}</span>
+              <button
+                type="button"
+                onClick={() => setProfileIncompleteNotice(null)}
+                className="ml-auto p-1 text-amber-700 hover:text-amber-950 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <main className="flex-1">
-          {customerTab === 'HOME' && (
+          {activeCustomerTab === 'HOME' && (
             <CustomerHome
               onSelectService={handleOpenBookingWithService}
               onOpenBooking={() => {
@@ -474,7 +548,7 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {(customerTab === 'REQUESTS' || customerTab === 'BOOKINGS') && (
+          {(activeCustomerTab === 'REQUESTS' || activeCustomerTab === 'BOOKINGS') && (
             <CustomerBookings
               activeFilter={requestsFilter}
               onFilterChange={(nextFilter) => setRequestsFilter(nextFilter)}
@@ -486,7 +560,7 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {(customerTab === 'TRACK' || customerTab === 'ACTIVITY') && (
+          {(activeCustomerTab === 'TRACK' || activeCustomerTab === 'ACTIVITY') && (
             <ActiveBookingView
               onOpenBooking={() => {
                 setPreSelectedAssistant(null);
@@ -496,7 +570,7 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {customerTab === 'NOTIFICATIONS' && (
+          {activeCustomerTab === 'NOTIFICATIONS' && (
             <CustomerNotificationsView
               onNavigateToRequests={() => handleCustomerTabChange('REQUESTS')}
               onNavigateToTrack={() => handleCustomerTabChange('TRACK')}
@@ -504,13 +578,19 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {customerTab === 'PAYMENTS' && (
+          {activeCustomerTab === 'PAYMENTS' && (
             <CustomerPaymentsView />
           )}
 
-          {customerTab === 'PROFILE' && (
+          {activeCustomerTab === 'PROFILE' && (
             <CustomerProfile
               onOpenBookingWithCoupon={(couponCode) => {
+                if (!isCustomerProfileComplete) {
+                  setProfileIncompleteNotice(
+                    `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) before booking.`
+                  );
+                  return;
+                }
                 setPreSelectedCouponCode(couponCode);
                 setPreSelectedAssistant(null);
                 setIsBookingModalOpen(true);
@@ -518,12 +598,13 @@ const MainAppContent: React.FC = () => {
               onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
               onViewAllFavorites={() => handleCustomerTabChange('FAVORITES')}
               onOpenLogout={() => setShowLogoutConfirm(true)}
+              onContinueToHome={() => handleCustomerTabChange('HOME')}
             />
           )}
 
-          {customerTab === 'SUPPORT' && <CustomerSupport />}
+          {activeCustomerTab === 'SUPPORT' && <CustomerSupport />}
 
-          {customerTab === 'FAVORITES' && (
+          {activeCustomerTab === 'FAVORITES' && (
             <CustomerFavoritesView
               onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
               onOpenGeneralBooking={() => {
@@ -537,7 +618,7 @@ const MainAppContent: React.FC = () => {
 
       {/* Customer Mobile Navigation */}
       <CustomerBottomNav
-        activeTab={customerTab}
+        activeTab={activeCustomerTab}
         onSelectTab={(tab) => handleCustomerTabChange(tab)}
       />
 

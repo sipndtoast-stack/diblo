@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
 import { MOCK_ASSISTANTS } from '../data/mockData';
+import { useIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from '../hooks/useIdleTimer';
 import {
   db,
   auth,
@@ -114,10 +115,64 @@ function isStaleDemoCustomer(obj: any): boolean {
   return false;
 }
 
+export function calculateCustomerProfileCompletion(profile: Partial<CustomerProfile> | null | undefined): number {
+  if (!profile) return 0;
+  let score = 0;
+
+  const rawName = String(profile.displayName || profile.name || '').trim();
+  const isPlaceholderName =
+    !rawName ||
+    rawName.length < 3 ||
+    rawName.toLowerCase() === 'customer' ||
+    /^customer\s+\d{4}$/i.test(rawName);
+  if (!isPlaceholderName) {
+    score += 20;
+  }
+
+  const cleanPhone = String(profile.phone || '').replace(/\D/g, '').slice(-10);
+  if (/^[6-9]\d{9}$/.test(cleanPhone)) {
+    score += 15;
+  }
+
+  const rawEmail = String(profile.email || '').trim().toLowerCase();
+  const isPlaceholderEmail =
+    !rawEmail ||
+    !rawEmail.includes('@') ||
+    rawEmail.endsWith('@diblo.in') ||
+    rawEmail.endsWith('@diblo-39440.firebaseapp.com');
+  if (!isPlaceholderEmail) {
+    score += 15;
+  }
+
+  if (profile.avatar && String(profile.avatar).trim().length > 0) {
+    score += 15;
+  }
+
+  if (Array.isArray(profile.savedAddresses) && profile.savedAddresses.length > 0) {
+    score += 15;
+  }
+
+  if (
+    profile.emergencyContact &&
+    String(profile.emergencyContact.name || '').trim().length > 0 &&
+    String(profile.emergencyContact.phone || '').trim().length > 0
+  ) {
+    score += 10;
+  }
+
+  if (profile.specialInstructions && String(profile.specialInstructions).trim().length > 0) {
+    score += 10;
+  }
+
+  return Math.min(score, 100);
+}
+
 export interface AuthContextType {
   currentUser: User;
   currentRole: UserRole;
   customerProfile: CustomerProfile | null;
+  customerProfileCompletion: number;
+  isCustomerProfileComplete: boolean;
   assistantProfile: AssistantProfile | null;
   staffUser: StaffSession | null;
   isAuthenticated: boolean;
@@ -996,12 +1051,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithEmailPassword = async () => ({ success: true });
   const loginDemoUser = async () => ({ success: true });
 
+  // 15-Minute Inactivity / Idle Timer: automatically logs out the customer after 15 minutes of inactivity
+  useIdleTimer({
+    timeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+    enabled: isCustomerAuthenticated,
+    onIdle: () => {
+      logoutCustomer();
+    }
+  });
+
+  const customerProfileCompletion = calculateCustomerProfileCompletion(customerProfile);
+  const isCustomerProfileComplete = customerProfileCompletion === 100;
+
   return (
     <AuthContext.Provider
       value={{
         currentUser,
         currentRole,
         customerProfile,
+        customerProfileCompletion,
+        isCustomerProfileComplete,
         assistantProfile,
         staffUser,
         isAuthenticated: isCustomerAuthenticated || Boolean(staffUser?.authenticated),
@@ -1064,6 +1133,8 @@ export const useAuth = (): AuthContextType => {
             createdAt: new Date().toISOString()
           }
         : null,
+      customerProfileCompletion: 0,
+      isCustomerProfileComplete: false,
       assistantProfile: DEFAULT_ASSISTANT_PROFILE,
       staffUser: null,
       isAuthenticated: Boolean(fbUser),

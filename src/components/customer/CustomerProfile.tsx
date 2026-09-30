@@ -15,7 +15,7 @@ import {
   handleFirestoreError,
   OperationType
 } from '../../lib/firebase';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth, calculateCustomerProfileCompletion } from '../../context/AuthContext';
 import { useBooking } from '../../context/BookingContext';
 import {
   User,
@@ -62,6 +62,7 @@ interface CustomerProfileProps {
   onRequestBookingWithAssistant?: (assistant: AssistantProfile) => void;
   onViewAllFavorites?: () => void;
   onOpenLogout?: () => void;
+  onContinueToHome?: () => void;
 }
 
 const PRESET_AVATARS = [
@@ -241,7 +242,8 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   onOpenBookingWithCoupon,
   onRequestBookingWithAssistant,
   onViewAllFavorites,
-  onOpenLogout
+  onOpenLogout,
+  onContinueToHome
 }) => {
   let authContext: ReturnType<typeof useAuth> | null = null;
   try {
@@ -1005,15 +1007,21 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
   // Calculate Profile Completion %
   const calculateProfileCompletion = () => {
-    let score = 0;
-    if (customerProfile?.name || formData.name) score += 20;
-    if (customerProfile?.phone || formData.phone) score += 15;
-    if (customerProfile?.email || formData.email) score += 15;
-    if (customerProfile?.avatar) score += 15;
-    if (customerProfile?.savedAddresses?.length) score += 15;
-    if (customerProfile?.emergencyContact?.name || emergencyData.name) score += 10;
-    if (customerProfile?.specialInstructions || formData.specialInstructions) score += 10;
-    return Math.min(score, 100);
+    return calculateCustomerProfileCompletion({
+      ...customerProfile,
+      name: customerProfile?.name || formData.name,
+      displayName: customerProfile?.displayName || formData.name,
+      phone: customerProfile?.phone || formData.phone,
+      email: customerProfile?.email || formData.email,
+      avatar: customerProfile?.avatar || currentUser?.avatar,
+      savedAddresses: customerProfile?.savedAddresses || [],
+      emergencyContact: {
+        name: customerProfile?.emergencyContact?.name || emergencyData.name,
+        phone: customerProfile?.emergencyContact?.phone || emergencyData.phone,
+        relationship: customerProfile?.emergencyContact?.relationship || emergencyData.relationship || 'Family'
+      },
+      specialInstructions: customerProfile?.specialInstructions || formData.specialInstructions
+    });
   };
 
   const completionPercent = calculateProfileCompletion();
@@ -1041,11 +1049,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       lat: 19.0968,
       lng: 72.9284
     };
-    if (customerProfile) {
-      updateCustomerProfile({
-        savedAddresses: [...(customerProfile.savedAddresses || []), newAddr]
-      });
-    }
+    updateCustomerProfile({
+      savedAddresses: [...(customerProfile?.savedAddresses || []), newAddr]
+    });
     setShowAddAddress(false);
     showToast('Address added to your saved locations!');
   };
@@ -1075,6 +1081,56 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span className="text-xs font-semibold">{toastMessage}</span>
         </div>
+      )}
+
+      {/* Mandatory 100% Profile Setup Banner for New Customers / Continue to Home */}
+      {completionPercent < 100 ? (
+        <div className="bg-gradient-to-r from-[#14213D] to-[#1E293B] text-white rounded-3xl p-5 sm:p-6 shadow-lg border border-gray-800 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="w-5 h-5 text-[#F42F73] shrink-0" />
+              <h2 className="text-sm sm:text-base font-black tracking-tight">
+                Complete Your Customer Profile (100% Required to Unlock Home & Bookings)
+              </h2>
+            </div>
+            <span className="text-xs font-black bg-[#F42F73] text-white px-3 py-1 rounded-full w-fit">
+              {completionPercent}% Completed
+            </span>
+          </div>
+          <p className="text-xs text-gray-300 leading-relaxed">
+            Welcome to Diblo! For verified safety and priority dispatch in Mumbai, please complete all sections below to reach <strong>100% Profile Completion</strong>:
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold pt-1">
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">1. Full Name (+20%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">2. Mobile Number (+15%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">3. Email ID (+15%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">4. Photo / Avatar (+15%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">5. Saved Address (+15%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10">6. Emergency Contact (+10%)</div>
+            <div className="px-2.5 py-1.5 rounded-xl bg-white/10 sm:col-span-2">7. Special Instructions / Notes (+10%)</div>
+          </div>
+        </div>
+      ) : (
+        onContinueToHome && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+              <div>
+                <div className="text-sm font-black text-emerald-950">Profile 100% Complete!</div>
+                <div className="text-xs text-emerald-700">
+                  All customer details are verified. Home page and all app options are now unlocked.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onContinueToHome}
+              className="px-5 py-2.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs sm:text-sm font-black shadow-md transition-all cursor-pointer shrink-0"
+            >
+              Continue to Home Page →
+            </button>
+          </div>
+        )
       )}
 
       {/* Profile Overview Card with Interactive Photo Upload */}
