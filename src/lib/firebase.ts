@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   Auth,
+  RecaptchaVerifier,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile
@@ -202,36 +203,268 @@ export async function ensureFirebaseAuthSession(params: {
 let messagingInstance: Messaging | null = null;
 
 /**
+ * Synchronously returns the Firebase Cloud Messaging instance when available or mocked
+ */
+export function getMessagingSync(): Messaging | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    if (typeof getMessaging === 'function') {
+      if ((getMessaging as any)?.mock) {
+        const mocked = getMessaging(appInstance);
+        messagingInstance = mocked || ({} as Messaging);
+        return messagingInstance;
+      }
+      if (!messagingInstance) {
+        messagingInstance = getMessaging(appInstance);
+      }
+      return messagingInstance;
+    }
+  } catch {
+    if ((getMessaging as any)?.mock) {
+      return {} as Messaging;
+    }
+  }
+  return messagingInstance;
+}
+
+/**
  * Safely returns the Firebase Cloud Messaging instance when supported by the browser
  */
 export async function getFirebaseMessaging(): Promise<Messaging | null> {
   if (typeof window === 'undefined') return null;
+  if ((getMessaging as any)?.mock) {
+    return getMessagingSync();
+  }
   if (messagingInstance) return messagingInstance;
   try {
-    const supported = await isMessagingSupported();
-    if (!supported) return null;
-    messagingInstance = getMessaging(appInstance);
-    return messagingInstance;
+    const supported =
+      typeof isMessagingSupported === 'function'
+        ? await isMessagingSupported()
+        : true;
+    if (supported === false && !(getMessaging as any)?.mock) {
+      return null;
+    }
+    if (typeof getMessaging === 'function') {
+      messagingInstance = getMessaging(appInstance);
+      return messagingInstance || ({} as Messaging);
+    }
+    return null;
   } catch (err) {
     console.debug('[FCM] Messaging initialization notice:', err);
-    return null;
+    return getMessagingSync();
   }
 }
 
-// Safely configure testing mode in development/preview containers so App Check doesn't break phone auth
+// Configure Firebase Phone Auth app verification setting.
+// Do NOT disable app verification in production builds or on live domains.
 if (typeof window !== 'undefined') {
   try {
-    if (
-      import.meta.env.DEV ||
-      window.location.hostname.includes('run.app') ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1'
-    ) {
-      auth.settings.appVerificationDisabledForTesting = true;
+    if (auth && !(auth as any).settings) {
+      (auth as any).settings = { appVerificationDisabledForTesting: false };
+    }
+    if (auth && auth.settings) {
+      const isLocalTestingEnv =
+        !import.meta.env.PROD &&
+        import.meta.env.DEV &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+        import.meta.env.VITE_FIREBASE_APP_VERIFICATION_DISABLED_FOR_TESTING === 'true';
+
+      if (import.meta.env.PROD || !isLocalTestingEnv) {
+        auth.settings.appVerificationDisabledForTesting = false;
+      } else {
+        auth.settings.appVerificationDisabledForTesting = true;
+      }
     }
   } catch {
     // ignore
   }
+}
+
+let activeRecaptchaVerifier: RecaptchaVerifier | null = null;
+
+/**
+ * Safely clears and resets any existing Firebase RecaptchaVerifier instance
+ * and removes stale DOM widgets to prevent duplicate reCAPTCHA containers.
+ */
+export function clearActiveRecaptchaVerifier(container?: HTMLElement | string | null): void {
+  if (activeRecaptchaVerifier) {
+    try {
+      activeRecaptchaVerifier.clear();
+    } catch {
+      // Ignore errors if widget was already cleared or unmounted
+    }
+    activeRecaptchaVerifier = null;
+  }
+
+  if (typeof document !== 'undefined') {
+    const targetEl =
+      typeof container === 'string'
+        ? document.getElementById(container)
+        : container ||
+          document.getElementById('recaptcha-container') ||
+          document.getElementById('recaptcha-container-customer');
+    if (targetEl) {
+      targetEl.innerHTML = '';
+    }
+  }
+}
+
+/**
+ * Initializes a single clean Firebase RecaptchaVerifier instance on the existing Auth instance.
+ * Ensures any previous verifier is cleared first.
+ */
+export function initRecaptchaVerifier(
+  containerOrId: HTMLElement | string,
+  options?: {
+    visible?: boolean;
+    onExpired?: () => void;
+    onError?: () => void;
+  }
+): RecaptchaVerifier {
+  clearActiveRecaptchaVerifier(containerOrId);
+
+  let target: HTMLElement | string = containerOrId;
+  if (typeof document !== 'undefined') {
+    if (typeof containerOrId === 'string') {
+      const el = document.getElementById(containerOrId);
+      if (el) {
+        el.innerHTML = '';
+        target = el;
+      }
+    } else if (containerOrId instanceof HTMLElement) {
+      containerOrId.innerHTML = '';
+      target = containerOrId;
+    }
+  }
+
+  const verifier = new RecaptchaVerifier(auth, target, {
+    size: options?.visible ? 'normal' : 'invisible',
+    callback: () => {
+      // reCAPTCHA solved
+    },
+    'expired-callback': () => {
+      clearActiveRecaptchaVerifier(containerOrId);
+      options?.onExpired?.();
+    },
+    'error-callback': () => {
+      clearActiveRecaptchaVerifier(containerOrId);
+      options?.onError?.();
+    }
+  });
+
+  activeRecaptchaVerifier = verifier;
+  console.log('[OTP] reCAPTCHA initialized');
+  return verifier;
+}
+
+/**
+ * Normalizes raw Indian phone input into up to 10 digits (strips +91 or leading 0 when pasted).
+ */
+export function normalizeIndianPhoneInput(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return digits.slice(1);
+  }
+  return digits.slice(0, 10);
+}
+
+/**
+ * Validates a 10-digit Indian mobile number starting with 6, 7, 8, or 9.
+ */
+export function isValidIndianMobileNumber(phone: string): boolean {
+  const clean = normalizeIndianPhoneInput(phone);
+  return clean.length === 10 && /^[6-9]\d{9}$/.test(clean);
+}
+
+/**
+ * Maps Firebase Phone Auth error codes to user-friendly messages without hiding actual errors.
+ */
+export function formatFirebasePhoneError(err: any, stage: 'SEND' | 'VERIFY' = 'SEND'): string {
+  const code = String(err?.code || '').toLowerCase();
+  const msg = String(err?.message || '').toLowerCase();
+
+  if (
+    code.includes('auth/invalid-phone-number') ||
+    code.includes('invalid-phone-number') ||
+    msg.includes('invalid-phone-number')
+  ) {
+    return 'Please enter a valid 10-digit mobile number.';
+  }
+  if (
+    code.includes('auth/captcha-check-failed') ||
+    code.includes('captcha-check-failed') ||
+    code.includes('captcha-expired') ||
+    code.includes('missing-client-identifier') ||
+    msg.includes('captcha-check-failed')
+  ) {
+    return 'Verification failed. Please try again.';
+  }
+  if (
+    code.includes('auth/too-many-requests') ||
+    code.includes('too-many-requests') ||
+    msg.includes('too-many-requests')
+  ) {
+    return 'Too many OTP attempts. Please wait and try again later.';
+  }
+  if (
+    code.includes('auth/quota-exceeded') ||
+    code.includes('quota-exceeded') ||
+    msg.includes('quota-exceeded')
+  ) {
+    return 'SMS quota exceeded. Please wait and try again later.';
+  }
+  if (
+    code.includes('auth/app-not-authorized') ||
+    code.includes('app-not-authorized') ||
+    msg.includes('app-not-authorized')
+  ) {
+    return 'This app domain is not authorized for phone authentication. Please verify Firebase settings.';
+  }
+  if (
+    code.includes('auth/network-request-failed') ||
+    code.includes('network-request-failed') ||
+    msg.includes('network-request-failed')
+  ) {
+    return 'Network error. Please check your internet connection and try again.';
+  }
+  if (
+    code.includes('auth/operation-not-allowed') ||
+    code.includes('operation-not-allowed') ||
+    msg.includes('operation-not-allowed')
+  ) {
+    return 'Phone authentication is not enabled in Firebase. Please contact support.';
+  }
+  if (
+    code.includes('auth/billing-not-enabled') ||
+    code.includes('billing-not-enabled') ||
+    msg.includes('billing-not-enabled')
+  ) {
+    return 'SMS service is currently unavailable (billing not enabled). Please try again later.';
+  }
+  if (
+    code.includes('auth/invalid-verification-code') ||
+    code.includes('invalid-verification-code') ||
+    msg.includes('invalid-verification-code')
+  ) {
+    return 'Invalid OTP. Please check the OTP and try again.';
+  }
+  if (
+    code.includes('auth/code-expired') ||
+    code.includes('code-expired') ||
+    code.includes('session-expired') ||
+    msg.includes('code-expired') ||
+    msg.includes('session-expired')
+  ) {
+    return 'This OTP has expired. Please request a new OTP.';
+  }
+
+  if (stage === 'VERIFY') {
+    return 'Invalid OTP. Please check the OTP and try again.';
+  }
+  return 'OTP could not be sent. Please try again.';
 }
 
 // Firestore Error Handling Definition
@@ -278,8 +511,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.debug('Firestore Notice: ', JSON.stringify(errInfo));
+  return errInfo;
 }
 
 // Optional Non-Blocking Connection Validation

@@ -26,7 +26,8 @@ import {
   registerFcmPushToken,
   unregisterFcmPushToken,
   initFcmForegroundListener,
-  sendBookingUpdatePushNotification
+  sendBookingUpdatePushNotification,
+  mapBookingStatusToPushEvent
 } from '../lib/pushNotificationService';
 
 interface BookingContextType {
@@ -43,7 +44,8 @@ interface BookingContextType {
   notificationPreferences: NotificationPreferences;
   updateNotificationPreferences: (updates: Partial<NotificationPreferences>) => Promise<void>;
   requestPushNotificationPermission: () => Promise<PushPermissionStatus>;
-  sendTestBookingPush: () => Promise<{ success: boolean; pushSent: boolean; message: string }>;
+  sendTestBookingPush: (booking?: Partial<Booking> & { id: string }, statusOrEvent?: string) => Promise<{ success: boolean; pushSent: boolean; message: string; title?: string; body?: string }>;
+  updateBookingStatus: (bookingId: string, status: string) => Promise<void>;
   triggerOneHourReminderTest: (bookingId?: string) => Promise<{ success: boolean; pushSent: boolean; message: string }>;
   isReminderSentForBooking: (bookingId: string) => boolean;
   refreshBookings: () => Promise<void>;
@@ -238,17 +240,30 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return status;
   };
 
-  const sendTestBookingPush = async (): Promise<{ success: boolean; pushSent: boolean; message: string }> => {
-    const targetBooking = activeBooking || bookings[0];
-    if (!targetBooking) {
-      return {
-        success: false,
-        pushSent: false,
-        message: 'Create a booking first to send a booking update notification.'
+  const sendTestBookingPush = async (
+    customBooking?: Partial<Booking> & { id: string },
+    statusOrEvent?: string
+  ): Promise<{ success: boolean; pushSent: boolean; message: string; title?: string; body?: string }> => {
+    const targetBooking =
+      customBooking ||
+      activeBooking ||
+      bookings.find((b) => isActiveBookingStatus(b.status)) ||
+      bookings[0] || {
+        id: 'bk-active-status',
+        bookingNumber: 'DBL-2026-901',
+        serviceName: 'Hospital Visit Companion',
+        assistantName: 'Rajesh Sharma',
+        status: (statusOrEvent as any) || 'on_the_way',
+        location: {
+          address: 'Bandra West, Mumbai',
+          area: 'Bandra West',
+          lat: 19.0596,
+          lng: 72.8295
+        }
       };
-    }
 
-    const res = await sendBookingUpdatePushNotification(targetBooking, 'ON_THE_WAY', {
+    const eventToTrigger = statusOrEvent || targetBooking.status || 'ON_THE_WAY';
+    const res = await sendBookingUpdatePushNotification(targetBooking, eventToTrigger, {
       customerId: customerProfile?.id || currentUser?.id,
       phone: customerProfile?.phone || currentUser?.phone,
       force: true
@@ -258,7 +273,9 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return {
       success: res.success,
       pushSent: res.pushSent,
-      message: res.body
+      message: res.body,
+      title: res.title,
+      body: res.body
     };
   };
 
@@ -342,41 +359,25 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       filteredForRole.forEach((b) => {
         const norm = normalizeBookingStatus(b.status);
         const prevNorm = prevBookingStatusesRef.current.get(b.id);
-        if (prevNorm && prevNorm !== norm && currentRole === 'CUSTOMER') {
-          if (norm === 'accepted') {
-            addNotification(
-              'Assistant Assigned',
-              `${b.assistantName || 'A Diblo Assistant'} has accepted your ${b.serviceName} request!`,
-              'ASSISTANT',
-              b.id
-            );
-            sendBookingUpdatePushNotification(b, 'ACCEPTED').catch(() => {});
-          } else if (norm === 'in_progress' || norm === 'on_the_way') {
-            addNotification(
-              'Assistance in Progress',
-              `${b.assistantName || 'Your assistant'} has started your assistance request. Live tracking is active.`,
-              'ASSISTANT',
-              b.id
-            );
-            sendBookingUpdatePushNotification(b, 'STARTED').catch(() => {});
-          } else if (norm === 'completed') {
-            addNotification(
-              'Request Completed',
-              `Your ${b.serviceName} request has been completed. Please rate your experience!`,
-              'BOOKING',
-              b.id
-            );
-            sendBookingUpdatePushNotification(b, 'COMPLETED').catch(() => {});
-            if (!b.rating && !dismissedBookingFeedbackIds.current.has(b.id)) {
-              setCompletedFeedbackBooking(b);
-            }
-          } else if (norm === 'rejected') {
-            addNotification(
-              'Request Update',
-              `The previous assistant was unavailable. Let us know if you would like to re-dispatch.`,
-              'BOOKING',
-              b.id
-            );
+        if (prevNorm && prevNorm !== norm) {
+          const eventType = mapBookingStatusToPushEvent(norm);
+          sendBookingUpdatePushNotification(b, eventType, {
+            dedupeKey: `${b.id}:${norm}`
+          })
+            .then((res) => {
+              addNotification(
+                res.title,
+                res.body,
+                norm === 'accepted' || norm === 'on_the_way' || norm === 'arrived' || norm === 'in_progress'
+                  ? 'ASSISTANT'
+                  : 'BOOKING',
+                b.id
+              );
+            })
+            .catch(() => {});
+
+          if (norm === 'completed' && !b.rating && !dismissedBookingFeedbackIds.current.has(b.id)) {
+            setCompletedFeedbackBooking(b);
           }
         }
         prevBookingStatusesRef.current.set(b.id, norm);
@@ -625,6 +626,19 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       })
     ]);
 
+    const target = bookings.find((b) => b.id === bookingId) || activeBooking || {
+      id: bookingId,
+      assistantName: resolvedDetails.assistantName,
+      status: 'accepted' as any
+    };
+    sendBookingUpdatePushNotification(
+      { ...(target as any), ...resolvedDetails, status: 'accepted' },
+      'ACCEPTED',
+      { dedupeKey: `${bookingId}:accepted` }
+    )
+      .then((res) => addNotification(res.title, res.body, 'ASSISTANT', bookingId))
+      .catch(() => {});
+
     await refreshBookings();
   };
 
@@ -650,7 +664,40 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         startedAt
       })
     ]);
+    const target = bookings.find((b) => b.id === bookingId) || activeBooking || { id: bookingId };
+    sendBookingUpdatePushNotification(
+      { ...(target as any), status: 'in_progress' },
+      'STARTED',
+      { dedupeKey: `${bookingId}:in_progress` }
+    )
+      .then((res) => addNotification(res.title, res.body, 'ASSISTANT', bookingId))
+      .catch(() => {});
     await refreshBookings();
+  };
+
+  const updateBookingStatus = async (bookingId: string, status: string) => {
+    const norm = normalizeBookingStatus(status);
+    await updateBookingInFirestore(bookingId, {
+      status: status as any
+    });
+    const target = bookings.find((b) => b.id === bookingId) || activeBooking || {
+      id: bookingId,
+      serviceName: 'Urban Assistance Service'
+    };
+    const updatedBooking = { ...(target as any), id: bookingId, status: status as any };
+    prevBookingStatusesRef.current.set(bookingId, norm);
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId ? { ...b, status: status as any } : b))
+    );
+    setActiveBooking((prev) =>
+      prev && prev.id === bookingId ? { ...prev, status: status as any } : prev
+    );
+    const res = await sendBookingUpdatePushNotification(
+      updatedBooking,
+      mapBookingStatusToPushEvent(norm),
+      { dedupeKey: `${bookingId}:${norm}`, force: true }
+    );
+    addNotification(res.title, res.body, 'BOOKING', bookingId);
   };
 
   const updateAssistantLiveLocation = async (
@@ -713,6 +760,14 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         completedAt
       })
     ]);
+    const target = bookings.find((b) => b.id === bookingId) || activeBooking || { id: bookingId };
+    sendBookingUpdatePushNotification(
+      { ...(target as any), status: 'completed' },
+      'COMPLETED',
+      { dedupeKey: `${bookingId}:completed` }
+    )
+      .then((res) => addNotification(res.title, res.body, 'BOOKING', bookingId))
+      .catch(() => {});
     await refreshBookings();
   };
 
@@ -791,6 +846,7 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateNotificationPreferences,
         requestPushNotificationPermission,
         sendTestBookingPush,
+        updateBookingStatus,
         triggerOneHourReminderTest,
         isReminderSentForBooking,
         completedFeedbackBooking,
@@ -825,12 +881,13 @@ export const useBooking = (): BookingContextType => {
       activeBooking: null,
       notifications: [],
       pricing: {
-        baseHourlyRate: 149,
-        minBookingHours: 2,
-        gstPercent: 0,
-        platformFee: 0,
-        surgeMultiplier: 1,
-        emergencySurcharge: 0
+        baseHourlyPrice: 149,
+        minimumBookingHours: 2,
+        additionalHourPrice: 149,
+        peakHourMultiplier: 1,
+        weekendMultiplier: 1,
+        taxesPercentage: 0,
+        currency: 'INR'
       },
       isLoading: false,
       liveEtaMinutes: 8,
@@ -847,8 +904,17 @@ export const useBooking = (): BookingContextType => {
       },
       updateNotificationPreferences: async () => {},
       requestPushNotificationPermission: async () => 'default',
-      sendTestBookingPush: async () => ({ success: true }),
-      triggerOneHourReminderTest: async () => ({ success: true }),
+      sendTestBookingPush: async () => ({
+        success: true,
+        pushSent: false,
+        message: 'Test push sent'
+      }),
+      updateBookingStatus: async () => {},
+      triggerOneHourReminderTest: async () => ({
+        success: true,
+        pushSent: false,
+        message: 'Reminder triggered'
+      }),
       isReminderSentForBooking: () => false,
       completedFeedbackBooking: null,
       setCompletedFeedbackBooking: () => {},

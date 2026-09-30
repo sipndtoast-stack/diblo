@@ -87,7 +87,7 @@ export const RoleSwitcher: React.FC = () => {
             <button
               onClick={() => handleRoleSelect('CUSTOMER')}
               className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg font-bold text-xs transition-all min-h-[34px] ${
-                currentRole === 'CUSTOMER'
+                (currentRole as UserRole) === 'CUSTOMER'
                   ? 'bg-[#F42F73] text-white shadow-xs'
                   : 'text-gray-300 hover:text-white hover:bg-white/5'
               }`}

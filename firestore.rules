@@ -62,15 +62,15 @@ service cloud.firestore {
 
     // Users Collection
     match /users/{userId} {
-      allow read: if true;
-      allow create, update: if isSignedIn();
+      allow get, list, read: if true;
+      allow create, update: if isSignedIn() || isOwner(userId);
       allow delete: if isAdmin();
     }
 
     // Customers Collection
     match /customers/{customerId} {
-      allow read: if true;
-      allow create, update: if isSignedIn();
+      allow get, list, read: if true;
+      allow create, update: if isSignedIn() || isOwner(customerId);
       allow delete: if isAdmin();
     }
 

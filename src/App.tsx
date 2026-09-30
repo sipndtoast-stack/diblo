@@ -228,9 +228,28 @@ const MainAppContent: React.FC = () => {
       }
     }
 
-    // 4. If already authenticated with Firebase, restore session and open Customer Panel
+    // 4. If already authenticated as Staff (Assistant/Admin) on this device, open their workspace directly
+    if (!isAuthLoading && staffUser && staffUser.authenticated) {
+      if (
+        currentPath === '/' ||
+        currentPath === '/staff-login' ||
+        currentPath === '/assistance-login'
+      ) {
+        if (staffUser.role === 'Admin') {
+          switchRole('ADMIN');
+          navigateTo('/admin');
+        } else {
+          switchRole('ASSISTANT');
+          navigateTo('/assistant');
+        }
+        return;
+      }
+    }
+
+    // 5. If already authenticated with Firebase as Customer on this device, restore session and open Customer Panel
     if (!isAuthLoading && isCustomerAuthenticated) {
       if (currentPath === '/' || currentPath === '/customer-login') {
+        switchRole('CUSTOMER');
         navigateTo('/customer');
       }
     }

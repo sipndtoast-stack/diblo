@@ -2,10 +2,52 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bell, CheckCircle2, X, Sparkles, WifiOff, Wifi } from 'lucide-react';
 import { useBooking } from '../../context/BookingContext';
+import { subscribeToFcmStatusNotifications } from '../../lib/pushNotificationService';
+import { InAppNotification } from '../../types';
 
 export const NotificationToast: React.FC = () => {
   const { notifications, markNotificationRead } = useBooking();
-  const unreadNotifs = notifications.filter((n) => !n.isRead).slice(0, 2);
+  const [fcmToasts, setFcmToasts] = useState<InAppNotification[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeToFcmStatusNotifications((payload) => {
+      setFcmToasts((prev) => {
+        if (prev.some((n) => n.title === payload.title && n.message === payload.body)) {
+          return prev;
+        }
+        return [
+          {
+            id: `fcm-toast-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+            userId: 'user',
+            title: payload.title,
+            message: payload.body,
+            type: payload.type || 'BOOKING',
+            bookingId: payload.bookingId,
+            isRead: false,
+            createdAt: payload.timestamp || new Date().toISOString()
+          },
+          ...prev
+        ];
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  const combinedUnread = [
+    ...notifications.filter((n) => !n.isRead),
+    ...fcmToasts.filter(
+      (ft) =>
+        !ft.isRead &&
+        !notifications.some((n) => !n.isRead && n.title === ft.title && n.message === ft.message)
+    )
+  ].slice(0, 2);
+
+  const handleDismiss = (id: string) => {
+    markNotificationRead(id);
+    setFcmToasts((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+  };
+
+  const unreadNotifs = combinedUnread;
 
   const [connectionState, setConnectionState] = useState<'IDLE' | 'RECONNECTING' | 'CONNECTED'>('IDLE');
 
@@ -83,6 +125,8 @@ export const NotificationToast: React.FC = () => {
         {unreadNotifs.map((n) => (
           <motion.div
             key={n.id}
+            role="alert"
+            data-testid="fcm-toast-notification"
             initial={{ opacity: 0, y: 30, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, x: 50, scale: 0.9 }}
@@ -107,7 +151,7 @@ export const NotificationToast: React.FC = () => {
             </div>
 
             <button
-              onClick={() => markNotificationRead(n.id)}
+              onClick={() => handleDismiss(n.id)}
               className="text-gray-400 hover:text-white transition-colors"
             >
               <X className="w-4 h-4" />

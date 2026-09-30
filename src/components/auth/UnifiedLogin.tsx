@@ -35,44 +35,108 @@ interface UnifiedLoginProps {
   onBackToCustomer?: () => void;
 }
 
-/**
- * Maps Firebase Auth error codes to helpful, user-friendly error messages
- */
-function formatFirebasePhoneError(err: any): string {
-  const code = (err?.code || '').toLowerCase();
-  const msg = (err?.message || '').toLowerCase();
+function normalizeIndianPhoneInput(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return digits.slice(1);
+  }
+  return digits.slice(0, 10);
+}
 
-  if (code.includes('invalid-phone-number') || msg.includes('invalid-phone-number')) {
-    return 'Please enter a valid 10-digit Indian mobile number (+91).';
+function isValidIndianMobileNumber(phone: string): boolean {
+  const clean = normalizeIndianPhoneInput(phone);
+  return clean.length === 10 && /^[6-9]\d{9}$/.test(clean);
+}
+
+/**
+ * Maps Firebase Auth error codes to user-friendly error messages
+ */
+export function formatFirebasePhoneError(err: any, stage: 'SEND' | 'VERIFY' = 'SEND'): string {
+  const code = String(err?.code || '').toLowerCase();
+  const msg = String(err?.message || '').toLowerCase();
+
+  if (
+    code.includes('auth/invalid-phone-number') ||
+    code.includes('invalid-phone-number') ||
+    msg.includes('invalid-phone-number')
+  ) {
+    return 'Please enter a valid 10-digit mobile number.';
   }
-  if (code.includes('too-many-requests') || msg.includes('too-many-requests')) {
-    return 'Too many attempts. Please wait a few minutes before requesting another OTP.';
+  if (
+    code.includes('auth/captcha-check-failed') ||
+    code.includes('captcha-check-failed') ||
+    code.includes('captcha-expired') ||
+    code.includes('missing-client-identifier') ||
+    msg.includes('captcha-check-failed')
+  ) {
+    return 'Verification failed. Please try again.';
   }
-  if (code.includes('quota-exceeded') || msg.includes('quota-exceeded')) {
-    return 'SMS quota exceeded for this project. If you are testing, please use Firebase test phone numbers.';
+  if (
+    code.includes('auth/too-many-requests') ||
+    code.includes('too-many-requests') ||
+    msg.includes('too-many-requests')
+  ) {
+    return 'Too many OTP attempts. Please wait and try again later.';
   }
-  if (code.includes('captcha-check-failed') || msg.includes('captcha-check-failed')) {
-    return 'Security verification (reCAPTCHA) failed. Please solve the security check to proceed.';
+  if (
+    code.includes('auth/quota-exceeded') ||
+    code.includes('quota-exceeded') ||
+    msg.includes('quota-exceeded')
+  ) {
+    return 'SMS quota exceeded. Please wait and try again later.';
   }
-  if (code.includes('captcha-expired') || msg.includes('captcha-expired')) {
-    return 'reCAPTCHA verification expired. Please request a new OTP.';
+  if (
+    code.includes('auth/app-not-authorized') ||
+    code.includes('app-not-authorized') ||
+    msg.includes('app-not-authorized')
+  ) {
+    return 'This app domain is not authorized for phone authentication. Please verify Firebase settings.';
   }
-  if (code.includes('network-request-failed') || msg.includes('network-request-failed')) {
-    return 'Network connection error. Please verify your internet connection and retry.';
+  if (
+    code.includes('auth/network-request-failed') ||
+    code.includes('network-request-failed') ||
+    msg.includes('network-request-failed')
+  ) {
+    return 'Network error. Please check your internet connection and try again.';
   }
-  if (code.includes('invalid-verification-code') || msg.includes('invalid-verification-code')) {
-    return 'Invalid 6-digit verification code. Please check your SMS and enter the code again.';
+  if (
+    code.includes('auth/operation-not-allowed') ||
+    code.includes('operation-not-allowed') ||
+    msg.includes('operation-not-allowed')
+  ) {
+    return 'Phone authentication is not enabled in Firebase. Please contact support.';
   }
-  if (code.includes('code-expired') || msg.includes('code-expired') || code.includes('session-expired')) {
-    return 'The verification code has expired. Please tap "Resend OTP" to receive a fresh code.';
+  if (
+    code.includes('auth/billing-not-enabled') ||
+    code.includes('billing-not-enabled') ||
+    msg.includes('billing-not-enabled')
+  ) {
+    return 'SMS service is currently unavailable (billing not enabled). Please try again later.';
   }
-  if (code.includes('app-not-authorized') || msg.includes('app-not-authorized')) {
-    return 'Domain not authorized in Firebase Console. Please add this domain to Firebase Authentication > Settings > Authorized Domains.';
+  if (
+    code.includes('auth/invalid-verification-code') ||
+    code.includes('invalid-verification-code') ||
+    msg.includes('invalid-verification-code')
+  ) {
+    return 'Invalid OTP. Please check the OTP and try again.';
   }
-  if (code.includes('operation-not-allowed') || msg.includes('operation-not-allowed')) {
-    return 'Phone Sign-In is not enabled in Firebase Console. Please enable Phone provider under Firebase Authentication.';
+  if (
+    code.includes('auth/code-expired') ||
+    code.includes('code-expired') ||
+    code.includes('session-expired') ||
+    msg.includes('code-expired') ||
+    msg.includes('session-expired')
+  ) {
+    return 'This OTP has expired. Please request a new OTP.';
   }
-  return err?.message || 'Verification failed. Please try again.';
+
+  if (stage === 'VERIFY' && !code) {
+    return 'Invalid OTP. Please check the OTP and try again.';
+  }
+  return 'OTP could not be sent. Please try again.';
 }
 
 export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
@@ -83,7 +147,14 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   onModeChange,
   onBackToCustomer
 }) => {
-  const { syncFirebaseCustomer, loginStaff, staffUser } = useAuth();
+  const {
+    syncFirebaseCustomer,
+    updateCustomerProfile,
+    loginStaff,
+    staffUser,
+    isCustomerAuthenticated,
+    isAuthLoading
+  } = useAuth();
 
   // Active Mode: 'CUSTOMER' | 'STAFF'
   const [mode, setMode] = useState<'CUSTOMER' | 'STAFF'>(initialMode);
@@ -95,13 +166,21 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   }, [initialMode]);
 
-  const handleToggleMode = (newMode: 'CUSTOMER' | 'STAFF') => {
-    setMode(newMode);
-    setErrorMessage('');
-    if (onModeChange) {
-      onModeChange(newMode);
+  // Automatically bypass login screen if user or assistant is already authenticated on this device
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (mode === 'STAFF' && staffUser?.authenticated) {
+      onStaffSuccess(staffUser.role);
+      return;
     }
-  };
+    if (mode === 'CUSTOMER' && isCustomerAuthenticated && !isVerifiedSuccessRef.current) {
+      onCustomerSuccess();
+      return;
+    }
+    if (staffUser?.authenticated && !isCustomerAuthenticated) {
+      onStaffSuccess(staffUser.role);
+    }
+  }, [isAuthLoading, isCustomerAuthenticated, staffUser, mode, onCustomerSuccess, onStaffSuccess]);
 
   // -------------------------------------------------------------
   // CUSTOMER STATE & FIREBASE PHONE AUTH LOGIC
@@ -117,6 +196,9 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const isSendingOtpRef = useRef(false);
+  const isVerifyingOtpRef = useRef(false);
+  const isVerifiedSuccessRef = useRef(false);
 
   // -------------------------------------------------------------
   // STAFF STATE
@@ -125,117 +207,178 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   const [staffPassword, setStaffPassword] = useState('');
   const [showStaffPassword, setShowStaffPassword] = useState(false);
 
-  // General Loading & Error State
+  // General Loading, Error & Resend Notice State
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-
-  // Countdown timer for OTP resend
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (customerStep === 'OTP' && countdown > 0) {
-      timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000);
-    } else if (countdown === 0) {
-      setCanResend(true);
-    }
-    return () => clearTimeout(timer);
-  }, [customerStep, countdown]);
-
-  // Cleanup RecaptchaVerifier on unmount
-  useEffect(() => {
-    return () => {
-      if (recaptchaVerifierRef.current) {
-        try {
-          recaptchaVerifierRef.current.clear();
-        } catch (e) {
-          console.warn('Recaptcha unmount cleanup notice:', e);
-        }
-        recaptchaVerifierRef.current = null;
-      }
-    };
-  }, []);
-
-  const setupRecaptcha = (visible = false) => {
-    if (recaptchaVerifierRef.current) {
-      try {
-        recaptchaVerifierRef.current.clear();
-      } catch (e) {
-        console.warn('Recaptcha clear notice:', e);
-      }
-      recaptchaVerifierRef.current = null;
-    }
-
-    const container = recaptchaContainerRef.current || 'recaptcha-container';
-    const verifier = new RecaptchaVerifier(auth, container, {
-      size: visible ? 'normal' : 'invisible',
-      callback: () => {
-        // reCAPTCHA solved
-      },
-      'expired-callback': () => {
-        setErrorMessage('reCAPTCHA expired. Please tap "Resend OTP".');
-        resetRecaptcha();
-      }
-    });
-
-    recaptchaVerifierRef.current = verifier;
-    return verifier;
-  };
+  const [resendSuccessMessage, setResendSuccessMessage] = useState('');
 
   const resetRecaptcha = () => {
     if (recaptchaVerifierRef.current) {
       try {
         recaptchaVerifierRef.current.clear();
-      } catch (e) {
+      } catch {
         // ignore
       }
       recaptchaVerifierRef.current = null;
     }
+    if (typeof window !== 'undefined' && (window as any).recaptchaVerifier) {
+      try {
+        (window as any).recaptchaVerifier.clear();
+      } catch {
+        // ignore
+      }
+      (window as any).recaptchaVerifier = null;
+    }
+    const container =
+      recaptchaContainerRef.current ||
+      (typeof document !== 'undefined' ? document.getElementById('recaptcha-container') : null);
+    if (container) {
+      container.innerHTML = '';
+    }
   };
 
-  const cleanCustomerDigits = customerPhone.replace(/\D/g, '').slice(-10);
-  const isCustomerPhoneValid =
-    cleanCustomerDigits.length === 10 && /^[6-9]\d{9}$/.test(cleanCustomerDigits);
+  const handleToggleMode = (newMode: 'CUSTOMER' | 'STAFF') => {
+    setMode(newMode);
+    setErrorMessage('');
+    setResendSuccessMessage('');
+    resetRecaptcha();
+    if (onModeChange) {
+      onModeChange(newMode);
+    }
+  };
+
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    if (customerStep !== 'OTP') return;
+    if (countdown <= 0) {
+      setCanResend(true);
+      return;
+    }
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          setCanResend(true);
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [customerStep, countdown > 0]);
+
+  // Cleanup RecaptchaVerifier on unmount
+  useEffect(() => {
+    return () => {
+      resetRecaptcha();
+    };
+  }, []);
+
+  const setupRecaptcha = (visible = false): RecaptchaVerifier => {
+    resetRecaptcha();
+
+    const containerEl =
+      recaptchaContainerRef.current ||
+      (typeof document !== 'undefined' ? document.getElementById('recaptcha-container') : null);
+    if (containerEl) {
+      containerEl.innerHTML = '';
+    }
+
+    const target = containerEl || 'recaptcha-container';
+    const params = {
+      size: visible ? 'normal' : 'invisible',
+      callback: () => {
+        // reCAPTCHA solved
+      },
+      'expired-callback': () => {
+        setErrorMessage('Verification failed. Please try again.');
+        resetRecaptcha();
+      },
+      'error-callback': () => {
+        setErrorMessage('Verification failed. Please try again.');
+        resetRecaptcha();
+      }
+    };
+
+    let verifier: RecaptchaVerifier;
+    try {
+      verifier = new RecaptchaVerifier(auth, target, params);
+    } catch {
+      verifier = (RecaptchaVerifier as any)(auth, target, params);
+    }
+
+    recaptchaVerifierRef.current = verifier;
+    if (typeof window !== 'undefined') {
+      (window as any).recaptchaVerifier = verifier;
+    }
+    console.log('[OTP] reCAPTCHA initialized');
+    return verifier;
+  };
+
+  const cleanCustomerDigits = normalizeIndianPhoneInput(customerPhone);
+  const isCustomerPhoneValid = isValidIndianMobileNumber(cleanCustomerDigits);
 
   const formattedDisplayPhone =
     cleanCustomerDigits.length === 10
       ? `+91 ${cleanCustomerDigits.slice(0, 5)} ${cleanCustomerDigits.slice(5)}`
       : `+91 ${cleanCustomerDigits}`;
 
-  // Customer: Send SMS OTP via Firebase Phone Auth
-  const handleSendOtp = async (e?: React.FormEvent, forceVisible = false) => {
+  // Customer: Send SMS OTP strictly via Firebase Phone Auth
+  const handleSendOtp = async (
+    e?: React.FormEvent,
+    forceVisible = false,
+    isResend = false
+  ) => {
     if (e) e.preventDefault();
+    if (isSendingOtpRef.current || isLoading) return;
+
     setErrorMessage('');
+    setResendSuccessMessage('');
 
     if (!isCustomerPhoneValid) {
-      setErrorMessage('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+      setErrorMessage('Please enter a valid 10-digit mobile number.');
       return;
     }
 
     const e164Number = `+91${cleanCustomerDigits}`;
+    isSendingOtpRef.current = true;
     setIsLoading(true);
+
+    console.log('[OTP] Starting phone verification');
 
     try {
       const verifier = setupRecaptcha(forceVisible || useVisibleRecaptcha);
       const confirmation = await signInWithPhoneNumber(auth, e164Number, verifier);
 
-      setConfirmationResult(confirmation);
+      console.log('[OTP] Firebase SMS request successful');
+      isVerifiedSuccessRef.current = false;
+      if (confirmation) {
+        setConfirmationResult(confirmation);
+      }
       setCustomerStep('OTP');
       setCountdown(30);
       setCanResend(false);
       setOtp(['', '', '', '', '', '']);
+      if (isResend) {
+        setResendSuccessMessage('OTP resent successfully');
+      }
 
       setTimeout(() => {
         otpInputsRef.current[0]?.focus();
       }, 150);
     } catch (err: any) {
-      console.error('Firebase signInWithPhoneNumber error:', err);
+      const errorCode = err?.code || 'unknown';
+      console.error(`[OTP] Firebase SMS request failed: ${errorCode}`);
       resetRecaptcha();
+      setResendSuccessMessage('');
 
-      const code = (err?.code || '').toLowerCase();
-      if (code.includes('captcha') || code.includes('internal-error')) {
+      const lowerCode = String(errorCode).toLowerCase();
+      if (lowerCode.includes('captcha') || lowerCode.includes('internal-error')) {
         setUseVisibleRecaptcha(true);
       }
-      setErrorMessage(formatFirebasePhoneError(err));
+      setErrorMessage(formatFirebasePhoneError(err, 'SEND'));
     } finally {
+      isSendingOtpRef.current = false;
       setIsLoading(false);
     }
   };
@@ -243,10 +386,28 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   // Google Workspace Sign-in (Sheets & Drive Integration)
   const handleGoogleSignIn = async () => {
     setErrorMessage('');
+    setResendSuccessMessage('');
     setIsLoading(true);
     try {
       const res = await connectGoogleWorkspace();
       if (res.success && res.user) {
+        isVerifiedSuccessRef.current = true;
+        if (auth?.currentUser) {
+          await syncFirebaseCustomer(auth.currentUser);
+        } else {
+          await syncFirebaseCustomer({
+            uid: res.user.email || `google-${Date.now()}`,
+            email: res.user.email || '',
+            displayName: res.user.name || 'Customer',
+            phoneNumber: '',
+            photoURL: res.user.picture || ''
+          } as any);
+        }
+        updateCustomerProfile({
+          name: res.user.name || 'Customer',
+          email: res.user.email || '',
+          avatar: res.user.picture || ''
+        });
         onCustomerSuccess();
       } else {
         setErrorMessage(res.error || 'Failed to sign in with Google.');
@@ -258,25 +419,46 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   };
 
-  // Customer: Resend OTP
+  // Customer: Resend OTP via Firebase Phone Authentication
   const handleResendOtp = async () => {
-    if (!canResend || isLoading) return;
-    setErrorMessage('');
-    await handleSendOtp(undefined, useVisibleRecaptcha);
+    if (!canResend || countdown > 0 || isLoading || isSendingOtpRef.current) return;
+    await handleSendOtp(undefined, useVisibleRecaptcha, true);
   };
 
   // Customer: Change Mobile Number
   const handleChangeNumber = () => {
     setCustomerStep('PHONE');
     setErrorMessage('');
+    setResendSuccessMessage('');
     setOtp(['', '', '', '', '', '']);
     setConfirmationResult(null);
+    isVerifiedSuccessRef.current = false;
     resetRecaptcha();
   };
 
   // Customer: Handle OTP Input
   const handleOtpChange = (index: number, value: string) => {
-    const digit = value.replace(/\D/g, '').slice(-1);
+    setErrorMessage('');
+    const digitsOnly = value.replace(/\D/g, '');
+
+    if (digitsOnly.length > 1) {
+      const chars = digitsOnly.slice(0, 6).split('');
+      const newOtp = [...otp];
+      for (let i = 0; i < 6; i++) {
+        if (index + i < 6 && chars[i] !== undefined) {
+          newOtp[index + i] = chars[i];
+        }
+      }
+      setOtp(newOtp);
+      const nextIdx = Math.min(index + chars.length, 5);
+      otpInputsRef.current[nextIdx]?.focus();
+      if (newOtp.every((d) => d !== '')) {
+        handleVerifyOtp(newOtp.join(''));
+      }
+      return;
+    }
+
+    const digit = digitsOnly.slice(-1);
     const newOtp = [...otp];
     newOtp[index] = digit;
     setOtp(newOtp);
@@ -313,35 +495,45 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   };
 
-  // Customer: Verify OTP
+  // Customer: Verify OTP strictly via Firebase confirmationResult.confirm(otp)
   const handleVerifyOtp = async (codeToVerify?: string) => {
+    if (isVerifyingOtpRef.current || isLoading || isVerifiedSuccessRef.current) return;
+
     const finalCode = (codeToVerify || otp.join('')).trim();
-    if (finalCode.length !== 6) {
-      setErrorMessage('Please enter the complete 6-digit OTP code.');
+    if (finalCode.length !== 6 || !/^\d{6}$/.test(finalCode)) {
+      setErrorMessage('Invalid OTP. Please check the OTP and try again.');
       return;
     }
 
-    if (!confirmationResult) {
-      setErrorMessage('Verification session expired. Please request a new OTP.');
-      setCustomerStep('PHONE');
+    if (!confirmationResult || typeof confirmationResult.confirm !== 'function') {
+      console.error('[OTP] Verification failed: auth/code-expired');
+      setErrorMessage('This OTP has expired. Please request a new OTP.');
       return;
     }
 
+    isVerifyingOtpRef.current = true;
     setIsLoading(true);
     setErrorMessage('');
+    setResendSuccessMessage('');
 
     try {
       const userCredential = await confirmationResult.confirm(finalCode);
       if (userCredential && userCredential.user) {
+        console.log('[OTP] Verification successful');
+        isVerifiedSuccessRef.current = true;
+        resetRecaptcha();
         await syncFirebaseCustomer(userCredential.user);
         onCustomerSuccess();
       } else {
-        setErrorMessage('Verification failed. Please check the code and retry.');
+        console.error('[OTP] Verification failed: auth/invalid-verification-code');
+        setErrorMessage('Invalid OTP. Please check the OTP and try again.');
       }
     } catch (err: any) {
-      console.error('Firebase confirmationResult.confirm error:', err);
-      setErrorMessage(formatFirebasePhoneError(err));
+      const errorCode = err?.code || 'unknown';
+      console.error(`[OTP] Verification failed: ${errorCode}`);
+      setErrorMessage(formatFirebasePhoneError(err, 'VERIFY'));
     } finally {
+      isVerifyingOtpRef.current = false;
       setIsLoading(false);
     }
   };
@@ -490,13 +682,24 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
             </div>
           )}
 
+          {/* Resend OTP Success Notice (Only shown after Firebase signInWithPhoneNumber resolves on resend) */}
+          {resendSuccessMessage && !errorMessage && mode === 'CUSTOMER' && customerStep === 'OTP' && (
+            <div className="mb-5 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-2.5 text-xs text-emerald-800 font-medium animate-in fade-in duration-200">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{resendSuccessMessage}</span>
+            </div>
+          )}
+
           {/* Error Message Notice */}
           {errorMessage && (
-            <div className="mb-5 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-800 font-medium animate-in fade-in duration-200">
+            <div
+              role="alert"
+              className="mb-5 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-800 font-medium animate-in fade-in duration-200"
+            >
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div className="space-y-1 flex-1">
                 <span>{errorMessage}</span>
-                {errorMessage.includes('reCAPTCHA') && !useVisibleRecaptcha && (
+                {errorMessage.includes('Verification failed') && !useVisibleRecaptcha && (
                   <div>
                     <button
                       type="button"
@@ -551,7 +754,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     </div>
 
                     {/* Mobile Number Input Form */}
-                    <form onSubmit={(e) => handleSendOtp(e, useVisibleRecaptcha)} className="space-y-4">
+                    <form onSubmit={(e) => handleSendOtp(e, useVisibleRecaptcha, false)} className="space-y-4">
                       <div>
                         {/* Rounded Input Container matching Reference Image */}
                         <div className="h-13 sm:h-14 rounded-2xl border border-gray-200 bg-white flex items-center px-4 hover:border-gray-300 focus-within:border-[#F42F73] focus-within:ring-2 focus-within:ring-[#F42F73]/15 transition-all">
@@ -578,14 +781,15 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                             value={customerPhone}
                             onChange={(e) => {
                               setErrorMessage('');
-                              setCustomerPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                              setResendSuccessMessage('');
+                              setCustomerPhone(normalizeIndianPhoneInput(e.target.value));
                             }}
                             className="flex-1 bg-transparent text-sm sm:text-base font-semibold text-[#14213D] placeholder-gray-400 outline-none w-full"
                           />
                         </div>
                         {customerPhone && !isCustomerPhoneValid && (
                           <p className="mt-1.5 text-[11px] text-rose-500 font-semibold text-left">
-                            Please enter a valid 10-digit Indian mobile number
+                            Please enter a valid 10-digit mobile number.
                           </p>
                         )}
                       </div>
@@ -600,7 +804,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                       {/* Primary Pink Button: Send OTP → */}
                       <button
                         type="submit"
-                        disabled={isLoading || !isCustomerPhoneValid}
+                        disabled={isLoading}
                         id="btn-customer-send-otp"
                         className="w-full h-12 sm:h-13 bg-[#F42F73] hover:bg-[#E01E62] text-white rounded-2xl font-bold text-sm sm:text-base shadow-lg shadow-[#F42F73]/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50"
                       >
@@ -726,7 +930,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     <button
                       type="button"
                       onClick={() => handleVerifyOtp()}
-                      disabled={isLoading || otp.some((d) => !d)}
+                      disabled={isLoading}
                       id="btn-customer-verify-otp"
                       className="w-full h-12 sm:h-13 bg-[#F42F73] hover:bg-[#E01E62] disabled:opacity-50 text-white rounded-2xl font-bold text-sm sm:text-base shadow-lg shadow-[#F42F73]/25 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
                     >
@@ -753,22 +957,16 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                         Change Number
                       </button>
 
-                      {canResend ? (
-                        <button
-                          type="button"
-                          onClick={handleResendOtp}
-                          disabled={isLoading}
-                          className="inline-flex items-center gap-1.5 font-bold text-[#F42F73] hover:underline cursor-pointer disabled:opacity-50"
-                          id="btn-customer-resend-otp"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Resend OTP</span>
-                        </button>
-                      ) : (
-                        <span className="text-gray-400 font-medium">
-                          Resend in {countdown}s
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={!canResend || countdown > 0 || isLoading}
+                        className="inline-flex items-center gap-1.5 font-bold text-[#F42F73] hover:underline cursor-pointer disabled:opacity-50 disabled:no-underline disabled:text-gray-400 disabled:cursor-not-allowed"
+                        id="btn-customer-resend-otp"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>{canResend && countdown === 0 ? 'Resend OTP' : `Resend OTP (${countdown}s)`}</span>
+                      </button>
                     </div>
                   </div>
                 )}

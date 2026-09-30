@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { User, UserRole, CustomerProfile, AssistantProfile } from '../types';
 import { api, tokenStorage, StaffSession, staffSessionStorage } from '../lib/api';
 import { MOCK_ASSISTANTS } from '../data/mockData';
@@ -9,6 +9,7 @@ import {
   auth,
   isFirebaseConfigured,
   ensureFirebaseAuthSession,
+  clearActiveRecaptchaVerifier,
   handleFirestoreError,
   OperationType
 } from '../lib/firebase';
@@ -148,14 +149,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem('diblo_customer_profile');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (!isStaleDemoCustomer(parsed) && parsed.phone) return true;
+        if (!isStaleDemoCustomer(parsed) && (parsed.phone || parsed.email)) return true;
       }
     } catch {}
-    return Boolean(auth.currentUser && !auth.currentUser.email?.startsWith('diblo.assistant.') && !auth.currentUser.email?.startsWith('diblo.admin.'));
+    return Boolean(
+      auth.currentUser &&
+        !auth.currentUser.email?.startsWith('diblo.assistant.') &&
+        !auth.currentUser.email?.startsWith('diblo.admin.') &&
+        !auth.currentUser.email?.startsWith('diblo.operations.')
+    );
   });
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
-  // Restore Firebase Authentication for Customer automatically on load
+  // Restore Firebase Authentication for Customer or Assistant/Admin automatically on device load
   useEffect(() => {
     let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
@@ -168,9 +174,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (fbUser && !isStaffAuthAccount) {
         setFirebaseCustomer(fbUser);
         setIsCustomerAuthenticated(true);
-        const rawPhone = fbUser.phoneNumber || '';
+
+        // Check Firestore users/{uid} for stored phone/email on this device
+        let firestoreUserData: Record<string, any> | null = null;
+        try {
+          if (db && typeof getDoc === 'function') {
+            const userSnap = await getDoc(doc(db, 'users', fbUser.uid));
+            if (userSnap && typeof userSnap.exists === 'function' && userSnap.exists()) {
+              firestoreUserData = userSnap.data();
+            }
+          }
+        } catch {
+          // Non-fatal
+        }
+
+        const rawPhone = fbUser.phoneNumber || firestoreUserData?.phone || '';
         const emailMatch = fbUser.email?.match(/^diblo\.customer\.(\d{10})@/);
-        const cleanPhone = (rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10)) || (emailMatch ? emailMatch[1] : '') || customerProfile?.phone || '';
+        const cleanPhone =
+          rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10) ||
+          (emailMatch ? emailMatch[1] : '') ||
+          customerProfile?.phone ||
+          '';
+        const resolvedEmail =
+          fbUser.email ||
+          firestoreUserData?.email ||
+          customerProfile?.email ||
+          (cleanPhone ? `${cleanPhone}@diblo.in` : '');
+        const resolvedName =
+          firestoreUserData?.name ||
+          fbUser.displayName ||
+          customerProfile?.name ||
+          (cleanPhone ? `Customer ${cleanPhone.slice(-4)}` : 'Customer');
 
         let cust: CustomerProfile | null = null;
         if (cleanPhone) {
@@ -180,12 +214,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             cust = await api.createCustomerProfile({
               id: `cust-${cleanPhone}`,
               userId: fbUser.uid,
-              name: fbUser.displayName || customerProfile?.name || `Customer ${cleanPhone.slice(-4)}`,
+              name: resolvedName,
               phone: cleanPhone,
-              email: fbUser.email || `${cleanPhone}@diblo.in`,
+              email: resolvedEmail,
               walletBalance: 100
             }).catch(() => null);
           }
+        }
+
+        if (!cust && (cleanPhone || resolvedEmail)) {
+          cust = {
+            id: cleanPhone ? `cust-${cleanPhone}` : fbUser.uid,
+            userId: fbUser.uid,
+            name: resolvedName,
+            displayName: resolvedName,
+            phone: cleanPhone,
+            email: resolvedEmail,
+            savedAddresses: customerProfile?.savedAddresses || [],
+            emergencyContact: customerProfile?.emergencyContact || { name: '', phone: '', relationship: 'Family' },
+            referralCode: customerProfile?.referralCode || 'DIBLO100',
+            walletBalance: customerProfile?.walletBalance ?? 100,
+            createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
+          };
+        }
+
+        // Persist phone & email in Firestore users/{uid} so Firebase always has this user's record
+        try {
+          if (db && typeof setDoc === 'function') {
+            await setDoc(
+              doc(db, 'users', fbUser.uid),
+              {
+                id: fbUser.uid,
+                uid: fbUser.uid,
+                name: cust?.name || resolvedName,
+                phone: cleanPhone || cust?.phone || '',
+                email: cust?.email || resolvedEmail || '',
+                role: 'CUSTOMER',
+                customerId: cust?.id || `cust-${cleanPhone || fbUser.uid}`,
+                updatedAt: new Date().toISOString()
+              },
+              { merge: true }
+            );
+          }
+        } catch {
+          // Non-fatal
         }
 
         if (isMounted) {
@@ -198,9 +270,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (currentRole === 'CUSTOMER') {
             setCurrentUser({
               id: fbUser.uid,
-              name: cust?.name || fbUser.displayName || customerProfile?.name || 'Customer',
+              name: cust?.name || resolvedName,
               phone: cleanPhone || cust?.phone || customerProfile?.phone || '',
-              email: cust?.email || fbUser.email || customerProfile?.email || '',
+              email: cust?.email || resolvedEmail || customerProfile?.email || '',
               role: 'CUSTOMER',
               avatar: fbUser.photoURL || cust?.avatar || '',
               createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
@@ -208,10 +280,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           setIsAuthLoading(false);
         }
+      } else if (fbUser && isStaffAuthAccount) {
+        // Restore Assistant or Admin session from Firebase Auth + Firestore users/{uid}
+        let firestoreStaffData: Record<string, any> | null = null;
+        try {
+          if (db && typeof getDoc === 'function') {
+            const userSnap = await getDoc(doc(db, 'users', fbUser.uid));
+            if (userSnap && typeof userSnap.exists === 'function' && userSnap.exists()) {
+              firestoreStaffData = userSnap.data();
+            }
+          }
+        } catch {
+          // Non-fatal
+        }
+
+        const cachedStaff = staffSessionStorage.getSession();
+        const isAdminEmail = fbUser.email?.startsWith('diblo.admin.');
+        const resolvedStaffRole: 'Assistant' | 'Admin' =
+          cachedStaff?.role ||
+          (firestoreStaffData?.role === 'ADMIN' || isAdminEmail ? 'Admin' : 'Assistant');
+        const resolvedEplId =
+          cachedStaff?.eplId ||
+          firestoreStaffData?.assistantId ||
+          firestoreStaffData?.id ||
+          'EPL001';
+        const resolvedStaffName =
+          cachedStaff?.name ||
+          firestoreStaffData?.name ||
+          fbUser.displayName ||
+          (resolvedStaffRole === 'Admin' ? 'Admin' : 'Assistant');
+        const resolvedStaffPhone =
+          cachedStaff?.number || firestoreStaffData?.phone || '';
+        const resolvedStaffEmail =
+          cachedStaff?.email || firestoreStaffData?.email || fbUser.email || '';
+
+        const restoredSession: StaffSession = {
+          authenticated: true,
+          eplId: resolvedEplId,
+          name: resolvedStaffName,
+          number: resolvedStaffPhone,
+          email: resolvedStaffEmail,
+          role: resolvedStaffRole
+        };
+
+        if (isMounted) {
+          setStaffUser(restoredSession);
+          staffSessionStorage.setSession(restoredSession);
+          const nextRole: UserRole = resolvedStaffRole === 'Admin' ? 'ADMIN' : 'ASSISTANT';
+          setCurrentRole(nextRole);
+          tokenStorage.setActiveRole(nextRole);
+          setIsAuthLoading(false);
+        }
       } else {
         if (!isStaffAuthAccount) {
           setFirebaseCustomer(null);
-          if (!customerProfile || isStaleDemoCustomer(customerProfile)) {
+          let hasValidSavedCustomer = false;
+          try {
+            const saved = localStorage.getItem('diblo_customer_profile');
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (!isStaleDemoCustomer(parsed) && (parsed.phone || parsed.email)) {
+                hasValidSavedCustomer = true;
+              }
+            }
+          } catch {}
+          if (!hasValidSavedCustomer) {
             setIsCustomerAuthenticated(false);
           }
         }
@@ -225,7 +358,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [currentRole]);
 
-  // Validate active staff session on mount
+  // Validate active staff session on mount and keep persisted device session intact
   useEffect(() => {
     let isMounted = true;
     async function verifySession() {
@@ -234,38 +367,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const verified = await api.getStaffSession();
           if (isMounted) {
-            if (verified.success && verified.authenticated && verified.role && verified.eplId) {
-              const updatedSession: StaffSession = {
-                authenticated: true,
-                eplId: verified.eplId,
-                name: verified.name || cached.name,
-                number: verified.number || cached.number,
-                email: verified.email || cached.email,
-                role: verified.role
-              };
-              setStaffUser(updatedSession);
-              staffSessionStorage.setSession(updatedSession);
-              const activePath =
-                typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
-              const isStaffRoute =
-                activePath.startsWith('/admin') ||
-                activePath.startsWith('/assistant') ||
-                currentRole === 'ADMIN' ||
-                currentRole === 'ASSISTANT' ||
-                currentRole === 'OPERATIONS';
-              if (isStaffRoute) {
-                await ensureFirebaseAuthSession({
-                  id: updatedSession.eplId,
-                  name: updatedSession.name,
-                  phone: updatedSession.number,
-                  role: updatedSession.role === 'Admin' ? 'ADMIN' : 'ASSISTANT',
-                  assistantId: updatedSession.eplId
-                });
-              }
-            } else {
-              setStaffUser(null);
-              staffSessionStorage.clear();
-            }
+            const updatedSession: StaffSession =
+              verified.success && verified.authenticated && verified.role && verified.eplId
+                ? {
+                    authenticated: true,
+                    eplId: verified.eplId,
+                    name: verified.name || cached.name,
+                    number: verified.number || cached.number,
+                    email: verified.email || cached.email,
+                    role: verified.role
+                  }
+                : cached;
+            setStaffUser(updatedSession);
+            staffSessionStorage.setSession(updatedSession);
+            await ensureFirebaseAuthSession({
+              id: updatedSession.eplId || updatedSession.number || 'asst-1',
+              name: updatedSession.name,
+              phone: updatedSession.number,
+              role: updatedSession.role === 'Admin' ? 'ADMIN' : 'ASSISTANT',
+              assistantId: updatedSession.eplId
+            });
           }
         } catch {
           // Keep cached session if network check fails
@@ -535,11 +656,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
-  // Staff Logout: clears session and redirects to / (Access Selection screen)
+  // Staff Logout: clears session and redirects to / (Login screen)
   const logoutStaff = async () => {
     await api.logoutStaff();
+    try {
+      await signOut(auth);
+    } catch {
+      // Non-fatal
+    }
     setStaffUser(null);
     staffSessionStorage.clear();
+    tokenStorage.clear();
     setCurrentRole('CUSTOMER');
     setCurrentUser(DEFAULT_USERS.CUSTOMER);
     if (typeof window !== 'undefined') {
@@ -550,6 +677,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Customer Logout: clears Firebase session and customer state, redirects to /customer-login
   const logoutCustomer = async () => {
+    clearActiveRecaptchaVerifier();
     try {
       await signOut(auth);
     } catch (err) {
@@ -569,12 +697,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Sync Firebase authenticated Customer with local profile
+  // Sync Firebase authenticated Customer with local profile & store phone/email in Firebase Firestore
   const syncFirebaseCustomer = async (fbUser: FirebaseUser) => {
     setFirebaseCustomer(fbUser);
     setIsCustomerAuthenticated(true);
     const rawPhone = fbUser.phoneNumber || '';
     const cleanPhone = rawPhone.replace('+91', '').replace(/\D/g, '').slice(-10);
+    const resolvedEmail = fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : '');
+    const resolvedName = fbUser.displayName || (cleanPhone ? `Customer ${cleanPhone.slice(-4)}` : 'Customer');
 
     let cust: CustomerProfile | null = null;
     if (cleanPhone) {
@@ -584,12 +714,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cust = await api.createCustomerProfile({
           id: `cust-${cleanPhone}`,
           userId: fbUser.uid,
-          name: fbUser.displayName || `Customer ${cleanPhone.slice(-4)}`,
+          name: resolvedName,
           phone: cleanPhone,
-          email: fbUser.email || `${cleanPhone}@diblo.in`,
+          email: resolvedEmail,
           walletBalance: 100
         }).catch(() => null);
       }
+    }
+
+    if (!cust && (cleanPhone || resolvedEmail)) {
+      cust = {
+        id: cleanPhone ? `cust-${cleanPhone}` : fbUser.uid,
+        userId: fbUser.uid,
+        name: resolvedName,
+        displayName: resolvedName,
+        phone: cleanPhone,
+        email: resolvedEmail,
+        savedAddresses: [],
+        emergencyContact: { name: '', phone: '', relationship: 'Family' },
+        referralCode: 'DIBLO100',
+        walletBalance: 100,
+        createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
+      };
+    }
+
+    // Store customer phone number and email ID in Firebase Firestore so they remain persisted
+    try {
+      if (db && typeof setDoc === 'function') {
+        const userPayload = {
+          id: fbUser.uid,
+          uid: fbUser.uid,
+          userId: fbUser.uid,
+          name: cust?.name || resolvedName,
+          displayName: cust?.name || resolvedName,
+          phone: cleanPhone || cust?.phone || '',
+          email: cust?.email || resolvedEmail || '',
+          role: 'CUSTOMER',
+          customerId: cust?.id || (cleanPhone ? `cust-${cleanPhone}` : fbUser.uid),
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, 'users', fbUser.uid), userPayload, { merge: true });
+        await setDoc(
+          doc(db, 'customers', cust?.id || (cleanPhone ? `cust-${cleanPhone}` : fbUser.uid)),
+          userPayload,
+          { merge: true }
+        );
+      }
+    } catch {
+      // Non-fatal
     }
 
     if (cust && !isStaleDemoCustomer(cust)) {
@@ -599,11 +771,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     }
     setCurrentRole('CUSTOMER');
+    tokenStorage.setActiveRole('CUSTOMER');
     setCurrentUser({
       id: fbUser.uid,
-      name: cust?.name || fbUser.displayName || 'Customer',
+      name: cust?.name || resolvedName,
       phone: cleanPhone || cust?.phone || '',
-      email: cust?.email || fbUser.email || (cleanPhone ? `${cleanPhone}@diblo.in` : ''),
+      email: cust?.email || resolvedEmail,
       role: 'CUSTOMER',
       avatar: fbUser.photoURL || cust?.avatar || '',
       createdAt: fbUser.metadata?.creationTime || new Date().toISOString()
@@ -776,7 +949,7 @@ export const useAuth = (): AuthContextType => {
       syncCustomerByPhone: async () => {},
       loginWithPhoneOtp: async () => ({ success: true }),
       loginWithEmailPassword: async () => ({ success: true }),
-      loginDemoUser: async () => {}
+      loginDemoUser: async () => ({ success: true })
     };
   }
   return context;

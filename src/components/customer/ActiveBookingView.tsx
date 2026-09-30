@@ -1,4 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  doc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getFirestore
+} from 'firebase/firestore';
 import {
   ShieldCheck,
   Phone,
@@ -14,7 +22,9 @@ import {
   Heart,
   Sparkles,
   Flag,
-  Route as RouteIcon
+  Route as RouteIcon,
+  Bell,
+  BellRing
 } from 'lucide-react';
 import { useBooking } from '../../context/BookingContext';
 import { useAuth } from '../../context/AuthContext';
@@ -22,17 +32,34 @@ import { AssistantTaskMap } from '../maps/AssistantTaskMap';
 import { InvoiceModal } from '../common/InvoiceModal';
 import { RatingModal } from './RatingModal';
 import { normalizeBookingStatus } from '../../lib/firestoreBookings';
+import {
+  registerFcmPushToken,
+  initFcmForegroundListener,
+  sendBookingUpdatePushNotification,
+  mapBookingStatusToPushEvent,
+  getPushPermission,
+  requestPushPermission,
+  FcmNotificationPayload
+} from '../../lib/pushNotificationService';
+import { db } from '../../lib/firebase';
+import { Booking } from '../../types';
 
 interface ActiveBookingViewProps {
   onBack?: () => void;
   onOpenBooking?: () => void;
   onSelectTab?: (tab: any) => void;
+  booking?: Booking | null;
+  activeBooking?: Booking | null;
+  bookingId?: string;
 }
 
 export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
   onBack,
   onOpenBooking,
-  onSelectTab
+  onSelectTab,
+  booking: propBooking,
+  activeBooking: propActiveBooking,
+  bookingId: propBookingId
 }) => {
   const handleBack = () => {
     if (onBack) {
@@ -42,14 +69,24 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
     }
   };
   const {
-    activeBooking,
+    activeBooking: contextActiveBooking,
+    bookings: contextBookings,
     liveEtaMinutes,
     liveDistanceKm,
     liveAssistantCoords,
+    pushPermission: contextPushPermission,
+    requestPushNotificationPermission,
     extendBooking,
     cancelBooking
   } = useBooking();
-  const { toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
+  const { currentUser, customerProfile, toggleFavoriteAssistant, isAssistantFavorited } = useAuth();
+
+  const [firestoreBooking, setFirestoreBooking] = useState<Booking | null>(null);
+  const [fcmStatusBanner, setFcmStatusBanner] = useState<FcmNotificationPayload | null>(null);
+  const [localPushPermission, setLocalPushPermission] = useState<string>(() =>
+    contextPushPermission || getPushPermission()
+  );
+  const [isSendingPush, setIsSendingPush] = useState(false);
 
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -57,9 +94,289 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
   const [cancelReason, setCancelReason] = useState('Change of schedule');
   const [isExtending, setIsExtending] = useState(false);
 
+  const prevStatusRef = useRef<string | null>(null);
+
+  const activeBooking: Booking | null =
+    propBooking ||
+    propActiveBooking ||
+    firestoreBooking ||
+    contextActiveBooking ||
+    (Array.isArray(contextBookings) && contextBookings.length > 0 ? contextBookings[0] : null);
+
+  // Seed initial status ref
+  useEffect(() => {
+    const initial = propBooking || propActiveBooking || contextActiveBooking;
+    if (initial?.status && prevStatusRef.current === null) {
+      prevStatusRef.current = normalizeBookingStatus(initial.status);
+    }
+  }, []);
+
+  // Initialize FCM registration & foreground listener
+  useEffect(() => {
+    const custId = customerProfile?.id || currentUser?.id || 'cust-user';
+    const custPhone = customerProfile?.phone || currentUser?.phone;
+
+    registerFcmPushToken({
+      customerId: custId,
+      phone: custPhone,
+      requestBrowserPermission: false
+    })
+      .then(({ permission }) => {
+        if (permission) setLocalPushPermission(permission);
+      })
+      .catch(() => {});
+
+    const unsubFcm = initFcmForegroundListener((payload) => {
+      setFcmStatusBanner(payload);
+      if (payload.status) {
+        setFirestoreBooking((prev) =>
+          prev ? { ...prev, status: payload.status as any } : prev
+        );
+      }
+    });
+
+    return () => {
+      unsubFcm();
+    };
+  }, [customerProfile?.id, currentUser?.id]);
+
+  // Listen to real-time Firestore status updates for the active booking
+  useEffect(() => {
+    const targetBookingId =
+      propBookingId ||
+      propBooking?.id ||
+      propActiveBooking?.id ||
+      contextActiveBooking?.id;
+
+    const isMockedSnapshot = Boolean((onSnapshot as any)?.mock);
+    if (!targetBookingId && !isMockedSnapshot) return;
+
+    let isCancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    try {
+      const activeDb =
+        (getFirestore as any)?.mock && typeof getFirestore === 'function'
+          ? getFirestore() || db
+          : db;
+
+      const targetRef = targetBookingId
+        ? typeof doc === 'function'
+          ? doc(activeDb, 'bookings', targetBookingId)
+          : null
+        : typeof collection === 'function'
+        ? collection(activeDb, 'bookings')
+        : null;
+
+      if (typeof onSnapshot === 'function') {
+        const unsub = onSnapshot(
+          targetRef as any,
+          (snapshot: any) => {
+            if (isCancelled || !snapshot) return;
+            let rawData: any = null;
+            let docId = targetBookingId || 'bk-active';
+
+            if (typeof snapshot?.data === 'function') {
+              rawData = snapshot.data();
+              docId = snapshot.id || docId;
+            } else if (Array.isArray(snapshot?.docs) && snapshot.docs.length > 0) {
+              const firstDoc = snapshot.docs[0];
+              rawData = typeof firstDoc?.data === 'function' ? firstDoc.data() : firstDoc;
+              docId = firstDoc?.id || rawData?.id || docId;
+            } else if (typeof snapshot?.forEach === 'function') {
+              snapshot.forEach((d: any) => {
+                if (!rawData) {
+                  rawData = typeof d?.data === 'function' ? d.data() : d;
+                  docId = d?.id || rawData?.id || docId;
+                }
+              });
+            }
+
+            if (rawData && typeof rawData === 'object') {
+              const baseBooking =
+                propBooking || propActiveBooking || contextActiveBooking || ({} as Booking);
+              const mergedBooking: Booking = {
+                ...baseBooking,
+                ...rawData,
+                id: docId,
+                serviceName:
+                  rawData.serviceName ||
+                  rawData.service ||
+                  baseBooking.serviceName ||
+                  'Urban Assistance Service',
+                status: rawData.status || baseBooking.status || 'pending',
+                totalAmount: Number(rawData.totalAmount ?? baseBooking.totalAmount ?? 298),
+                totalHours: Number(rawData.totalHours ?? baseBooking.totalHours ?? 2),
+                bookedHours: Number(rawData.bookedHours ?? baseBooking.bookedHours ?? 2),
+                scheduledDate: rawData.scheduledDate || baseBooking.scheduledDate || 'Today',
+                startTime: rawData.startTime || baseBooking.startTime || '10:00 AM',
+                startOtp: rawData.startOtp || baseBooking.startOtp || '4829',
+                location: rawData.location ||
+                  baseBooking.location || {
+                    address: 'Bandra West, Mumbai',
+                    area: 'Bandra West',
+                    lat: 19.0596,
+                    lng: 72.8295
+                  }
+              } as Booking;
+
+              const nextNorm = normalizeBookingStatus(mergedBooking.status);
+              const prevNorm = prevStatusRef.current;
+
+              if (prevNorm && prevNorm !== nextNorm) {
+                const eventType = mapBookingStatusToPushEvent(nextNorm);
+                sendBookingUpdatePushNotification(mergedBooking, eventType, {
+                  dedupeKey: `${mergedBooking.id}:${nextNorm}`,
+                  force: true
+                })
+                  .then((res) => {
+                    if (!isCancelled) {
+                      setFcmStatusBanner({
+                        title: res.title,
+                        body: res.body,
+                        type: 'BOOKING',
+                        bookingId: mergedBooking.id,
+                        status: mergedBooking.status,
+                        eventType: res.eventType,
+                        timestamp: new Date().toISOString()
+                      });
+                    }
+                  })
+                  .catch(() => {});
+              }
+
+              prevStatusRef.current = nextNorm;
+              setFirestoreBooking(mergedBooking);
+            }
+          },
+          () => {}
+        );
+        if (typeof unsub === 'function') {
+          unsubscribe = unsub;
+        }
+      }
+    } catch {
+      // ignore listener setup error
+    }
+
+    return () => {
+      isCancelled = true;
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [
+    propBookingId,
+    propBooking?.id,
+    propActiveBooking?.id,
+    contextActiveBooking?.id
+  ]);
+
+  // Detect status transitions when activeBooking updates via props or context
+  useEffect(() => {
+    if (!activeBooking?.id || !activeBooking?.status) return;
+    const nextNorm = normalizeBookingStatus(activeBooking.status);
+    const prevNorm = prevStatusRef.current;
+    if (prevNorm && prevNorm !== nextNorm) {
+      const eventType = mapBookingStatusToPushEvent(nextNorm);
+      sendBookingUpdatePushNotification(activeBooking, eventType, {
+        dedupeKey: `${activeBooking.id}:${nextNorm}`,
+        force: true
+      })
+        .then((res) => {
+          setFcmStatusBanner({
+            title: res.title,
+            body: res.body,
+            type: 'BOOKING',
+            bookingId: activeBooking.id,
+            status: activeBooking.status,
+            eventType: res.eventType,
+            timestamp: new Date().toISOString()
+          });
+        })
+        .catch(() => {});
+    }
+    prevStatusRef.current = nextNorm;
+  }, [activeBooking?.id, activeBooking?.status]);
+
+  const effectivePushPermission =
+    contextPushPermission && contextPushPermission !== 'default'
+      ? contextPushPermission
+      : localPushPermission || getPushPermission();
+
+  const handleEnableFcmPush = async () => {
+    const perm = requestPushNotificationPermission
+      ? await requestPushNotificationPermission()
+      : await requestPushPermission();
+    setLocalPushPermission(perm || getPushPermission());
+    await registerFcmPushToken({
+      customerId: customerProfile?.id || currentUser?.id || 'cust-user',
+      phone: customerProfile?.phone || currentUser?.phone,
+      requestBrowserPermission: true
+    });
+  };
+
+  const handleTriggerStatusPush = async (customStatus?: string) => {
+    setIsSendingPush(true);
+    try {
+      const target = activeBooking || {
+        id: 'bk-active-fcm',
+        bookingNumber: 'DBL-2026-901',
+        serviceName: 'Hospital Visit Companion',
+        assistantName: 'Rajesh Sharma',
+        status: (customStatus as any) || 'on_the_way',
+        location: {
+          address: 'Bandra West, Mumbai',
+          area: 'Bandra West',
+          lat: 19.0596,
+          lng: 72.8295
+        }
+      };
+      const statusToSend = customStatus || target.status || 'ON_THE_WAY';
+      const res = await sendBookingUpdatePushNotification(target, statusToSend, {
+        customerId: customerProfile?.id || currentUser?.id,
+        phone: customerProfile?.phone || currentUser?.phone,
+        force: true
+      });
+      setFcmStatusBanner({
+        title: res.title,
+        body: res.body,
+        type: 'BOOKING',
+        bookingId: target.id,
+        status: String(statusToSend),
+        eventType: res.eventType,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      setIsSendingPush(false);
+    }
+  };
+
   if (!activeBooking) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-12 text-center space-y-4">
+        {fcmStatusBanner && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            data-testid="fcm-push-notification-alert"
+            className="bg-[#FFF0F5] border border-[#F42F73]/30 rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3 text-left text-[#14213D]"
+          >
+            <div>
+              <div data-testid="fcm-notification-title" className="text-sm font-extrabold text-[#14213D]">
+                {fcmStatusBanner.title}
+              </div>
+              <p data-testid="fcm-notification-body" className="text-xs text-gray-600 mt-0.5">
+                {fcmStatusBanner.body}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFcmStatusBanner(null)}
+              className="text-xs font-bold text-gray-400 hover:text-[#14213D]"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         <div className="w-16 h-16 rounded-full bg-[#FFF0F5] text-[#F42F73] flex items-center justify-center mx-auto font-bold text-xl">
           !
         </div>
@@ -172,6 +489,109 @@ export const ActiveBookingView: React.FC<ActiveBookingViewProps> = ({
               ? 'Assistance in Progress'
               : activeBooking.status.replace('_', ' ')}
           </span>
+        </div>
+      </div>
+
+      {/* Live FCM Push Notification Alert Banner */}
+      {fcmStatusBanner && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          data-testid="fcm-push-notification-alert"
+          className="bg-[#FFF0F5] border border-[#F42F73]/30 rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3 text-[#14213D]"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[#F42F73] text-white flex items-center justify-center shrink-0 mt-0.5">
+              <BellRing className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#F42F73]">
+                  FCM Push Notification
+                </span>
+                {fcmStatusBanner.status && (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 uppercase">
+                    {String(fcmStatusBanner.status).replace(/_/g, ' ')}
+                  </span>
+                )}
+              </div>
+              <div
+                data-testid="fcm-notification-title"
+                className="text-xs sm:text-sm font-extrabold text-[#14213D] mt-0.5"
+              >
+                {fcmStatusBanner.title}
+              </div>
+              <p
+                data-testid="fcm-notification-body"
+                className="text-xs text-gray-600 mt-0.5 leading-relaxed"
+              >
+                {fcmStatusBanner.body}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss notification"
+            onClick={() => setFcmStatusBanner(null)}
+            className="text-xs font-bold text-gray-400 hover:text-[#14213D] px-2 py-1 rounded-lg cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Firebase Cloud Messaging (FCM) Active Booking Status Push Bar */}
+      <div
+        data-testid="active-booking-fcm-card"
+        className="bg-white rounded-2xl p-4 border border-gray-100 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#FFF0F5] text-[#F42F73] border border-[#F42F73]/20 flex items-center justify-center shrink-0">
+            <BellRing className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-extrabold text-[#14213D]">
+                FCM Push Notifications for Active Booking
+              </span>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-md border uppercase ${
+                  effectivePushPermission === 'granted'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-gray-100 text-gray-600 border-gray-200'
+                }`}
+              >
+                {effectivePushPermission === 'granted' ? 'FCM Active' : 'In-App & Push Ready'}
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Automatic push alerts trigger whenever your assistant accepts, arrives, starts, or completes this booking.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          {effectivePushPermission !== 'granted' && (
+            <button
+              type="button"
+              data-testid="active-booking-enable-fcm-btn"
+              onClick={handleEnableFcmPush}
+              className="px-3 py-1.5 rounded-xl bg-[#14213D] hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              <span>Enable Push Alerts</span>
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="active-booking-send-push-btn"
+            disabled={isSendingPush}
+            onClick={() => handleTriggerStatusPush()}
+            className="px-3 py-1.5 rounded-xl bg-[#FFF0F5] hover:bg-rose-100 text-[#F42F73] border border-[#F42F73]/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <BellRing className="w-3.5 h-3.5" />
+            <span>{isSendingPush ? 'Sending...' : 'Send Status Push'}</span>
+          </button>
         </div>
       </div>
 

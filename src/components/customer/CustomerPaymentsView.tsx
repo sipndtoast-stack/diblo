@@ -205,7 +205,7 @@ export const CustomerPaymentsView: React.FC = () => {
                       <div className="flex items-center gap-2 text-[11px] text-gray-500 mt-0.5">
                         <span>Invoice: <strong>{invoiceNum}</strong></span>
                         <span>•</span>
-                        <span>{b.bookingDate || 'Recent'}</span>
+                        <span>{b.scheduledDate || (b as any).bookingDate || 'Recent'}</span>
                         <span>•</span>
                         <span>{b.location?.area || 'Mumbai'}</span>
                       </div>

@@ -36,6 +36,7 @@
     ]
   },
   "firestore": {
+    "database": "ai-studio-diblourbanassist-e818ff7e-dc1d-4946-a7ae-49dad0fee088",
     "rules": "firestore.rules"
   }
 }
