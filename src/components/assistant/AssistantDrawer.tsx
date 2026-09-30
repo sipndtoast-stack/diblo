@@ -188,10 +188,10 @@ export const AssistantDrawer: React.FC<AssistantDrawerProps> = ({
 
             <div>
               <div id="assistant-drawer-name" className="font-extrabold text-base text-white leading-tight">
-                {assistantProfile?.name || 'Rajesh Sharma'}
+                {assistantProfile?.name || 'Verified Assistant'}
               </div>
               <div id="assistant-drawer-id" className="text-xs text-gray-300 font-mono mt-0.5">
-                ID: {assistantProfile?.id || 'asst-1'}
+                ID: {assistantProfile?.id || 'EPL001'}
               </div>
               <div className="flex items-center gap-1.5 mt-1.5">
                 <span id="assistant-drawer-verified-badge" className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">

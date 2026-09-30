@@ -96,11 +96,29 @@ export async function ensureFirebaseAuthSession(params: {
 }): Promise<string | null> {
   if (typeof window === 'undefined') return null;
 
-  const cleanId = String(params.identifier || params.id || 'session')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+  const rawId = String(params.identifier || params.id || '').trim();
+  const cleanId = rawId.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-  if (!cleanId) return auth.currentUser?.uid || null;
+  const invalidPlaceholderIds = new Set([
+    '',
+    'session',
+    'customer',
+    'assistant',
+    'admin',
+    'operations',
+    'custuser',
+    'user',
+    'asst1',
+    'usera1',
+    'userc1',
+    'cust1',
+    '9820123456',
+    '9820554433'
+  ]);
+
+  if (invalidPlaceholderIds.has(cleanId)) {
+    return auth.currentUser?.uid || null;
+  }
 
   const syntheticEmail = `diblo.${params.role.toLowerCase()}.${cleanId}@diblo-39440.firebaseapp.com`;
   const syntheticPassword = `Diblo#Auth!${cleanId}_2026`;

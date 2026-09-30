@@ -14,6 +14,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { AssistantProfile } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 
 interface AssistantProfileViewProps {
   mode: 'MY_PROFILE' | 'DOCUMENTS';
@@ -24,31 +25,32 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
   mode,
   assistantProfile
 }) => {
+  const { staffUser } = useAuth();
   const profile = assistantProfile || {
-    id: 'asst-1',
-    userId: 'user-asst-1',
-    name: 'Rajesh Sharma',
-    phone: '9820554433',
+    id: staffUser?.eplId || 'EPL001',
+    userId: staffUser?.eplId || 'EPL001',
+    name: staffUser?.name || 'Verified Assistant',
+    phone: staffUser?.number || '',
     photo: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
-    rating: 4.9,
-    totalRatings: 342,
+    rating: 5.0,
+    totalRatings: 0,
     verificationStatus: 'VERIFIED',
     policeVerified: true,
     languages: ['Hindi', 'English', 'Marathi'],
-    serviceArea: ['Bandra', 'Khar', 'Santacruz', 'Andheri West'],
+    serviceArea: ['Mumbai'],
     currentLocation: {
       lat: 19.0607,
       lng: 72.8258,
-      address: 'Hill Road, Bandra West',
-      area: 'Bandra West',
+      address: 'Mumbai',
+      area: 'Mumbai',
       lastUpdated: new Date().toISOString()
     },
     emergencyContact: {
-      name: 'Sunita Sharma',
-      phone: '9820112233',
-      relationship: 'Spouse'
+      name: 'Emergency Contact',
+      phone: staffUser?.number || '',
+      relationship: 'Family'
     },
-    joinedDate: 'January 2024'
+    joinedDate: new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
   };
 
   if (mode === 'DOCUMENTS') {

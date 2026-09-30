@@ -15,12 +15,14 @@ import {
   FileText
 } from 'lucide-react';
 import { useBooking } from '../../context/BookingContext';
+import { useAuth } from '../../context/AuthContext';
 import { Booking } from '../../types';
 import { InvoiceModal } from '../common/InvoiceModal';
 import { CustomerSpendingAnalytics } from './CustomerSpendingAnalytics';
 
 export const CustomerPaymentsView: React.FC = () => {
   const { bookings } = useBooking();
+  const { customerProfile, currentUser } = useAuth();
   const [selectedBookingForInvoice, setSelectedBookingForInvoice] = useState<Booking | null>(null);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
   const [paymentFilter, setPaymentFilter] = useState<'ALL' | 'PAID' | 'PENDING'>('ALL');
@@ -103,38 +105,29 @@ export const CustomerPaymentsView: React.FC = () => {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/40 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-white border border-emerald-200 flex items-center justify-center font-bold text-xs text-emerald-700">
-                GPay
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {customerProfile?.phone || currentUser?.phone ? (
+            <div className="p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/40 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-white border border-emerald-200 flex items-center justify-center font-bold text-xs text-emerald-700">
+                  UPI
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-[#14213D]">Verified Mobile UPI</div>
+                  <div className="text-[10px] text-gray-500 font-mono">
+                    {customerProfile?.phone || currentUser?.phone}@upi
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="text-xs font-bold text-[#14213D]">Google Pay UPI</div>
-                <div className="text-[10px] text-gray-500 font-mono">aarav.mehta@okhdfcbank</div>
-              </div>
+              <span className="text-[9px] font-bold text-emerald-700 bg-white border border-emerald-300 px-1.5 py-0.5 rounded">
+                Default
+              </span>
             </div>
-            <span className="text-[9px] font-bold text-emerald-700 bg-white border border-emerald-300 px-1.5 py-0.5 rounded">
-              Default
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-2xl border border-gray-200 bg-gray-50/40 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-white border border-gray-200 flex items-center justify-center font-bold text-xs text-indigo-700">
-                HDFC
-              </div>
-              <div>
-                <div className="text-xs font-bold text-[#14213D]">HDFC Visa Credit</div>
-                <div className="text-[10px] text-gray-500 font-mono">•••• •••• •••• 4092</div>
-              </div>
-            </div>
-            <span className="text-[9px] text-gray-400">Verified</span>
-          </div>
+          ) : null}
 
           <div className="p-3.5 rounded-2xl border border-dashed border-gray-200 hover:border-[#F42F73] transition-colors flex items-center justify-center gap-2 text-gray-500 hover:text-[#F42F73] cursor-pointer">
             <Plus className="w-4 h-4" />
-            <span className="text-xs font-bold">Add UPI / Card</span>
+            <span className="text-xs font-bold">Add UPI / Card at Checkout</span>
           </div>
         </div>
       </div>

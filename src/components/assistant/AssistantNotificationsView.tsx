@@ -26,36 +26,7 @@ export const AssistantNotificationsView: React.FC<AssistantNotificationsViewProp
 }) => {
   const [filter, setFilter] = useState<NotificationCategory>('ALL');
 
-  // Provide initial assistant-specific notifications if list is sparse
-  const displayNotifications = notifications.length > 0 ? notifications : [
-    {
-      id: 'asst-notif-1',
-      userId: 'asst-1',
-      title: 'Payment Credited',
-      message: 'Weekly earnings of ₹8,450 successfully deposited to your HDFC bank account.',
-      type: 'PAYMENT',
-      isRead: false,
-      createdAt: new Date(Date.now() - 3600000).toISOString()
-    },
-    {
-      id: 'asst-notif-2',
-      userId: 'asst-1',
-      title: '5-Star Rating Received!',
-      message: 'Mrs. Kapadia rated your Senior Citizen Assistance session 5 stars: "Very patient and helpful".',
-      type: 'BOOKING',
-      isRead: false,
-      createdAt: new Date(Date.now() - 14400000).toISOString()
-    },
-    {
-      id: 'asst-notif-3',
-      userId: 'asst-1',
-      title: 'High Demand in Bandra West',
-      message: 'Orders are surging in Pali Hill and Carter Road. Stay online to receive priority requests.',
-      type: 'SYSTEM',
-      isRead: true,
-      createdAt: new Date(Date.now() - 86400000).toISOString()
-    }
-  ];
+  const displayNotifications = notifications;
 
   const getCategoryFromType = (n: InAppNotification): NotificationCategory => {
     const title = n.title.toLowerCase();

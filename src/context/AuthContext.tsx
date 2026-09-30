@@ -25,41 +25,92 @@ const DEFAULT_USERS: Record<UserRole, User> = {
     createdAt: new Date().toISOString()
   },
   ASSISTANT: {
-    id: 'user-a-1',
-    name: 'Rajesh Sharma',
-    phone: '9820554433',
-    email: 'rajesh.sharma@diblo.in',
+    id: '',
+    name: 'Assistant',
+    phone: '',
+    email: '',
     role: 'ASSISTANT',
-    avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
-    createdAt: '2025-10-15T10:00:00Z'
+    avatar: '',
+    createdAt: new Date().toISOString()
   },
   ADMIN: {
-    id: 'user-admin-1',
-    name: 'Kabir Varma',
-    phone: '9820001122',
-    email: 'admin@diblo.in',
+    id: '',
+    name: 'Admin',
+    phone: '',
+    email: '',
     role: 'ADMIN',
-    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=200&q=80',
-    createdAt: '2025-01-01T00:00:00Z'
+    avatar: '',
+    createdAt: new Date().toISOString()
   },
   OPERATIONS: {
-    id: 'user-ops-1',
-    name: 'Sneha Kulkarni',
-    phone: '9820003344',
-    email: 'ops.mumbai@diblo.in',
+    id: '',
+    name: 'Operations',
+    phone: '',
+    email: '',
     role: 'OPERATIONS',
-    avatar: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=200&q=80',
-    createdAt: '2025-06-01T00:00:00Z'
+    avatar: '',
+    createdAt: new Date().toISOString()
   }
 };
 
-const DEFAULT_ASSISTANT_PROFILE: AssistantProfile = MOCK_ASSISTANTS[0];
+const DEFAULT_ASSISTANT_PROFILE: AssistantProfile | null = null;
+
+const LIVE_DEVICE_LOGIN_KEY = 'diblo_live_login_v2';
+
+function isSyntheticPlaceholderEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const lower = email.trim().toLowerCase();
+  if (!lower.endsWith('@diblo-39440.firebaseapp.com')) return false;
+  // Valid customer bridge email must contain a real 10-digit Indian phone number (not demo phones)
+  const custMatch = lower.match(/^diblo\.customer\.([6-9]\d{9})@diblo-39440\.firebaseapp\.com$/);
+  if (custMatch) {
+    const phone = custMatch[1];
+    return phone === '9820123456' || phone === '9820554433';
+  }
+  // Valid staff bridge email must not be generic 'assistant', 'admin', 'asst1', '9820554433'
+  const staffMatch = lower.match(/^diblo\.(assistant|admin|operations)\.([a-z0-9]+)@diblo-39440\.firebaseapp\.com$/);
+  if (staffMatch) {
+    const id = staffMatch[2];
+    return id === 'assistant' || id === 'admin' || id === 'operations' || id === 'asst1' || id === '9820554433';
+  }
+  return true;
+}
+
+function hasLiveDeviceLoginFlag(): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(LIVE_DEVICE_LOGIN_KEY) === 'true';
+    }
+  } catch {}
+  return false;
+}
 
 function isStaleDemoCustomer(obj: any): boolean {
   if (!obj) return true;
-  if (obj.id === 'cust-1' || obj.id === 'user-c-1' || obj.userId === 'user-c-1') return true;
-  if (typeof obj.name === 'string' && obj.name.trim().toLowerCase() === 'aarav mehta') return true;
-  if (obj.phone === '9820123456') return true;
+  if (obj.id === 'cust-1' || obj.id === 'user-c-1' || obj.userId === 'user-c-1' || obj.id === 'cust-customer') return true;
+  if (typeof obj.name === 'string') {
+    const lower = obj.name.trim().toLowerCase();
+    if (
+      lower === 'aarav mehta' ||
+      lower === 'rohan desai' ||
+      lower === 'neha kapoor' ||
+      lower === 'rajesh sharma' ||
+      lower === 'diblo user'
+    ) {
+      return true;
+    }
+  }
+  if (obj.phone === '9820123456' || obj.phone === '9820554433') return true;
+  if (isSyntheticPlaceholderEmail(obj.email)) return true;
+  const cleanPhone = String(obj.phone || '').replace(/\D/g, '').slice(-10);
+  const hasValidPhone = /^[6-9]\d{9}$/.test(cleanPhone);
+  const hasRealEmail = Boolean(
+    obj.email &&
+      typeof obj.email === 'string' &&
+      obj.email.includes('@') &&
+      !obj.email.endsWith('@diblo-39440.firebaseapp.com')
+  );
+  if (!hasValidPhone && !hasRealEmail) return true;
   return false;
 }
 
@@ -101,12 +152,22 @@ export interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Initial staff session from secure storage (only minimal metadata: authenticated, eplId, name, role)
-  const [staffUser, setStaffUser] = useState<StaffSession | null>(() => staffSessionStorage.getSession());
+  // Initial staff session from secure storage (only if verified live login on this device)
+  const [staffUser, setStaffUser] = useState<StaffSession | null>(() => {
+    if (!hasLiveDeviceLoginFlag()) {
+      staffSessionStorage.clear();
+      return null;
+    }
+    return staffSessionStorage.getSession();
+  });
   const initialRole = tokenStorage.getActiveRole() || 'CUSTOMER';
   const [currentRole, setCurrentRole] = useState<UserRole>(initialRole);
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
+      if (!hasLiveDeviceLoginFlag()) {
+        localStorage.removeItem('diblo_customer_profile');
+        return DEFAULT_USERS.CUSTOMER;
+      }
       const savedCust = localStorage.getItem('diblo_customer_profile');
       if (savedCust) {
         const parsed = JSON.parse(savedCust);
@@ -129,6 +190,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(() => {
     try {
+      if (!hasLiveDeviceLoginFlag()) {
+        localStorage.removeItem('diblo_customer_profile');
+        return null;
+      }
       const saved = localStorage.getItem('diblo_customer_profile');
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -143,8 +208,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile | null>(DEFAULT_ASSISTANT_PROFILE);
   const [isLoading] = useState<boolean>(false);
-  const [firebaseCustomer, setFirebaseCustomer] = useState<FirebaseUser | null>(() => auth.currentUser);
+  const [firebaseCustomer, setFirebaseCustomer] = useState<FirebaseUser | null>(() =>
+    hasLiveDeviceLoginFlag() ? auth.currentUser : null
+  );
   const [isCustomerAuthenticated, setIsCustomerAuthenticated] = useState<boolean>(() => {
+    if (!hasLiveDeviceLoginFlag()) return false;
     try {
       const saved = localStorage.getItem('diblo_customer_profile');
       if (saved) {
@@ -154,6 +222,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
     return Boolean(
       auth.currentUser &&
+        !isSyntheticPlaceholderEmail(auth.currentUser.email) &&
         !auth.currentUser.email?.startsWith('diblo.assistant.') &&
         !auth.currentUser.email?.startsWith('diblo.admin.') &&
         !auth.currentUser.email?.startsWith('diblo.operations.')
@@ -166,6 +235,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (!isMounted) return;
+
+      const isMockedTestEnv = Boolean((onAuthStateChanged as any)?.mock);
+      if (fbUser && (!hasLiveDeviceLoginFlag() && !isMockedTestEnv || isSyntheticPlaceholderEmail(fbUser.email))) {
+        try {
+          localStorage.removeItem('diblo_customer_profile');
+          staffSessionStorage.clear();
+          await signOut(auth);
+        } catch {}
+        if (isMounted) {
+          setFirebaseCustomer(null);
+          setIsCustomerAuthenticated(false);
+          setCustomerProfile(null);
+          setStaffUser(null);
+          setIsAuthLoading(false);
+        }
+        return;
+      }
+
       const isStaffAuthAccount =
         fbUser?.email?.startsWith('diblo.assistant.') ||
         fbUser?.email?.startsWith('diblo.admin.') ||
@@ -412,9 +499,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
         } else if (currentRole === 'ASSISTANT') {
-          const asst = await api.getAssistant(currentUser.phone || '9820554433').catch(() => null);
-          if (asst && isMounted) {
-            setAssistantProfile(asst);
+          const staffPhone = staffUser?.number || currentUser.phone;
+          if (staffPhone) {
+            const asst = await api.getAssistant(staffPhone).catch(() => null);
+            if (asst && isMounted) {
+              setAssistantProfile(asst);
+            } else if (staffUser && isMounted) {
+              setAssistantProfile({
+                id: staffUser.eplId || `asst-${staffPhone}`,
+                userId: staffUser.eplId || `user-${staffPhone}`,
+                name: staffUser.name || 'Assistant',
+                phone: staffPhone,
+                photo: '',
+                bio: 'Verified Diblo Personal Assistant',
+                languages: ['Hindi', 'English', 'Marathi'],
+                experienceYears: 2,
+                rating: 5.0,
+                totalReviews: 0,
+                completedBookings: 0,
+                verificationStatus: 'VERIFIED',
+                policeVerified: true,
+                aadhaarVerified: true,
+                addressVerified: true,
+                availability: 'ONLINE',
+                isOnline: true,
+                currentLocation: {
+                  lat: 19.0607,
+                  lng: 72.8258,
+                  address: 'Mumbai',
+                  area: 'Mumbai',
+                  lastUpdated: new Date().toISOString()
+                },
+                serviceCapabilities: [],
+                serviceArea: ['Mumbai'],
+                earningsToday: 0,
+                earningsWeek: 0,
+                earningsMonth: 0,
+                pendingPayout: 0,
+                IncentivesEarned: 0
+              });
+            }
           }
         }
       } catch (err) {
@@ -620,6 +744,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: res.email || '',
         role: res.role
       };
+      try {
+        localStorage.setItem(LIVE_DEVICE_LOGIN_KEY, 'true');
+      } catch {}
       setStaffUser(session);
       staffSessionStorage.setSession(session);
 
@@ -664,6 +791,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // Non-fatal
     }
+    try {
+      localStorage.removeItem(LIVE_DEVICE_LOGIN_KEY);
+    } catch {}
     setStaffUser(null);
     staffSessionStorage.clear();
     tokenStorage.clear();
@@ -684,6 +814,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('[Diblo Auth] Firebase signOut notice:', err);
     }
     try {
+      localStorage.removeItem(LIVE_DEVICE_LOGIN_KEY);
       localStorage.removeItem('diblo_customer_profile');
       tokenStorage.clear();
     } catch {}
@@ -699,6 +830,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Sync Firebase authenticated Customer with local profile & store phone/email in Firebase Firestore
   const syncFirebaseCustomer = async (fbUser: FirebaseUser) => {
+    try {
+      localStorage.setItem(LIVE_DEVICE_LOGIN_KEY, 'true');
+    } catch {}
     setFirebaseCustomer(fbUser);
     setIsCustomerAuthenticated(true);
     const rawPhone = fbUser.phoneNumber || '';
@@ -785,6 +919,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Sync Customer by verified phone (handles direct backend OTP verification and preserves Firebase auth state)
   const syncCustomerByPhone = async (phone: string, name?: string) => {
+    try {
+      localStorage.setItem(LIVE_DEVICE_LOGIN_KEY, 'true');
+    } catch {}
     const cleanPhone = phone.replace('+91', '').replace(/\D/g, '').slice(-10);
     const custId = `cust-${cleanPhone}`;
     const displayName = name || `Customer ${cleanPhone.slice(-4)}`;

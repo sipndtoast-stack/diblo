@@ -280,42 +280,32 @@ const MainAppContent: React.FC = () => {
 
   // VIEW 1: FIRST SCREEN — UNIFIED LOGIN (/)
   if (currentPath === '/') {
-    if (isAuthLoading) {
+    if (isCustomerAuthenticated) {
+      // Will redirect via useEffect to /customer
+    } else {
       return (
-        <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-gray-400">
-          <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
-        </div>
+        <UnifiedLogin
+          initialMode="CUSTOMER"
+          onCustomerSuccess={() => {
+            navigateTo('/customer');
+          }}
+          onStaffSuccess={(role) => {
+            if (role === 'Admin') {
+              navigateTo('/admin');
+            } else {
+              navigateTo('/assistant');
+            }
+          }}
+          onApplyAssistant={() => {
+            navigateTo('/apply-assistant');
+          }}
+        />
       );
     }
-    return (
-      <UnifiedLogin
-        initialMode="CUSTOMER"
-        onCustomerSuccess={() => {
-          navigateTo('/customer');
-        }}
-        onStaffSuccess={(role) => {
-          if (role === 'Admin') {
-            navigateTo('/admin');
-          } else {
-            navigateTo('/assistant');
-          }
-        }}
-        onApplyAssistant={() => {
-          navigateTo('/apply-assistant');
-        }}
-      />
-    );
   }
 
   // VIEW 1.5: CUSTOMER OTP LOGIN (/customer-login)
   if (currentPath === '/customer-login') {
-    if (isAuthLoading) {
-      return (
-        <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-gray-400">
-          <Loader2 className="w-8 h-8 animate-spin text-[#F42F73]" />
-        </div>
-      );
-    }
     return (
       <UnifiedLogin
         initialMode="CUSTOMER"
@@ -434,8 +424,8 @@ const MainAppContent: React.FC = () => {
   }
 
   // VIEW 4: CUSTOMER PANEL (/customer)
-  // Protected Customer Route: Authenticated with Firebase Phone Auth
-  if (!isAuthLoading && !isCustomerAuthenticated) {
+  // Protected Customer Route: Never render CustomerHome unless authenticated
+  if (!isCustomerAuthenticated) {
     return (
       <UnifiedLogin
         initialMode="CUSTOMER"

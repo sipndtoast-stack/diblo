@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Heart,
   Star,
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MOCK_ASSISTANTS, SERVICES } from '../../data/mockData';
+import { api } from '../../lib/api';
 import { AssistantProfile, ServiceItem } from '../../types';
 
 interface CustomerFavoritesViewProps {
@@ -32,6 +33,21 @@ export const CustomerFavoritesView: React.FC<CustomerFavoritesViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAreaFilter, setSelectedAreaFilter] = useState('ALL');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [liveAssistants, setLiveAssistants] = useState<AssistantProfile[]>(MOCK_ASSISTANTS);
+
+  useEffect(() => {
+    let isMounted = true;
+    api.getAssistants()
+      .then((list) => {
+        if (isMounted && Array.isArray(list)) {
+          setLiveAssistants(list);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -41,11 +57,11 @@ export const CustomerFavoritesView: React.FC<CustomerFavoritesViewProps> = ({
   };
 
   // Derive favorite assistants and available assistants
-  const savedAssistants = MOCK_ASSISTANTS.filter((asst) =>
+  const savedAssistants = liveAssistants.filter((asst) =>
     favoriteAssistantIds.includes(asst.id)
   );
 
-  const availableAssistants = MOCK_ASSISTANTS.filter((asst) => {
+  const availableAssistants = liveAssistants.filter((asst) => {
     const isSaved = favoriteAssistantIds.includes(asst.id);
     if (isSaved) return false;
     const matchesSearch =

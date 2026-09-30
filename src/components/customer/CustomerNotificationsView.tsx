@@ -36,36 +36,7 @@ export const CustomerNotificationsView: React.FC<CustomerNotificationsViewProps>
   } = useBooking();
   const [filter, setFilter] = useState<'ALL' | 'ORDERS' | 'PAYMENTS' | 'ALERTS'>('ALL');
 
-  // Fallback realistic customer notifications if context is newly initialized
-  const displayNotifications: InAppNotification[] = notifications.length > 0 ? notifications : [
-    {
-      id: 'notif-demo-1',
-      userId: 'user-c-1',
-      title: 'Assistant Rajesh Sharma Assigned',
-      message: 'Your assistant has confirmed your errand request and is en route in Bandra West.',
-      type: 'BOOKING',
-      isRead: false,
-      createdAt: new Date(Date.now() - 1000 * 60 * 15).toISOString()
-    },
-    {
-      id: 'notif-demo-2',
-      userId: 'user-c-1',
-      title: 'Payment Receipt: ₹298 Paid',
-      message: 'Invoice INV-2026-8891 for 2 hours errand assistance processed successfully via UPI.',
-      type: 'PAYMENT',
-      isRead: false,
-      createdAt: new Date(Date.now() - 1000 * 60 * 120).toISOString()
-    },
-    {
-      id: 'notif-demo-3',
-      userId: 'user-c-1',
-      title: '1-Hour Session Safety Check',
-      message: 'Your helper session is at 1 hr. You can track live GPS or extend anytime with zero extra commission.',
-      type: 'SUPPORT',
-      isRead: true,
-      createdAt: new Date(Date.now() - 1000 * 60 * 360).toISOString()
-    }
-  ];
+  const displayNotifications: InAppNotification[] = notifications;
 
   const filteredList = displayNotifications.filter((n) => {
     if (filter === 'ALL') return true;

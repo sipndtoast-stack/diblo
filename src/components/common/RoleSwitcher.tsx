@@ -154,17 +154,6 @@ export const RoleSwitcher: React.FC = () => {
               <span>Assistance Login</span>
             </button>
           )}
-
-          {/* Reset Demo State Button */}
-          <button
-            onClick={handleResetSeed}
-            disabled={isResetting}
-            className="flex items-center gap-1 bg-white/5 hover:bg-white/10 text-gray-300 px-2 py-1 rounded-lg transition-colors text-[10px] font-medium border border-white/5 min-h-[30px]"
-            title="Reset DB with realistic Mumbai bookings & assistants"
-          >
-            <RotateCcw className={`w-3 h-3 ${isResetting ? 'animate-spin' : ''}`} />
-            <span className="hidden xs:inline">{resetSuccess ? 'Done!' : 'Reset Demo'}</span>
-          </button>
         </div>
       </div>
     </div>

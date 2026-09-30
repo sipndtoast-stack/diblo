@@ -216,17 +216,28 @@ export function subscribeToRealtimeBookings(
   let innerUnsub: Unsubscribe | null = null;
 
   (async () => {
-    const uid = await ensureFirebaseAuthSession({
-      id:
-        params.role === 'CUSTOMER'
-          ? params.customerPhone || params.customerId || 'customer'
-          : params.assistantId || params.assistantPhone || params.role.toLowerCase(),
-      name: params.role === 'CUSTOMER' ? params.customerName : params.assistantName,
-      phone: params.role === 'CUSTOMER' ? params.customerPhone : params.assistantPhone,
-      role: params.role,
-      customerId: params.customerId,
-      assistantId: params.assistantId
-    });
+    const hasValidIdentity =
+      params.role === 'CUSTOMER'
+        ? Boolean(params.customerPhone || params.customerId || auth.currentUser?.uid)
+        : Boolean(params.assistantId || params.assistantPhone || auth.currentUser?.uid);
+
+    if (!hasValidIdentity) {
+      return;
+    }
+
+    const uid =
+      auth.currentUser?.uid ||
+      (await ensureFirebaseAuthSession({
+        id:
+          params.role === 'CUSTOMER'
+            ? params.customerPhone || params.customerId || ''
+            : params.assistantId || params.assistantPhone || '',
+        name: params.role === 'CUSTOMER' ? params.customerName : params.assistantName,
+        phone: params.role === 'CUSTOMER' ? params.customerPhone : params.assistantPhone,
+        role: params.role,
+        customerId: params.customerId,
+        assistantId: params.assistantId
+      }));
 
     if (isCancelled) return;
 

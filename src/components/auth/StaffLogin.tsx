@@ -506,42 +506,6 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
             </div>
           </form>
 
-          {/* Quick Demo Credentials Helper */}
-          <div className="mt-6 pt-6 border-t border-gray-100">
-            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2.5 text-center">
-              Demo Credentials (from Google Sheet)
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('9876543210', '123456')}
-                className="text-left p-2.5 rounded-xl border border-gray-200 bg-gray-50/80 hover:bg-gray-100 transition-colors text-xs"
-              >
-                <div className="font-bold text-[#14213D] flex items-center gap-1">
-                  <span>Assistant</span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-mono">
-                    9876543210
-                  </span>
-                </div>
-                <div className="text-[10px] text-gray-500 font-mono mt-0.5">Pass: 123456</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('9876543211', '123456')}
-                className="text-left p-2.5 rounded-xl border border-gray-200 bg-gray-50/80 hover:bg-gray-100 transition-colors text-xs"
-              >
-                <div className="font-bold text-[#14213D] flex items-center gap-1">
-                  <span>Admin</span>
-                  <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-mono">
-                    9876543211
-                  </span>
-                </div>
-                <div className="text-[10px] text-gray-500 font-mono mt-0.5">Pass: 123456</div>
-              </button>
-            </div>
-          </div>
-
           {/* New Assistant Join Callout */}
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
             <p className="text-xs text-gray-500 mb-2">Want to become a verified Diblo Assistant in Mumbai?</p>

@@ -566,12 +566,6 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   };
 
-  const fillDemoCredentials = (demoPhone: string, demoPass: string) => {
-    setStaffMobile(demoPhone);
-    setStaffPassword(demoPass);
-    setErrorMessage('');
-  };
-
   return (
     <div className="min-h-screen bg-[#FAF9FB] flex flex-col justify-between relative overflow-hidden font-sans text-[#14213D] selection:bg-[#F42F73] selection:text-white">
       {/* Background Ambient Radial Glows (Reference design style) */}
@@ -1095,42 +1089,6 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     )}
                   </button>
                 </form>
-
-                {/* Demo Credentials Quick-Fill Helper */}
-                <div className="pt-2">
-                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 text-center">
-                    Demo Credentials (from Google Sheet)
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => fillDemoCredentials('9876543210', '123456')}
-                      className="text-left p-2.5 rounded-xl border border-gray-200 bg-gray-50/70 hover:bg-gray-100/90 transition-colors text-xs cursor-pointer"
-                    >
-                      <div className="font-bold text-[#14213D] flex items-center justify-between">
-                        <span>Assistant</span>
-                        <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                          9876543210
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">Pass: 123456</div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => fillDemoCredentials('9876543211', '123456')}
-                      className="text-left p-2.5 rounded-xl border border-gray-200 bg-gray-50/70 hover:bg-gray-100/90 transition-colors text-xs cursor-pointer"
-                    >
-                      <div className="font-bold text-[#14213D] flex items-center justify-between">
-                        <span>Admin</span>
-                        <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                          9876543211
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">Pass: 123456</div>
-                    </button>
-                  </div>
-                </div>
 
                 {/* Apply as Assistant Link */}
                 <div className="pt-2 text-center">

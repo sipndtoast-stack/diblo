@@ -102,7 +102,7 @@ function isActiveBookingStatus(status: string | undefined): boolean {
 }
 
 export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, currentRole, customerProfile, assistantProfile, staffUser, updateCustomerProfile } = useAuth();
+  const { currentUser, currentRole, customerProfile, assistantProfile, staffUser, isAuthenticated, updateCustomerProfile } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [activeBooking, setActiveBooking] = useState<Booking | null>(null);
   const [pricing, setPricing] = useState<PricingConfig | null>(null);
@@ -438,7 +438,10 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Real-time Firestore listener for bookings (Customer Portal & Assistant Portal)
   useEffect(() => {
-    const assistantId = staffUser?.eplId || assistantProfile?.id || 'asst-1';
+    if (!isAuthenticated) {
+      return;
+    }
+    const assistantId = staffUser?.eplId || assistantProfile?.id || '';
     const assistantPhone = staffUser?.number || assistantProfile?.phone || currentUser?.phone;
     const customerId = customerProfile?.id || (currentUser?.phone ? `cust-${currentUser.phone.replace(/\D/g, '').slice(-10)}` : undefined);
     const customerPhone = customerProfile?.phone || currentUser?.phone;
