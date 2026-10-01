@@ -786,6 +786,19 @@ export const api = {
     return safeJson<AssistantProfile>(res);
   },
 
+  async updateAssistant(id: string, data: Partial<AssistantProfile>): Promise<{ success: boolean; assistant?: AssistantProfile; error?: string }> {
+    try {
+      const res = await authFetch(`/api/assistants/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return safeJson(res, { success: true });
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
   async toggleAssistantOnline(id: string): Promise<{ success: boolean; isOnline?: boolean; error?: string }> {
     try {
       const res = await authFetch(`/api/assistants/${id}/toggle-online`, {

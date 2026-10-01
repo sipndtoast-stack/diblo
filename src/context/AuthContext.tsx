@@ -838,44 +838,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         if (currentRole === 'ASSISTANT') {
           const staffPhone = staffUser?.number || currentUser.phone;
+          const staffId = staffUser?.eplId || assistantProfile?.id || `asst-${staffPhone || '1'}`;
+
+          // 1. Load cached assistant profile from localStorage if available
+          let cachedAsst: Partial<AssistantProfile> | null = null;
+          try {
+            const rawSpecific = localStorage.getItem(`diblo_assistant_profile_${staffId}`);
+            const rawGeneral = localStorage.getItem('diblo_assistant_profile');
+            const raw = rawSpecific || rawGeneral;
+            if (raw) {
+              cachedAsst = JSON.parse(raw);
+            }
+          } catch {}
+
+          // 2. Load from Firestore if available
+          let firestoreAsst: Partial<AssistantProfile> | null = null;
+          if (db && staffId) {
+            try {
+              const snap = await getDoc(doc(db, 'assistants', staffId));
+              if (snap.exists()) {
+                firestoreAsst = snap.data() as Partial<AssistantProfile>;
+              }
+            } catch {}
+          }
+
           if (staffPhone) {
             const asst = await api.getAssistant(staffPhone).catch(() => null);
             if (asst && !(asst as any).error && isMounted) {
-              setAssistantProfile(asst);
+              const mergedAsst: AssistantProfile = {
+                ...asst,
+                ...(cachedAsst || {}),
+                ...(firestoreAsst || {}),
+                photo:
+                  firestoreAsst?.photo ||
+                  cachedAsst?.photo ||
+                  asst.photo ||
+                  'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+                documents:
+                  (firestoreAsst?.documents && firestoreAsst.documents.length > 0
+                    ? firestoreAsst.documents
+                    : cachedAsst?.documents && cachedAsst.documents.length > 0
+                    ? cachedAsst.documents
+                    : asst.documents) || []
+              };
+              setAssistantProfile(mergedAsst);
             } else if (staffUser && isMounted) {
-              setAssistantProfile({
+              const fallbackAsst: AssistantProfile = {
+                ...DEFAULT_ASSISTANT_PROFILE,
+                ...(cachedAsst || {}),
+                ...(firestoreAsst || {}),
                 id: staffUser.eplId || `asst-${staffPhone}`,
                 userId: staffUser.eplId || `user-${staffPhone}`,
-                name: staffUser.name || 'Assistant',
+                name: firestoreAsst?.name || cachedAsst?.name || staffUser.name || 'Assistant',
                 phone: staffPhone,
-                photo: '',
-                bio: 'Verified Diblo Personal Assistant',
-                languages: ['Hindi', 'English', 'Marathi'],
-                experienceYears: 2,
-                rating: 5.0,
-                totalReviews: 0,
-                completedBookings: 0,
+                photo:
+                  firestoreAsst?.photo ||
+                  cachedAsst?.photo ||
+                  DEFAULT_ASSISTANT_PROFILE.photo ||
+                  'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+                documents:
+                  (firestoreAsst?.documents && firestoreAsst.documents.length > 0
+                    ? firestoreAsst.documents
+                    : cachedAsst?.documents && cachedAsst.documents.length > 0
+                    ? cachedAsst.documents
+                    : DEFAULT_ASSISTANT_PROFILE.documents) || [],
+                languages:
+                  firestoreAsst?.languages ||
+                  cachedAsst?.languages ||
+                  ['Hindi', 'English', 'Marathi'],
+                rating: firestoreAsst?.rating ?? cachedAsst?.rating ?? 5.0,
                 verificationStatus: 'VERIFIED',
                 policeVerified: true,
-                aadhaarVerified: true,
-                addressVerified: true,
-                availability: 'ONLINE',
                 isOnline: true,
-                currentLocation: {
-                  lat: 19.0607,
-                  lng: 72.8258,
-                  address: 'Mumbai',
-                  area: 'Mumbai',
-                  lastUpdated: new Date().toISOString()
-                },
-                serviceCapabilities: [],
-                serviceArea: ['Mumbai'],
-                earningsToday: 0,
-                earningsWeek: 0,
-                earningsMonth: 0,
-                pendingPayout: 0,
-                IncentivesEarned: 0
-              });
+                currentLocation: firestoreAsst?.currentLocation ||
+                  cachedAsst?.currentLocation || {
+                    lat: 19.0607,
+                    lng: 72.8258,
+                    address: 'Hill Road, Bandra West, Mumbai',
+                    area: 'Bandra West, Mumbai',
+                    lastUpdated: new Date().toISOString()
+                  },
+                serviceCapabilities:
+                  firestoreAsst?.serviceCapabilities ||
+                  cachedAsst?.serviceCapabilities ||
+                  DEFAULT_ASSISTANT_PROFILE.serviceCapabilities,
+                serviceArea:
+                  firestoreAsst?.serviceArea ||
+                  cachedAsst?.serviceArea ||
+                  ['Bandra West', 'Khar', 'Santacruz', 'Andheri West']
+              };
+              setAssistantProfile(fallbackAsst);
             }
           }
         }
@@ -887,7 +939,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       isMounted = false;
     };
-  }, [currentRole, currentUser.phone]);
+  }, [currentRole, currentUser.phone, staffUser?.eplId]);
 
   const switchRole = async (newRole: UserRole) => {
     setCurrentRole(newRole);
@@ -1055,8 +1107,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateAssistantProfile = (updated: Partial<AssistantProfile>) => {
-    if (assistantProfile) {
-      setAssistantProfile({ ...assistantProfile, ...updated });
+    const baseProfile: AssistantProfile = assistantProfile || {
+      ...DEFAULT_ASSISTANT_PROFILE,
+      id: staffUser?.eplId || DEFAULT_ASSISTANT_PROFILE.id,
+      userId: staffUser?.eplId || DEFAULT_ASSISTANT_PROFILE.userId,
+      name: staffUser?.name || DEFAULT_ASSISTANT_PROFILE.name,
+      phone: staffUser?.number || DEFAULT_ASSISTANT_PROFILE.phone
+    };
+
+    const merged: AssistantProfile = {
+      ...baseProfile,
+      ...updated
+    };
+
+    setAssistantProfile(merged);
+
+    try {
+      localStorage.setItem('diblo_assistant_profile', JSON.stringify(merged));
+      if (merged.id) {
+        localStorage.setItem(`diblo_assistant_profile_${merged.id}`, JSON.stringify(merged));
+      }
+    } catch (err) {
+      console.warn('Failed to save assistant profile to localStorage:', err);
+    }
+
+    if (db && merged.id) {
+      setDoc(
+        doc(db, 'assistants', merged.id),
+        {
+          ...merged,
+          updatedAt: new Date().toISOString()
+        },
+        { merge: true }
+      ).catch(() => {});
+    }
+
+    if (merged.id) {
+      api.updateAssistant(merged.id, merged).catch(() => {});
     }
   };
 

@@ -2472,6 +2472,66 @@ async function startServer() {
     }
   });
 
+  app.put('/api/assistants/:id', async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = req.body || {};
+      const existing =
+        (await dbRepository.getAssistant(req.params.id)) ||
+        (data.phone ? await dbRepository.getAssistant(data.phone) : null);
+
+      const updatedAssistant: AssistantProfile = {
+        ...(existing || {
+          id: req.params.id,
+          userId: data.userId || req.params.id,
+          name: data.name || 'Verified Assistant',
+          phone: data.phone || '',
+          email: data.email || '',
+          photo:
+            data.photo ||
+            'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=300&q=80',
+          rating: 5.0,
+          totalRatings: 1,
+          verificationStatus: 'VERIFIED',
+          policeVerified: true,
+          languages: ['Hindi', 'English', 'Marathi'],
+          serviceCapabilities: ['DAILY_CHORES', 'CARE_COMPANION'],
+          serviceArea: ['Bandra West', 'Andheri West'],
+          isOnline: true,
+          currentLocation: {
+            lat: 19.0596,
+            lng: 72.8295,
+            address: 'Bandra West, Mumbai',
+            area: 'Bandra West',
+            lastUpdated: new Date().toISOString()
+          },
+          earnings: { today: 0, week: 0, month: 0, total: 0, pendingPayout: 0 },
+          documents: [],
+          bankDetails: {
+            accountNumber: 'XXXXXX1234',
+            ifsc: 'HDFC0001234',
+            bankName: 'HDFC Bank',
+            accountHolder: data.name || 'Assistant'
+          },
+          emergencyContact: {
+            name: 'Emergency Contact',
+            phone: data.phone || '9820000000',
+            relationship: 'Family'
+          },
+          completedTasksCount: 0,
+          acceptanceRate: 100,
+          joinedDate: new Date().toISOString()
+        }),
+        ...data,
+        id: existing?.id || req.params.id
+      };
+
+      await dbRepository.saveAssistant(updatedAssistant);
+      res.json({ success: true, assistant: updatedAssistant });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update assistant profile', details: err.message });
+    }
+  });
+
   app.put('/api/assistants/:id/toggle-online', async (req: AuthenticatedRequest, res) => {
     try {
       const assistant = await dbRepository.getAssistant(req.params.id);

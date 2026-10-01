@@ -82,9 +82,22 @@ export type VerificationStatus = 'VERIFIED' | 'PENDING' | 'REJECTED' | 'SUSPENDE
 
 export interface AssistantDocument {
   id: string;
-  type: 'AADHAAR' | 'PAN' | 'POLICE_VERIFICATION' | 'ADDRESS_PROOF' | 'BANK_PASSBOOK';
+  type:
+    | 'AADHAAR'
+    | 'PAN'
+    | 'POLICE_VERIFICATION'
+    | 'ADDRESS_PROOF'
+    | 'BANK_PASSBOOK'
+    | 'DRIVING_LICENCE'
+    | 'PROFILE_PHOTO'
+    | 'FAMILY_CONTACT';
+  title?: string;
   documentNumber: string;
   fileUrl: string;
+  fileName?: string;
+  mimeType?: string;
+  backFileUrl?: string;
+  backFileName?: string;
   verified: boolean;
   uploadedAt: string;
 }

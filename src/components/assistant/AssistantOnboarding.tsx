@@ -16,11 +16,15 @@ import {
   Mail,
   Calendar,
   Lock,
-  Loader2
+  Loader2,
+  Camera,
+  Trash2,
+  FileCheck
 } from 'lucide-react';
 import { AssistantApplication } from '../../types';
 import { api } from '../../lib/api';
 import { SERVICES } from '../../data/mockData';
+import { compressAndReadFile } from './AssistantProfileView';
 
 interface AssistantOnboardingProps {
   onSuccess?: () => void;
@@ -61,6 +65,8 @@ export const AssistantOnboarding: React.FC<AssistantOnboardingProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
   const [submittedAppId, setSubmittedAppId] = useState('');
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
+  const [uploadedFileNames, setUploadedFileNames] = useState<Record<string, string>>({});
 
   // Form State
   const [formData, setFormData] = useState<Partial<AssistantApplication>>({
@@ -103,6 +109,306 @@ export const AssistantOnboarding: React.FC<AssistantOnboardingProps> = ({
 
   const updateField = (key: keyof AssistantApplication, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleOnboardingFileUpload = async (
+    fieldKey: keyof AssistantApplication,
+    e: React.ChangeEvent<HTMLInputElement>,
+    maxDim = 900
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingField(String(fieldKey));
+    setErrorMessage('');
+    try {
+      const { dataUrl, fileName } = await compressAndReadFile(file, maxDim);
+      updateField(fieldKey, dataUrl);
+      setUploadedFileNames((prev) => ({
+        ...prev,
+        [String(fieldKey)]: fileName
+      }));
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to upload file. Please try another image or PDF.');
+    } finally {
+      setUploadingField(null);
+      e.target.value = '';
+    }
+  };
+
+  const removeUploadedField = (fieldKey: keyof AssistantApplication) => {
+    updateField(fieldKey, '');
+    setUploadedFileNames((prev) => {
+      const copy = { ...prev };
+      delete copy[String(fieldKey)];
+      return copy;
+    });
+  };
+
+  const renderProfileAndDocumentsUploader = () => {
+    const docUploadItems: {
+      key: keyof AssistantApplication;
+      title: string;
+      subtitle: string;
+      badgeText: string;
+      badgeStyle: string;
+    }[] = [
+      {
+        key: 'aadhaarFrontDoc',
+        title: 'Aadhaar Card (Front Side)',
+        subtitle: 'Upload clear photo or PDF of Aadhaar front (under 5MB)',
+        badgeText: 'Mandatory KYC Proof',
+        badgeStyle: 'bg-emerald-100 text-emerald-800'
+      },
+      {
+        key: 'aadhaarBackDoc',
+        title: 'Aadhaar Card (Back Side)',
+        subtitle: 'Upload clear photo or PDF of Aadhaar address side (under 5MB)',
+        badgeText: 'Mandatory KYC Proof',
+        badgeStyle: 'bg-emerald-100 text-emerald-800'
+      },
+      {
+        key: 'panDoc',
+        title: 'PAN Card Photo / PDF',
+        subtitle: 'Upload front side of your 10-digit PAN Card',
+        badgeText: 'Required for Payouts',
+        badgeStyle: 'bg-blue-100 text-blue-800'
+      },
+      {
+        key: 'bankPassbookDoc',
+        title: 'Bank Passbook / Cancelled Cheque',
+        subtitle: 'Showing Account Number & IFSC Code clearly',
+        badgeText: 'For Weekly Payouts',
+        badgeStyle: 'bg-amber-100 text-amber-800'
+      },
+      {
+        key: 'addressProofDoc',
+        title: 'Mumbai Address Proof / Police NOC',
+        subtitle: 'Electricity Bill, Rent Agreement, Driving Licence or Police NOC',
+        badgeText: 'Safety Verification',
+        badgeStyle: 'bg-purple-100 text-purple-800'
+      }
+    ];
+
+    return (
+      <div className="space-y-6">
+        {/* 1. Profile Photo Upload Box */}
+        <div className="p-5 rounded-3xl border-2 border-[#F42F73]/30 bg-[#FFF0F5]/40 space-y-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
+              <div className="relative group shrink-0">
+                {formData.profilePhoto ? (
+                  <img
+                    src={formData.profilePhoto}
+                    alt="Profile Preview"
+                    className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500 shadow-md bg-white"
+                  />
+                ) : (
+                  <div className="w-24 h-24 rounded-full bg-white border-2 border-dashed border-[#F42F73] flex flex-col items-center justify-center text-[#F42F73] shadow-xs">
+                    <Camera className="w-7 h-7 mb-0.5" />
+                    <span className="text-[9px] font-black uppercase">Photo</span>
+                  </div>
+                )}
+
+                <label
+                  htmlFor="onboarding-profile-photo-camera"
+                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-[#F42F73] hover:bg-[#D81B60] text-white flex items-center justify-center shadow-md cursor-pointer"
+                  title="Upload Profile Photo"
+                >
+                  <Upload className="w-4 h-4" />
+                  <input
+                    id="onboarding-profile-photo-camera"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleOnboardingFileUpload('profilePhoto', e, 700)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-[#F42F73] text-white px-2.5 py-0.5 rounded-full">
+                  <span>1. Assistant Profile Photo</span>
+                </div>
+                <h3 className="text-base font-black text-[#14213D]">
+                  Upload Your Profile Photo (Selfie / Passport Size)
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Click the button to upload a photo from your phone gallery or camera for your Diblo EPL ID card.
+                </p>
+                {uploadedFileNames.profilePhoto && (
+                  <div className="text-xs font-bold text-emerald-700 flex items-center justify-center sm:justify-start gap-1.5 pt-0.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Uploaded: {uploadedFileNames.profilePhoto}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-2 w-full sm:w-auto shrink-0">
+              <label
+                htmlFor="onboarding-profile-photo-btn"
+                className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-black flex items-center justify-center gap-2 shadow-md shadow-[#F42F73]/25 cursor-pointer transition-all min-h-[44px]"
+              >
+                <Upload className="w-4 h-4" />
+                <span>
+                  {uploadingField === 'profilePhoto'
+                    ? 'Uploading Photo...'
+                    : formData.profilePhoto
+                    ? 'Change Profile Photo'
+                    : 'Upload Profile Photo'}
+                </span>
+                <input
+                  id="onboarding-profile-photo-btn"
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleOnboardingFileUpload('profilePhoto', e, 700)}
+                  className="hidden"
+                />
+              </label>
+
+              {formData.profilePhoto && (
+                <button
+                  type="button"
+                  onClick={() => removeUploadedField('profilePhoto')}
+                  className="px-3 py-3 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 border border-gray-200 text-xs font-bold flex items-center gap-1"
+                  title="Remove Photo"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Optional Direct Image URL Input */}
+          <div className="pt-3 border-t border-[#F42F73]/15">
+            <label className="block text-[11px] font-bold text-gray-600 mb-1">
+              Or paste a Profile Photo URL (Optional)
+            </label>
+            <input
+              type="text"
+              value={
+                formData.profilePhoto?.startsWith('data:')
+                  ? ''
+                  : formData.profilePhoto || ''
+              }
+              onChange={(e) => updateField('profilePhoto', e.target.value)}
+              placeholder="https://... or use the Upload Profile Photo button above"
+              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#F42F73] focus:border-transparent outline-none bg-white"
+            />
+          </div>
+        </div>
+
+        {/* 2. KYC & Verification Document Upload Cards */}
+        <div>
+          <h3 className="text-sm font-black text-[#14213D] uppercase tracking-wider mb-3 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-[#F42F73]" />
+            <span>Upload Verification & KYC Documents</span>
+          </h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {docUploadItems.map((item) => {
+              const fieldVal = String(formData[item.key] || '');
+              const isUploaded = Boolean(fieldVal);
+              const isImage = fieldVal.startsWith('data:image/');
+              const fileName =
+                uploadedFileNames[String(item.key)] ||
+                (isUploaded ? `${item.title} Uploaded` : '');
+
+              return (
+                <div
+                  key={String(item.key)}
+                  className={`p-4 rounded-2xl border-2 border-dashed transition-all flex flex-col justify-between space-y-3 ${
+                    isUploaded
+                      ? 'border-emerald-400 bg-emerald-50/40'
+                      : 'border-gray-200 hover:border-[#F42F73] bg-gray-50/50'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-xs font-black text-[#14213D]">{item.title}</div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                          isUploaded
+                            ? 'bg-emerald-600 text-white'
+                            : item.badgeStyle
+                        }`}
+                      >
+                        {isUploaded ? 'Uploaded ✓' : item.badgeText}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-gray-500">{item.subtitle}</div>
+
+                    {/* Preview if uploaded */}
+                    {isUploaded && (
+                      <div className="p-2.5 rounded-xl bg-white border border-emerald-200 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {isImage ? (
+                            <img
+                              src={fieldVal}
+                              alt={item.title}
+                              className="w-11 h-11 rounded-lg object-cover border border-emerald-300 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                              <FileCheck className="w-5 h-5" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-bold text-emerald-950 truncate">
+                              {fileName}
+                            </div>
+                            <div className="text-[10px] text-emerald-600 font-semibold">
+                              Ready for submission
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeUploadedField(item.key)}
+                          className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-600 shrink-0"
+                          title="Remove document"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-1">
+                    <label
+                      htmlFor={`onboarding-upload-${String(item.key)}`}
+                      className={`w-full py-2.5 px-4 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all min-h-[40px] ${
+                        isUploaded
+                          ? 'bg-white hover:bg-gray-100 text-[#14213D] border border-emerald-300'
+                          : 'bg-[#14213D] hover:bg-[#1E293B] text-white shadow-xs'
+                      }`}
+                    >
+                      <Upload className="w-3.5 h-3.5 text-[#F42F73]" />
+                      <span>
+                        {uploadingField === String(item.key)
+                          ? 'Uploading...'
+                          : isUploaded
+                          ? 'Replace / Re-upload File'
+                          : `Upload ${item.title}`}
+                      </span>
+                      <input
+                        id={`onboarding-upload-${String(item.key)}`}
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={(e) => handleOnboardingFileUpload(item.key, e, 1000)}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const toggleArrayItem = (key: 'languagesSpoken' | 'selectedServices' | 'preferredOperatingZones' | 'preferredTimeSlots', item: string) => {
@@ -877,42 +1183,11 @@ export const AssistantOnboarding: React.FC<AssistantOnboardingProps> = ({
                   Step 7: Profile Photo & Verification Documents
                 </h2>
                 <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                  Upload a clear selfie or passport-style headshot for your Diblo EPL ID badge.
+                  Upload a clear selfie or passport-style headshot and your KYC documents for your Diblo EPL ID badge.
                 </p>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Profile Photo URL or Avatar</label>
-                  <input
-                    type="text"
-                    value={formData.profilePhoto || ''}
-                    onChange={(e) => updateField('profilePhoto', e.target.value)}
-                    placeholder="https://... or leave blank for auto-generated avatar"
-                    className="w-full px-3.5 py-3 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-[#F42F73] focus:border-transparent outline-none bg-gray-50/50"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 rounded-2xl border-2 border-dashed border-gray-200 text-center space-y-2 bg-gray-50/50">
-                    <Upload className="w-6 h-6 text-gray-400 mx-auto" />
-                    <div className="text-xs font-bold text-gray-700">Aadhaar Card Front & Back</div>
-                    <div className="text-[11px] text-gray-400">PDF, JPG, or PNG under 5MB</div>
-                    <span className="inline-block text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                      Physical verification in Bandra available
-                    </span>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border-2 border-dashed border-gray-200 text-center space-y-2 bg-gray-50/50">
-                    <Upload className="w-6 h-6 text-gray-400 mx-auto" />
-                    <div className="text-xs font-bold text-gray-700">Bank Passbook / Cancelled Cheque</div>
-                    <div className="text-[11px] text-gray-400">PDF, JPG, or PNG under 5MB</div>
-                    <span className="inline-block text-[10px] bg-gray-200 text-gray-700 font-bold px-2 py-0.5 rounded-full">
-                      Optional at sign-up
-                    </span>
-                  </div>
-                </div>
-              </div>
+              {renderProfileAndDocumentsUploader()}
             </div>
           )}
 
@@ -921,12 +1196,15 @@ export const AssistantOnboarding: React.FC<AssistantOnboardingProps> = ({
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl sm:text-2xl font-black text-[#14213D] tracking-tight">
-                  Step 8: Partner Agreement & Declaration
+                  Step 8: Profile Photo, Documents & Partner Agreement
                 </h2>
                 <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                  Please review the terms of engagement with Diblo Technologies Pvt. Ltd.
+                  Upload or verify your profile photo and documents below, then accept the terms of engagement with Diblo Technologies Pvt. Ltd.
                 </p>
               </div>
+
+              {/* Allow uploading Profile Photo & Documents directly on the last page (Step 8) as well */}
+              {renderProfileAndDocumentsUploader()}
 
               <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200 text-xs text-gray-600 space-y-3 max-h-56 overflow-y-auto">
                 <div className="font-bold text-[#14213D]">Diblo Assistant Code of Conduct Summary:</div>

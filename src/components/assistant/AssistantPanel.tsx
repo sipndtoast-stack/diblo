@@ -691,7 +691,11 @@ export const AssistantPanel: React.FC = () => {
               )}
             </button>
 
-            <div className="flex items-center gap-2.5">
+            <div
+              onClick={() => setCurrentSection('MY_PROFILE')}
+              className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity"
+              title="Open Profile & Upload Documents"
+            >
               <div className="relative">
                 <img
                   id="assistant-header-avatar"
