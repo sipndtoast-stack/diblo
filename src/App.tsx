@@ -57,6 +57,7 @@ const MainAppContent: React.FC = () => {
   const {
     staffUser,
     switchRole,
+    customerProfile,
     isCustomerAuthenticated,
     isCustomerProfileComplete,
     customerProfileCompletion,
@@ -125,8 +126,8 @@ const MainAppContent: React.FC = () => {
   };
 
   // Handle Tab Switch and sync URL path so refreshing preserves location
-  const handleCustomerTabChange = (tab: any) => {
-    if (!isCustomerProfileComplete && tab !== 'PROFILE') {
+  const handleCustomerTabChange = (tab: any, force = false) => {
+    if (!force && !isCustomerProfileComplete && tab !== 'PROFILE') {
       setCustomerTab('PROFILE');
       setProfileIncompleteNotice(
         `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) to unlock Home and all app options.`
@@ -163,7 +164,7 @@ const MainAppContent: React.FC = () => {
         `Please complete 100% of your Customer Profile (currently ${customerProfileCompletion}%) to unlock My Requests.`
       );
       if (typeof window !== 'undefined' && window.location.pathname !== '/customer/profile') {
-        window.history.pushState({}, '', '/customer/profile');
+        window.history.replaceState({}, '', '/customer/profile');
         setCurrentPath('/customer/profile');
       }
       return;
@@ -197,10 +198,12 @@ const MainAppContent: React.FC = () => {
     const handlePopState = () => {
       if (typeof window !== 'undefined') {
         const path = window.location.pathname || '/';
-        // Normalize legacy auth URLs to root
-        if (path === '/login' || path === '/signup') {
-          window.history.replaceState({}, '', '/');
-          setCurrentPath('/');
+        // Normalize legacy auth URLs
+        if (path === '/login') {
+          window.history.replaceState({}, '', '/customer-login');
+          setCurrentPath('/customer-login');
+        } else if (path === '/signup' || path === '/register' || path === '/new-customer') {
+          setCurrentPath(path);
         } else {
           setCurrentPath(path);
           if (path.startsWith('/customer')) {
@@ -278,8 +281,14 @@ const MainAppContent: React.FC = () => {
       currentPath === '/staff-login' ||
       currentPath === '/apply-assistant';
 
+    const isStoredCustomerAuthenticated =
+      typeof window !== 'undefined' &&
+      Boolean(localStorage.getItem('diblo_customer_profile'));
+    const isEffectiveCustomerAuth =
+      isCustomerAuthenticated || Boolean(customerProfile) || isStoredCustomerAuthenticated;
+
     if (!isStaffOnlyRoute) {
-      if (!isCustomerAuthenticated) {
+      if (!isEffectiveCustomerAuth) {
         // NOT AUTHENTICATED -> Redirect any protected customer route to Login
         if (currentPath.startsWith('/customer')) {
           window.history.replaceState({}, '', '/customer-login');
@@ -300,6 +309,9 @@ const MainAppContent: React.FC = () => {
           if (
             currentPath === '/' ||
             currentPath === '/customer-login' ||
+            currentPath === '/new-customer' ||
+            currentPath === '/signup' ||
+            currentPath === '/register' ||
             (currentPath === '/customer/profile' && !userOpenedProfileTab)
           ) {
             setCustomerTab('HOME');
@@ -344,6 +356,7 @@ const MainAppContent: React.FC = () => {
   };
 
   const handleCustomerLoginSuccess = () => {
+    setUserOpenedProfileTab(true);
     if (!isCustomerProfileComplete) {
       setCustomerTab('PROFILE');
       navigateTo('/customer/profile');
@@ -473,11 +486,25 @@ const MainAppContent: React.FC = () => {
   }
 
   // CENTRAL CUSTOMER AUTHENTICATION & PROFILE GUARD
-  // 1. If NOT authenticated -> Always show Customer Login
-  if (!isCustomerAuthenticated) {
+  const isStoredCustomerAuthenticated =
+    typeof window !== 'undefined' &&
+    Boolean(localStorage.getItem('diblo_customer_profile'));
+  const isEffectiveCustomerAuth =
+    isCustomerAuthenticated || Boolean(customerProfile) || isStoredCustomerAuthenticated;
+
+  const isNewCustomerRoute =
+    currentPath === '/new-customer' ||
+    currentPath === '/signup' ||
+    currentPath === '/register' ||
+    currentPath === '/customer/new' ||
+    (typeof window !== 'undefined' && window.location.search.includes('signup'));
+
+  // 1. If NOT authenticated -> Always show Customer Login or New Customer Signup
+  if (!isEffectiveCustomerAuth) {
     return (
       <UnifiedLogin
         initialMode="CUSTOMER"
+        initialCustomerSubTab={isNewCustomerRoute ? 'SIGNUP' : 'LOGIN'}
         onCustomerSuccess={handleCustomerLoginSuccess}
         onStaffSuccess={(role) => {
           if (role === 'Admin') {
@@ -604,7 +631,10 @@ const MainAppContent: React.FC = () => {
               onRequestBookingWithAssistant={handleOpenBookingWithAssistant}
               onViewAllFavorites={() => handleCustomerTabChange('FAVORITES')}
               onOpenLogout={() => setShowLogoutConfirm(true)}
-              onContinueToHome={() => handleCustomerTabChange('HOME')}
+              onContinueToHome={(force = true) => {
+                setUserOpenedProfileTab(false);
+                handleCustomerTabChange('HOME', force);
+              }}
             />
           )}
 

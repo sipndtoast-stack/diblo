@@ -28,6 +28,7 @@ import { connectGoogleWorkspace } from '../../lib/googleSheets';
 
 interface UnifiedLoginProps {
   initialMode?: 'CUSTOMER' | 'STAFF';
+  initialCustomerSubTab?: 'LOGIN' | 'SIGNUP';
   onCustomerSuccess: () => void;
   onStaffSuccess: (role: 'Assistant' | 'Admin') => void;
   onApplyAssistant?: () => void;
@@ -141,6 +142,7 @@ export function formatFirebasePhoneError(err: any, stage: 'SEND' | 'VERIFY' = 'S
 
 export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
   initialMode = 'CUSTOMER',
+  initialCustomerSubTab,
   onCustomerSuccess,
   onStaffSuccess,
   onApplyAssistant,
@@ -167,6 +169,38 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   }, [initialMode]);
 
+  // -------------------------------------------------------------
+  // CUSTOMER STATE (EMAIL/MOBILE + PASSWORD & FIREBASE PHONE OTP)
+  // -------------------------------------------------------------
+  const [customerAuthMethod, setCustomerAuthMethod] = useState<'PASSWORD' | 'OTP'>('PASSWORD');
+  const [isCustomerSignUp, setIsCustomerSignUp] = useState<boolean>(() => {
+    if (initialCustomerSubTab === 'SIGNUP') return true;
+    if (typeof window !== 'undefined') {
+      const p = (window.location.pathname || '').toLowerCase();
+      const q = (window.location.search || '').toLowerCase();
+      if (
+        p === '/new-customer' ||
+        p === '/signup' ||
+        p === '/register' ||
+        p === '/customer/new' ||
+        p === '/customer/register' ||
+        q.includes('signup') ||
+        q.includes('register') ||
+        q.includes('mode=signup')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  // Sync isCustomerSignUp if initialCustomerSubTab prop updates
+  useEffect(() => {
+    if (initialCustomerSubTab) {
+      setIsCustomerSignUp(initialCustomerSubTab === 'SIGNUP');
+    }
+  }, [initialCustomerSubTab]);
+
   // Automatically bypass login screen if user or assistant is already authenticated on this device
   useEffect(() => {
     if (isAuthLoading) return;
@@ -174,7 +208,7 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
       onStaffSuccess(staffUser.role);
       return;
     }
-    if (mode === 'CUSTOMER' && isCustomerAuthenticated && !isVerifiedSuccessRef.current) {
+    if (mode === 'CUSTOMER' && isCustomerAuthenticated) {
       onCustomerSuccess();
       return;
     }
@@ -183,11 +217,6 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
     }
   }, [isAuthLoading, isCustomerAuthenticated, staffUser, mode, onCustomerSuccess, onStaffSuccess]);
 
-  // -------------------------------------------------------------
-  // CUSTOMER STATE (EMAIL/MOBILE + PASSWORD & FIREBASE PHONE OTP)
-  // -------------------------------------------------------------
-  const [customerAuthMethod, setCustomerAuthMethod] = useState<'PASSWORD' | 'OTP'>('PASSWORD');
-  const [isCustomerSignUp, setIsCustomerSignUp] = useState(false);
   const [customerFullName, setCustomerFullName] = useState('');
   const [customerIdentifier, setCustomerIdentifier] = useState('');
   const [customerPassword, setCustomerPassword] = useState('');
@@ -805,9 +834,13 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                     <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100/90 rounded-2xl border border-gray-200/70">
                       <button
                         type="button"
+                        id="tab-customer-login"
                         onClick={() => {
                           setIsCustomerSignUp(false);
                           setErrorMessage('');
+                          if (typeof window !== 'undefined' && window.location.pathname !== '/customer-login') {
+                            window.history.replaceState({}, '', '/customer-login');
+                          }
                         }}
                         className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                           !isCustomerSignUp
@@ -819,9 +852,13 @@ export const UnifiedLogin: React.FC<UnifiedLoginProps> = ({
                       </button>
                       <button
                         type="button"
+                        id="tab-customer-signup"
                         onClick={() => {
                           setIsCustomerSignUp(true);
                           setErrorMessage('');
+                          if (typeof window !== 'undefined' && window.location.pathname !== '/new-customer') {
+                            window.history.replaceState({}, '', '/new-customer');
+                          }
                         }}
                         className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                           isCustomerSignUp

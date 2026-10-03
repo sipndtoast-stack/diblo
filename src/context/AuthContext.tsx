@@ -71,19 +71,21 @@ function isSyntheticPlaceholderEmail(email?: string | null): boolean {
   if (!email) return false;
   const lower = email.trim().toLowerCase();
   if (!lower.endsWith('@diblo-39440.firebaseapp.com')) return false;
-  // Valid customer bridge email must contain a real 10-digit Indian phone number (not demo phones)
+  
+  // Real customer bridge emails contain 10-digit mobile numbers (e.g. diblo.customer.9820123456@...)
   const custMatch = lower.match(/^diblo\.customer\.([6-9]\d{9})@diblo-39440\.firebaseapp\.com$/);
   if (custMatch) {
     const phone = custMatch[1];
-    return phone === '9820123456' || phone === '9820554433';
+    // ONLY synthetic 9820000000 is a placeholder; real customers are NEVER placeholders
+    return phone === '9820000000';
   }
-  // Valid staff bridge email must not be generic 'assistant', 'admin', 'asst1', '9820554433'
-  const staffMatch = lower.match(/^diblo\.(assistant|admin|operations)\.([a-z0-9]+)@diblo-39440\.firebaseapp\.com$/);
+  
+  // Valid staff accounts
+  const staffMatch = lower.match(/^diblo\.(assistant|admin|operations)\.([a-z0-9_-]+)@diblo-39440\.firebaseapp\.com$/);
   if (staffMatch) {
-    const id = staffMatch[2];
-    return id === 'assistant' || id === 'admin' || id === 'operations' || id === 'asst1' || id === '9820554433';
+    return false;
   }
-  return true;
+  return false;
 }
 
 function hasLiveDeviceLoginFlag(): boolean {
@@ -97,30 +99,10 @@ function hasLiveDeviceLoginFlag(): boolean {
 
 function isStaleDemoCustomer(obj: any): boolean {
   if (!obj) return true;
+  // Hardcoded legacy mock customer identifiers
   if (obj.id === 'cust-1' || obj.id === 'user-c-1' || obj.userId === 'user-c-1' || obj.id === 'cust-customer') return true;
-  if (typeof obj.name === 'string') {
-    const lower = obj.name.trim().toLowerCase();
-    if (
-      lower === 'aarav mehta' ||
-      lower === 'rohan desai' ||
-      lower === 'neha kapoor' ||
-      lower === 'rajesh sharma' ||
-      lower === 'diblo user'
-    ) {
-      return true;
-    }
-  }
-  if (obj.phone === '9820123456' || obj.phone === '9820554433' || obj.phone === '9820000000') return true;
-  if (isSyntheticPlaceholderEmail(obj.email)) return true;
-  const cleanPhone = String(obj.phone || '').replace(/\D/g, '').slice(-10);
-  const hasValidPhone = /^[6-9]\d{9}$/.test(cleanPhone);
-  const hasRealEmail = Boolean(
-    obj.email &&
-      typeof obj.email === 'string' &&
-      obj.email.includes('@') &&
-      !obj.email.endsWith('@diblo-39440.firebaseapp.com')
-  );
-  if (!hasValidPhone && !hasRealEmail) return true;
+  if (obj.phone === '9820000000') return true;
+  // Do not flag real customer profiles as stale
   return false;
 }
 
@@ -128,6 +110,7 @@ export function calculateCustomerProfileCompletion(profile: Partial<CustomerProf
   if (!profile) return 0;
   let score = 0;
 
+  // 1. Full Name (+20%)
   const rawName = String(profile.displayName || profile.name || '').trim();
   const isPlaceholderName =
     !rawName ||
@@ -139,16 +122,13 @@ export function calculateCustomerProfileCompletion(profile: Partial<CustomerProf
     score += 20;
   }
 
+  // 2. Primary Mobile Number (+20%)
   const cleanPhone = String(profile.phone || '').replace(/\D/g, '').slice(-10);
-  if (
-    /^[6-9]\d{9}$/.test(cleanPhone) &&
-    cleanPhone !== '9820000000' &&
-    cleanPhone !== '9820123456' &&
-    cleanPhone !== '9820554433'
-  ) {
-    score += 15;
+  if (/^[6-9]\d{9}$/.test(cleanPhone) && cleanPhone !== '9820000000') {
+    score += 20;
   }
 
+  // 3. Customer Email ID (+20%)
   const rawEmail = String(profile.email || '').trim().toLowerCase();
   const isPlaceholderEmail =
     !rawEmail ||
@@ -158,13 +138,10 @@ export function calculateCustomerProfileCompletion(profile: Partial<CustomerProf
     rawEmail.endsWith('@diblo-39440.firebaseapp.com') ||
     /^\d{10,}@example\.com$/.test(rawEmail);
   if (!isPlaceholderEmail) {
-    score += 15;
+    score += 20;
   }
 
-  if (profile.avatar && String(profile.avatar).trim().length > 0) {
-    score += 15;
-  }
-
+  // 4. Customer Home Address (+20%)
   const validAddresses = Array.isArray(profile.savedAddresses)
     ? profile.savedAddresses.filter(
         (a) =>
@@ -174,21 +151,22 @@ export function calculateCustomerProfileCompletion(profile: Partial<CustomerProf
       )
     : [];
   if (validAddresses.length > 0) {
-    score += 15;
+    score += 20;
   }
 
-  const emName = String(profile.emergencyContact?.name || '').trim();
-  const emPhone = String(profile.emergencyContact?.phone || '').replace(/\D/g, '').slice(-10);
-  if (
-    emName.length >= 2 &&
-    emName.toLowerCase() !== 'emergency contact' &&
-    /^[6-9]\d{9}$/.test(emPhone) &&
-    emPhone !== '9820000000'
-  ) {
+  // 5. Alternative Mobile Number (+10%)
+  const altPhone = String(profile.alternatePhone || '').replace(/\D/g, '').slice(-10);
+  if (/^[6-9]\d{9}$/.test(altPhone)) {
     score += 10;
   }
 
-  if (profile.specialInstructions && String(profile.specialInstructions).trim().length >= 2) {
+  // 6. Family Member Number (+10%)
+  const emPhone = String(profile.emergencyContact?.phone || '').replace(/\D/g, '').slice(-10);
+  const famPhone = Array.isArray(profile.familyMembers) && profile.familyMembers[0]?.phone
+    ? String(profile.familyMembers[0].phone).replace(/\D/g, '').slice(-10)
+    : '';
+  const resolvedFamilyPhone = emPhone || famPhone;
+  if (/^[6-9]\d{9}$/.test(resolvedFamilyPhone)) {
     score += 10;
   }
 
@@ -643,8 +621,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
+      localStorage.setItem(LIVE_DEVICE_LOGIN_KEY, 'true');
       localStorage.setItem('diblo_customer_profile', JSON.stringify(mergedProfile));
     } catch {}
+
+    setCustomerProfile(mergedProfile);
+    setIsCustomerAuthenticated(true);
+    setFirebaseCustomer(fbUser);
+    setCurrentRole('CUSTOMER');
+    tokenStorage.setActiveRole('CUSTOMER');
+    setCurrentUser({
+      id: fbUser.uid,
+      name: mergedProfile.name || 'Customer',
+      phone: mergedProfile.phone || '',
+      email: mergedProfile.email || '',
+      role: 'CUSTOMER',
+      avatar: mergedProfile.avatar || fbUser.photoURL || '',
+      createdAt: fbUser.metadata?.creationTime || mergedProfile.createdAt || new Date().toISOString()
+    });
 
     return mergedProfile;
   };
@@ -766,20 +760,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setFirebaseCustomer(null);
           let hasValidSavedCustomer = false;
           try {
-            if (hasLiveDeviceLoginFlag()) {
-              const saved = localStorage.getItem('diblo_customer_profile');
-              if (saved) {
-                const parsed = JSON.parse(saved);
-                if (!isStaleDemoCustomer(parsed) && (parsed.phone || parsed.email)) {
-                  hasValidSavedCustomer = true;
-                  setCustomerProfile(mergeCustomerProfileSources([parsed], {
-                    id: parsed.id || parsed.userId || 'cust-user',
-                    userId: parsed.userId || parsed.id || 'cust-user',
-                    name: parsed.name,
-                    phone: parsed.phone,
-                    email: parsed.email
-                  }));
-                }
+            const saved = localStorage.getItem('diblo_customer_profile');
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (!isStaleDemoCustomer(parsed) && (parsed.phone || parsed.email || parsed.id)) {
+                hasValidSavedCustomer = true;
+                const merged = mergeCustomerProfileSources([parsed], {
+                  id: parsed.id || parsed.userId || 'cust-user',
+                  userId: parsed.userId || parsed.id || 'cust-user',
+                  name: parsed.name,
+                  phone: parsed.phone,
+                  email: parsed.email
+                });
+                setCustomerProfile(merged);
+                setIsCustomerAuthenticated(true);
+                setCurrentRole('CUSTOMER');
+                tokenStorage.setActiveRole('CUSTOMER');
+                setCurrentUser({
+                  id: merged.userId || merged.id,
+                  name: merged.name || 'Customer',
+                  phone: merged.phone || '',
+                  email: merged.email || '',
+                  role: 'CUSTOMER',
+                  avatar: merged.avatar || '',
+                  createdAt: merged.createdAt || new Date().toISOString()
+                });
               }
             }
           } catch {}
@@ -1031,6 +1036,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setCustomerProfile(merged);
+    setIsCustomerAuthenticated(true);
+    setCurrentRole('CUSTOMER');
+    tokenStorage.setActiveRole('CUSTOMER');
     setCurrentUser((prev) => ({
       ...prev,
       name: resolvedName || prev.name,
@@ -1508,10 +1516,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
             }
           }
-          return {
-            success: false,
-            error: signUpErr?.message || 'Unable to create account. Please try again.'
-          };
+
+          // Fallback if client-side Firebase Auth email registration encountered provider or network issue
+          try {
+            const fallbackUid = await ensureFirebaseAuthSession({
+              id: cleanPhone || rawId,
+              name: name?.trim() || 'Customer',
+              phone: cleanPhone || undefined,
+              role: 'CUSTOMER'
+            });
+
+            const resolvedCustId = cleanPhone ? `cust-${cleanPhone}` : (fallbackUid || `cust-${Date.now()}`);
+            const fallbackProfile: CustomerProfile = {
+              id: resolvedCustId,
+              userId: fallbackUid || resolvedCustId,
+              name: name?.trim() || 'Customer',
+              displayName: name?.trim() || 'Customer',
+              phone: cleanPhone || '',
+              email: cleanRealEmail || (cleanPhone ? `${cleanPhone}@diblo.in` : ''),
+              avatar: '',
+              savedAddresses: [],
+              emergencyContact: { name: '', phone: '', relationship: 'Family' },
+              specialInstructions: '',
+              preferredLanguage: 'English',
+              referralCode: 'DIBLO100',
+              walletBalance: 100,
+              profileCompleted: false,
+              profileCompletion: 0,
+              createdAt: new Date().toISOString()
+            };
+
+            const score = calculateCustomerProfileCompletion(fallbackProfile);
+            fallbackProfile.profileCompletion = score;
+            fallbackProfile.profileCompleted = score === 100;
+
+            try {
+              localStorage.setItem(LIVE_DEVICE_LOGIN_KEY, 'true');
+              localStorage.setItem('diblo_customer_profile', JSON.stringify(fallbackProfile));
+            } catch {}
+
+            setCustomerProfile(fallbackProfile);
+            setIsCustomerAuthenticated(true);
+            setCurrentRole('CUSTOMER');
+            tokenStorage.setActiveRole('CUSTOMER');
+            setCurrentUser({
+              id: fallbackProfile.userId,
+              name: fallbackProfile.name,
+              phone: fallbackProfile.phone,
+              email: fallbackProfile.email,
+              role: 'CUSTOMER',
+              avatar: '',
+              createdAt: fallbackProfile.createdAt
+            });
+            setIsAuthLoading(false);
+
+            if (db && typeof setDoc === 'function') {
+              setDoc(doc(db, 'users', fallbackProfile.userId), fallbackProfile, { merge: true }).catch(() => {});
+              setDoc(doc(db, 'customers', fallbackProfile.id), fallbackProfile, { merge: true }).catch(() => {});
+            }
+            api.createCustomerProfile({
+              id: fallbackProfile.id,
+              userId: fallbackProfile.userId,
+              name: fallbackProfile.name,
+              phone: fallbackProfile.phone,
+              email: fallbackProfile.email,
+              walletBalance: 100
+            }).catch(() => {});
+
+            return {
+              success: true,
+              isNewCustomer: true,
+              profileCompleted: fallbackProfile.profileCompleted
+            };
+          } catch {
+            return {
+              success: false,
+              error: signUpErr?.message || 'Unable to create account. Please try again.'
+            };
+          }
         }
       }
 

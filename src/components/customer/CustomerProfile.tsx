@@ -78,7 +78,7 @@ interface CustomerProfileProps {
   onRequestBookingWithAssistant?: (assistant: AssistantProfile) => void;
   onViewAllFavorites?: () => void;
   onOpenLogout?: () => void;
-  onContinueToHome?: () => void;
+  onContinueToHome?: (force?: boolean) => void;
 }
 
 interface CustomerDocSlotConfig {
@@ -1356,20 +1356,30 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
   // Calculate Profile Completion %
   const calculateProfileCompletion = () => {
+    const rawName = (formData.name && formData.name !== 'Customer') ? formData.name : (inlineDisplayName || customerProfile?.name);
+    const cleanAddr = String(quickAddressLine || customerProfile?.savedAddresses?.[0]?.address || '').trim();
+    const cleanArea = String(quickAddressArea || customerProfile?.savedAddresses?.[0]?.area || 'Mumbai').trim();
     return calculateCustomerProfileCompletion({
       ...customerProfile,
-      name: customerProfile?.name || formData.name,
-      displayName: customerProfile?.displayName || formData.name,
-      phone: customerProfile?.phone || formData.phone,
-      email: customerProfile?.email || formData.email,
+      name: rawName,
+      displayName: rawName,
+      phone: formData.phone || inlinePhone || customerProfile?.phone,
+      email: formData.email || customerProfile?.email,
       avatar: customerProfile?.avatar || currentUser?.avatar,
-      savedAddresses: customerProfile?.savedAddresses || [],
+      savedAddresses: cleanAddr.length >= 3
+        ? [{ id: 'quick', title: 'Home', address: cleanAddr, area: cleanArea, isDefault: true, lat: 19.0607, lng: 72.8362 }]
+        : customerProfile?.savedAddresses || [],
+      alternatePhone: formData.alternatePhone || customerProfile?.alternatePhone,
       emergencyContact: {
-        name: customerProfile?.emergencyContact?.name || emergencyData.name,
-        phone: customerProfile?.emergencyContact?.phone || emergencyData.phone,
-        relationship: customerProfile?.emergencyContact?.relationship || emergencyData.relationship || 'Family'
+        name: emergencyData.name || customerProfile?.emergencyContact?.name || 'Family Contact',
+        phone: emergencyData.phone || customerProfile?.emergencyContact?.phone || '',
+        relationship: emergencyData.relationship || customerProfile?.emergencyContact?.relationship || 'Family'
       },
-      specialInstructions: customerProfile?.specialInstructions || formData.specialInstructions
+      familyMembers: emergencyData.phone ? [{
+        name: emergencyData.name || 'Family Member',
+        relationship: emergencyData.relationship || 'Family',
+        phone: emergencyData.phone
+      }] : customerProfile?.familyMembers
     });
   };
 
@@ -1381,7 +1391,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     if (prevCompletionRef.current < 100 && completionPercent === 100 && onContinueToHome) {
       prevCompletionRef.current = 100;
       const timer = setTimeout(() => {
-        onContinueToHome();
+        onContinueToHome(true);
       }, 350);
       return () => clearTimeout(timer);
     }
@@ -1409,12 +1419,13 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     const cleanName = String(formData.name || inlineDisplayName || '').trim();
     const cleanPhone = String(formData.phone || inlinePhone || '').replace(/\D/g, '').slice(-10);
     const cleanEmail = String(formData.email || '').trim().toLowerCase();
-    const chosenAvatar = customerProfile?.avatar || currentUser?.avatar || (requireAll ? PRESET_AVATARS[0].url : '');
     const cleanAddr = String(quickAddressLine || customerProfile?.savedAddresses?.[0]?.address || '').trim();
     const cleanArea = String(quickAddressArea || customerProfile?.savedAddresses?.[0]?.area || 'Mumbai').trim();
-    const cleanEmName = String(emergencyData.name || customerProfile?.emergencyContact?.name || '').trim();
-    const cleanEmPhone = String(emergencyData.phone || customerProfile?.emergencyContact?.phone || '').replace(/\D/g, '').slice(-10);
-    const cleanEmRel = String(emergencyData.relationship || customerProfile?.emergencyContact?.relationship || 'Family').trim();
+    const cleanAltPhone = String(formData.alternatePhone || customerProfile?.alternatePhone || '').replace(/\D/g, '').slice(-10);
+    const cleanFamilyPhone = String(emergencyData.phone || customerProfile?.emergencyContact?.phone || '').replace(/\D/g, '').slice(-10);
+    const cleanFamilyName = String(emergencyData.name || customerProfile?.emergencyContact?.name || 'Family Member').trim();
+    const cleanFamilyRel = String(emergencyData.relationship || customerProfile?.emergencyContact?.relationship || 'Family').trim();
+    const chosenAvatar = customerProfile?.avatar || currentUser?.avatar || (requireAll ? PRESET_AVATARS[0].url : '');
     const cleanNotes = String(formData.specialInstructions || customerProfile?.specialInstructions || '').trim();
 
     if (requireAll) {
@@ -1422,7 +1433,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         return { valid: false, error: 'Please enter your Full Name (at least 3 characters).' };
       }
       if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
-        return { valid: false, error: 'Please enter a valid 10-digit Indian mobile number.' };
+        return { valid: false, error: 'Please enter a valid 10-digit primary mobile number.' };
       }
       if (
         !cleanEmail ||
@@ -1431,16 +1442,16 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         cleanEmail.endsWith('@diblo.in') ||
         cleanEmail.endsWith('@diblo-39440.firebaseapp.com')
       ) {
-        return { valid: false, error: 'Please enter your valid Email ID.' };
+        return { valid: false, error: 'Please enter your valid Customer Email ID.' };
       }
       if (!cleanAddr || cleanAddr.length < 3) {
-        return { valid: false, error: 'Please enter your Primary Address in Mumbai.' };
+        return { valid: false, error: 'Please enter your Home Address (Flat / House No., Street, Area).' };
       }
-      if (!cleanEmName || cleanEmName.length < 2 || !/^[6-9]\d{9}$/.test(cleanEmPhone)) {
-        return { valid: false, error: 'Please enter Emergency Contact Name and valid 10-digit Mobile Number.' };
+      if (!/^[6-9]\d{9}$/.test(cleanAltPhone)) {
+        return { valid: false, error: 'Please enter a valid 10-digit Alternative Mobile Number.' };
       }
-      if (!cleanNotes || cleanNotes.length < 2) {
-        return { valid: false, error: 'Please enter Special Instructions / Assistance Notes.' };
+      if (!/^[6-9]\d{9}$/.test(cleanFamilyPhone)) {
+        return { valid: false, error: 'Please enter a valid 10-digit Family Member Mobile Number.' };
       }
     }
 
@@ -1469,11 +1480,17 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       email: cleanEmail || customerProfile?.email || '',
       avatar: chosenAvatar || customerProfile?.avatar || '',
       savedAddresses: updatedAddresses,
+      alternatePhone: cleanAltPhone || customerProfile?.alternatePhone || '',
       emergencyContact: {
-        name: cleanEmName,
-        phone: cleanEmPhone,
-        relationship: cleanEmRel || 'Family'
+        name: cleanFamilyName || 'Family Member',
+        phone: cleanFamilyPhone,
+        relationship: cleanFamilyRel || 'Family'
       },
+      familyMembers: cleanFamilyPhone ? [{
+        name: cleanFamilyName || 'Family Member',
+        relationship: cleanFamilyRel || 'Family',
+        phone: cleanFamilyPhone
+      }] : customerProfile?.familyMembers || [],
       specialInstructions: cleanNotes
     };
 
@@ -1504,7 +1521,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     if (res.payload.profileCompleted) {
       showToast('Profile 100% Completed! Redirecting to Main App...');
       if (onContinueToHome) {
-        onContinueToHome();
+        onContinueToHome(true);
       }
     } else {
       showToast(`Profile progress saved (${res.payload.profileCompletion}% complete).`);
@@ -1592,7 +1609,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           </div>
 
           <p className="text-xs text-gray-300 leading-relaxed">
-            Welcome to Diblo! Please complete all mandatory fields below to reach <strong>100% Profile Completion</strong> and unlock the Main Customer App:
+            Welcome to Diblo! Only <strong>Home Address, Alternative Number, Family Member Number, Email ID & Phone</strong> are required to reach <strong>100% Profile Completion</strong> and unlock the Main Customer App. <strong>No documents or KYC required!</strong>
           </p>
 
           {quickSetupError && (
@@ -1602,12 +1619,12 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             </div>
           )}
 
-          {/* Unified Quick Completion Form */}
+          {/* Unified Quick Completion Form - Exact Customer Requirements */}
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3.5 text-left">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  1. Full Name * (+20%)
+                  1. Customer Full Name * (+20%)
                 </label>
                 <input
                   type="text"
@@ -1624,7 +1641,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  2. Mobile Number * (+15%)
+                  2. Primary Mobile Number * (+20%)
                 </label>
                 <input
                   type="tel"
@@ -1643,11 +1660,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  3. Email Address * (+15%)
+                  3. Customer Email ID * (+20%)
                 </label>
                 <input
                   type="email"
-                  placeholder="you@example.com"
+                  placeholder="customer@example.com"
                   value={
                     formData.email.endsWith('@diblo.in') ||
                     formData.email.endsWith('@diblo-39440.firebaseapp.com')
@@ -1663,48 +1680,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               </div>
             </div>
 
-            {/* 4. Avatar Preset Selection */}
-            <div>
-              <label className="block text-[11px] font-bold text-gray-200 mb-1.5">
-                4. Select Profile Avatar or Upload Photo * (+15%)
-              </label>
-              <div className="flex flex-wrap items-center gap-2.5">
-                {PRESET_AVATARS.map((preset) => {
-                  const isSelected = currentAvatar === preset.url;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleSelectPreset(preset.url)}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#F42F73] border-white text-white shadow-sm'
-                          : 'bg-white/10 border-white/20 text-gray-200 hover:bg-white/20'
-                      }`}
-                    >
-                      <img
-                        src={preset.url}
-                        alt={preset.label}
-                        className="w-6 h-6 rounded-full object-cover"
-                      />
-                      <span>{preset.label}</span>
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-white cursor-pointer"
-                >
-                  Upload Custom Photo
-                </button>
-              </div>
-            </div>
-
+            {/* 4. Customer Home Address in Mumbai */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  5. Primary Address (Flat / Building / Street in Mumbai) * (+15%)
+                  4. Home Address (Flat / House No., Society / Street) * (+20%)
                 </label>
                 <input
                   type="text"
@@ -1719,11 +1699,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  Area / Locality
+                  Area / Locality in Mumbai
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Bandra West"
+                  placeholder="e.g. Bandra West, Mumbai"
                   value={quickAddressArea}
                   onChange={(e) => setQuickAddressArea(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
@@ -1731,30 +1711,34 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               </div>
             </div>
 
+            {/* 5. Alternative Number & 6. Family Member Number */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  6. Emergency Contact Name * (+10%)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Priya Sharma"
-                  value={emergencyData.name}
-                  onChange={(e) => {
-                    setQuickSetupError(null);
-                    setEmergencyData((prev) => ({ ...prev, name: e.target.value }));
-                  }}
-                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  Emergency Contact Mobile *
+                  5. Alternative Mobile Number * (+10%)
                 </label>
                 <input
                   type="tel"
                   maxLength={10}
-                  placeholder="10-digit mobile number"
+                  placeholder="10-digit alternative number"
+                  value={formData.alternatePhone}
+                  onChange={(e) => {
+                    setQuickSetupError(null);
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setFormData((prev) => ({ ...prev, alternatePhone: digits }));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-200 mb-1">
+                  6. Family Member Number * (+10%)
+                </label>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  placeholder="10-digit family phone"
                   value={emergencyData.phone}
                   onChange={(e) => {
                     setQuickSetupError(null);
@@ -1764,21 +1748,30 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                   className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
                 />
               </div>
+
               <div>
                 <label className="block text-[11px] font-bold text-gray-200 mb-1">
-                  7. Special Instructions / Notes * (+10%)
+                  Family Member Name / Relation
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Call upon arrival at gate"
-                  value={formData.specialInstructions}
+                  placeholder="e.g. Sunita Sharma (Mother/Spouse)"
+                  value={emergencyData.name}
                   onChange={(e) => {
                     setQuickSetupError(null);
-                    setFormData((prev) => ({ ...prev, specialInstructions: e.target.value }));
+                    setEmergencyData((prev) => ({ ...prev, name: e.target.value }));
                   }}
                   className="w-full px-3 py-2 rounded-xl bg-white text-[#14213D] text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-[#F42F73]"
                 />
               </div>
+            </div>
+
+            {/* Reassuring No-Documents Banner */}
+            <div className="bg-emerald-500/15 border border-emerald-400/30 rounded-xl p-2.5 flex items-center gap-2 text-emerald-200 text-xs font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>
+                <strong>No documents or KYC required for customers!</strong> Filling Name, Mobile, Email, Home Address, Alternative Number & Family Number completes your profile 100% and unlocks the full app.
+              </span>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
@@ -2090,40 +2083,18 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-base font-bold text-[#14213D]">
-                      Mandatory Documents & Identity Verification
+                      Customer Documents & Record Scanner (Optional)
                     </h3>
                     <span
                       data-testid="mandatory-documents-overall-status"
-                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        anyUploading
-                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                          : uploadedMandatoryCount === mandatorySlots.length
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200"
                     >
-                      {anyUploading ? (
-                        <>
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>Uploading...</span>
-                        </>
-                      ) : uploadedMandatoryCount === mandatorySlots.length ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>All Mandatory Uploaded</span>
-                        </>
-                      ) : (
-                        <>
-                          <Clock className="w-3 h-3" />
-                          <span>
-                            {uploadedMandatoryCount} of {mandatorySlots.length} Mandatory Uploaded
-                          </span>
-                        </>
-                      )}
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      <span>Not Required for Customers (Optional)</span>
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Upload mandatory KYC & address verification documents with instant thumbnail previews and live upload status tracking
+                    Customers do not need any documents (no KYC/Aadhaar/PAN required). Verified via Address & Phone. You may optionally use our camera document scanner below to save personal files.
                   </p>
                 </div>
               </div>
@@ -2141,9 +2112,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             {/* Overall Mandatory Upload Progress Bar */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-[11px] font-bold text-gray-600">
-                <span>Mandatory Document Upload Progress</span>
+                <span>Document Upload Progress (Optional)</span>
                 <span data-testid="mandatory-documents-progress-label" className="text-[#F42F73]">
-                  {uploadedMandatoryCount}/{mandatorySlots.length} Completed ({mandatoryProgressPct}%)
+                  {uploadedMandatoryCount}/{mandatorySlots.length} Uploaded ({mandatoryProgressPct}%)
                 </span>
               </div>
               <div
@@ -2196,10 +2167,10 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 </div>
                 <div>
                   <div className="text-xs sm:text-sm font-bold text-[#14213D]">
-                    Drag & drop mandatory documents here, or click to browse files
+                    Drag & drop documents here, or click to browse files (Optional for customers)
                   </div>
                   <div className="text-[11px] text-gray-500">
-                    Supports Government ID, Address Proof & Profile Photo (JPG, PNG, PDF • Automatic thumbnail preview)
+                    Supports Optional ID, Address Proof & Profile Photo (JPG, PNG, PDF • Device camera scanner supported)
                   </div>
                 </div>
               </div>
