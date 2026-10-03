@@ -46,15 +46,31 @@ import {
   BellOff,
   Volume2,
   Send,
-  MessageSquare
+  MessageSquare,
+  Eye,
+  Loader2,
+  FileCheck,
+  Clock,
+  ScanLine
 } from 'lucide-react';
 import { CustomerSpendingAnalytics } from './CustomerSpendingAnalytics';
 import { ReferAFriendSection } from './ReferAFriendSection';
 import {
   CustomerProfile as CustomerProfileType,
   AssistantProfile,
-  ContactPreferences
+  ContactPreferences,
+  MandatoryDocumentItem,
+  DocumentUploadStatus
 } from '../../types';
+import {
+  compressAndReadFile,
+  createPdfThumbnailSvgDataUrl,
+  formatFileSize
+} from '../assistant/AssistantProfileView';
+import {
+  DocumentScannerModal,
+  ScannedDocumentOutput
+} from '../common/DocumentScannerModal';
 import { MOCK_ASSISTANTS } from '../../data/mockData';
 
 interface CustomerProfileProps {
@@ -64,6 +80,50 @@ interface CustomerProfileProps {
   onOpenLogout?: () => void;
   onContinueToHome?: () => void;
 }
+
+interface CustomerDocSlotConfig {
+  id: string;
+  type: string;
+  title: string;
+  subtitle: string;
+  placeholder: string;
+  mandatory: boolean;
+}
+
+export const CUSTOMER_DOCUMENT_SLOTS: CustomerDocSlotConfig[] = [
+  {
+    id: 'cust-doc-id',
+    type: 'GOVERNMENT_ID',
+    title: 'Government ID Proof (Aadhaar / PAN / Passport)',
+    subtitle: 'Mandatory identity verification document (JPG, PNG or PDF, max 5MB)',
+    placeholder: 'ID Number (e.g. Aadhaar / PAN)',
+    mandatory: true
+  },
+  {
+    id: 'cust-doc-address',
+    type: 'ADDRESS_PROOF',
+    title: 'Residential Address Proof (Utility Bill / Society Letter)',
+    subtitle: 'Mandatory residence verification for home assistance bookings',
+    placeholder: 'Document / Consumer Reference No.',
+    mandatory: true
+  },
+  {
+    id: 'cust-doc-photo',
+    type: 'PROFILE_PHOTO',
+    title: 'Customer Profile Photo / Selfie ID',
+    subtitle: 'Clear front-facing photo for safe assistant handshake verification',
+    placeholder: 'Photo Verification Note',
+    mandatory: true
+  },
+  {
+    id: 'cust-doc-emergency',
+    type: 'EMERGENCY_PROOF',
+    title: 'Emergency / Family Authorization Document',
+    subtitle: 'Optional authorization or medical instructions document for family care',
+    placeholder: 'Emergency Contact Reference',
+    mandatory: false
+  }
+];
 
 const PRESET_AVATARS = [
   {
@@ -650,6 +710,37 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   const [newArea, setNewArea] = useState('');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
+  // Mandatory Documents Upload State
+  const [mandatoryDocs, setMandatoryDocs] = useState<MandatoryDocumentItem[]>(() => {
+    const existing = customerProfile?.mandatoryDocuments || customerProfile?.documents || [];
+    return Array.isArray(existing) ? existing : [];
+  });
+  const [docUploadStatuses, setDocUploadStatuses] = useState<Record<string, DocumentUploadStatus>>({});
+  const [docUploadProgress, setDocUploadProgress] = useState<Record<string, number>>({});
+  const [docUploadErrors, setDocUploadErrors] = useState<Record<string, string>>({});
+  const [docNumbers, setDocNumbers] = useState<Record<string, string>>({});
+  const [isDraggingOverDropzone, setIsDraggingOverDropzone] = useState(false);
+  const [previewDocModal, setPreviewDocModal] = useState<{
+    title: string;
+    url: string;
+    thumbnailUrl?: string;
+    docNumber?: string;
+    fileName?: string;
+    fileSize?: number;
+    mimeType?: string;
+    status?: DocumentUploadStatus;
+    uploadedAt?: string;
+  } | null>(null);
+  const [activeScannerSlot, setActiveScannerSlot] = useState<CustomerDocSlotConfig | null>(null);
+  const dropzoneFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const incomingDocs = customerProfile?.mandatoryDocuments || customerProfile?.documents;
+    if (Array.isArray(incomingDocs) && incomingDocs.length > 0) {
+      setMandatoryDocs(incomingDocs);
+    }
+  }, [customerProfile?.mandatoryDocuments, customerProfile?.documents]);
+
   // Notification Toast Helper
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -696,6 +787,264 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   const handleRemovePhoto = () => {
     updateCustomerProfile({ avatar: undefined });
     showToast('Profile photo removed.');
+  };
+
+  // Get Mandatory Document item for a given slot
+  const getCustomerDocForSlot = (slot: CustomerDocSlotConfig): MandatoryDocumentItem | undefined => {
+    const found = mandatoryDocs.find((d) => d.id === slot.id || d.type === slot.type);
+    if (found) return found;
+    if (slot.type === 'PROFILE_PHOTO' && (customerProfile?.avatar || currentUser?.avatar)) {
+      const avUrl = customerProfile?.avatar || currentUser?.avatar || '';
+      return {
+        id: slot.id,
+        type: slot.type,
+        title: slot.title,
+        documentNumber: docNumbers[slot.id] || 'Verified Selfie Photo',
+        fileUrl: avUrl,
+        thumbnailUrl: avUrl,
+        fileName: 'profile-photo.jpg',
+        fileSize: 145000,
+        mimeType: 'image/jpeg',
+        status: 'UPLOADED',
+        progress: 100,
+        mandatory: slot.mandatory,
+        uploadedAt: new Date().toISOString().split('T')[0]
+      };
+    }
+    return undefined;
+  };
+
+  const getSlotUploadStatus = (
+    slot: CustomerDocSlotConfig,
+    docItem?: MandatoryDocumentItem
+  ): DocumentUploadStatus => {
+    if (docUploadStatuses[slot.id]) return docUploadStatuses[slot.id];
+    if (docItem?.status) return docItem.status;
+    if (docItem?.fileUrl) return 'UPLOADED';
+    return 'PENDING';
+  };
+
+  const processSingleSlotFileUpload = async (
+    slot: CustomerDocSlotConfig,
+    file: File,
+    baseDocsList: MandatoryDocumentItem[]
+  ): Promise<MandatoryDocumentItem[]> => {
+    const isSupportedType =
+      file.type.startsWith('image/') ||
+      file.type === 'application/pdf' ||
+      /\.(jpg|jpeg|png|webp|gif|pdf)$/i.test(file.name);
+
+    if (!isSupportedType) {
+      const errMsg = 'Unsupported file format. Please upload JPG, PNG, WebP, or PDF.';
+      setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setDocUploadErrors((prev) => ({ ...prev, [slot.id]: errMsg }));
+      showToast(errMsg);
+      return baseDocsList;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      const errMsg = 'File size exceeds 5MB limit. Please choose a smaller file.';
+      setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setDocUploadErrors((prev) => ({ ...prev, [slot.id]: errMsg }));
+      showToast(errMsg);
+      return baseDocsList;
+    }
+
+    setDocUploadErrors((prev) => {
+      const next = { ...prev };
+      delete next[slot.id];
+      return next;
+    });
+    setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'UPLOADING' }));
+    setDocUploadProgress((prev) => ({ ...prev, [slot.id]: 15 }));
+
+    try {
+      const { dataUrl, thumbnailUrl, fileName, fileSize, mimeType } = await compressAndReadFile(
+        file,
+        900,
+        (pct) => {
+          setDocUploadProgress((prev) => ({ ...prev, [slot.id]: pct }));
+        }
+      );
+
+      const existingDoc = baseDocsList.find((d) => d.id === slot.id || d.type === slot.type);
+      const updatedDoc: MandatoryDocumentItem = {
+        id: slot.id,
+        type: slot.type,
+        title: slot.title,
+        documentNumber:
+          docNumbers[slot.id]?.trim() ||
+          existingDoc?.documentNumber ||
+          slot.placeholder,
+        fileUrl: dataUrl,
+        thumbnailUrl:
+          thumbnailUrl ||
+          (mimeType === 'application/pdf' ? createPdfThumbnailSvgDataUrl(fileName) : dataUrl),
+        fileName,
+        fileSize,
+        mimeType,
+        status: 'UPLOADED',
+        progress: 100,
+        mandatory: slot.mandatory,
+        uploadedAt: new Date().toISOString().split('T')[0]
+      };
+
+      const filtered = baseDocsList.filter((d) => d.id !== slot.id && d.type !== slot.type);
+      const nextDocs = [...filtered, updatedDoc];
+
+      setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'UPLOADED' }));
+      setDocUploadProgress((prev) => ({ ...prev, [slot.id]: 100 }));
+      setMandatoryDocs(nextDocs);
+
+      const profileUpdates: Partial<CustomerProfileType> & Record<string, any> = {
+        mandatoryDocuments: nextDocs,
+        documents: nextDocs
+      };
+      if (slot.type === 'PROFILE_PHOTO') {
+        profileUpdates.avatar = dataUrl;
+      }
+
+      await syncProfileToFirestore(profileUpdates);
+      showToast(`${slot.title} uploaded successfully!`);
+      return nextDocs;
+    } catch {
+      const errMsg = `Failed to upload ${slot.title}. Please try again.`;
+      setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setDocUploadErrors((prev) => ({ ...prev, [slot.id]: errMsg }));
+      showToast(errMsg);
+      return baseDocsList;
+    }
+  };
+
+  const handleCustomerSlotFileInput = async (
+    slot: CustomerDocSlotConfig,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processSingleSlotFileUpload(slot, file, mandatoryDocs);
+    e.target.value = '';
+  };
+
+  const handleCustomerScannedDocComplete = async (
+    slot: CustomerDocSlotConfig,
+    scanned: ScannedDocumentOutput
+  ) => {
+    setDocUploadErrors((prev) => {
+      const next = { ...prev };
+      delete next[slot.id];
+      return next;
+    });
+    setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'UPLOADING' }));
+    setDocUploadProgress((prev) => ({ ...prev, [slot.id]: 60 }));
+
+    const existingDoc = mandatoryDocs.find((d) => d.id === slot.id || d.type === slot.type);
+    const updatedDoc: MandatoryDocumentItem = {
+      id: slot.id,
+      type: slot.type,
+      title: slot.title,
+      documentNumber:
+        docNumbers[slot.id]?.trim() ||
+        existingDoc?.documentNumber ||
+        `Scanned (${Math.round(scanned.cropRegion.width)}%×${Math.round(scanned.cropRegion.height)}% Cropped)`,
+      fileUrl: scanned.dataUrl,
+      thumbnailUrl: scanned.thumbnailUrl || scanned.dataUrl,
+      fileName: scanned.fileName,
+      fileSize: scanned.fileSize,
+      mimeType: scanned.mimeType,
+      status: 'UPLOADED',
+      progress: 100,
+      mandatory: slot.mandatory,
+      uploadedAt: new Date().toISOString().split('T')[0]
+    };
+
+    const filtered = mandatoryDocs.filter((d) => d.id !== slot.id && d.type !== slot.type);
+    const nextDocs = [...filtered, updatedDoc];
+
+    setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'UPLOADED' }));
+    setDocUploadProgress((prev) => ({ ...prev, [slot.id]: 100 }));
+    setMandatoryDocs(nextDocs);
+
+    const profileUpdates: Partial<CustomerProfileType> & Record<string, any> = {
+      mandatoryDocuments: nextDocs,
+      documents: nextDocs
+    };
+    if (slot.type === 'PROFILE_PHOTO') {
+      profileUpdates.avatar = scanned.dataUrl;
+    }
+
+    await syncProfileToFirestore(profileUpdates);
+    showToast(`${slot.title} scanned, cropped & uploaded!`);
+  };
+
+  const handleDropzoneFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files || []);
+    if (fileArray.length === 0) return;
+
+    let currentDocs = [...mandatoryDocs];
+    for (const file of fileArray) {
+      // Find first mandatory slot that isn't uploaded yet, or fallback to first slot
+      const pendingSlot =
+        CUSTOMER_DOCUMENT_SLOTS.find((s) => {
+          const found = currentDocs.find((d) => d.id === s.id || d.type === s.type);
+          return !found?.fileUrl;
+        }) || CUSTOMER_DOCUMENT_SLOTS[0];
+
+      currentDocs = await processSingleSlotFileUpload(pendingSlot, file, currentDocs);
+    }
+  };
+
+  const handleRemoveCustomerDoc = async (slot: CustomerDocSlotConfig) => {
+    const nextDocs = mandatoryDocs.filter((d) => d.id !== slot.id && d.type !== slot.type);
+    setMandatoryDocs(nextDocs);
+    setDocUploadStatuses((prev) => ({ ...prev, [slot.id]: 'PENDING' }));
+    setDocUploadProgress((prev) => ({ ...prev, [slot.id]: 0 }));
+    setDocUploadErrors((prev) => {
+      const next = { ...prev };
+      delete next[slot.id];
+      return next;
+    });
+
+    const profileUpdates: Partial<CustomerProfileType> & Record<string, any> = {
+      mandatoryDocuments: nextDocs,
+      documents: nextDocs
+    };
+    if (slot.type === 'PROFILE_PHOTO') {
+      profileUpdates.avatar = undefined;
+    }
+
+    await syncProfileToFirestore(profileUpdates);
+    showToast(`${slot.title} removed.`);
+  };
+
+  const handleSaveCustomerDocNumber = async (slot: CustomerDocSlotConfig) => {
+    const rawNum = docNumbers[slot.id]?.trim();
+    if (!rawNum) return;
+    const existing = getCustomerDocForSlot(slot);
+    const updatedDoc: MandatoryDocumentItem = {
+      id: slot.id,
+      type: slot.type,
+      title: slot.title,
+      documentNumber: rawNum,
+      fileUrl: existing?.fileUrl || '',
+      thumbnailUrl: existing?.thumbnailUrl || existing?.fileUrl || '',
+      fileName: existing?.fileName || '',
+      fileSize: existing?.fileSize,
+      mimeType: existing?.mimeType || 'image/jpeg',
+      status: existing?.fileUrl ? 'UPLOADED' : 'PENDING',
+      progress: existing?.fileUrl ? 100 : 0,
+      mandatory: slot.mandatory,
+      uploadedAt: existing?.uploadedAt || new Date().toISOString().split('T')[0]
+    };
+
+    const filtered = mandatoryDocs.filter((d) => d.id !== slot.id && d.type !== slot.type);
+    const nextDocs = [...filtered, updatedDoc];
+    setMandatoryDocs(nextDocs);
+    await syncProfileToFirestore({
+      mandatoryDocuments: nextDocs,
+      documents: nextDocs
+    });
+    showToast(`Reference saved for ${slot.title}!`);
   };
 
   // Direct Firestore sync helper using the authenticated user's UID
@@ -1711,6 +2060,541 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             : 'Complete your personal info, emergency contacts & photo for faster, verified bookings.'}
         </p>
       </div>
+
+      {/* Mandatory Documents Upload Interface with Thumbnail Preview & Status Tracking */}
+      {(() => {
+        const mandatorySlots = CUSTOMER_DOCUMENT_SLOTS.filter((s) => s.mandatory);
+        const uploadedMandatoryCount = mandatorySlots.filter((s) => {
+          const docItem = getCustomerDocForSlot(s);
+          const status = getSlotUploadStatus(s, docItem);
+          return Boolean(docItem?.fileUrl) && (status === 'UPLOADED' || status === 'VERIFIED');
+        }).length;
+        const mandatoryProgressPct = Math.round(
+          (uploadedMandatoryCount / Math.max(1, mandatorySlots.length)) * 100
+        );
+        const anyUploading = CUSTOMER_DOCUMENT_SLOTS.some(
+          (s) => docUploadStatuses[s.id] === 'UPLOADING'
+        );
+
+        return (
+          <div
+            id="mandatory-documents-section"
+            data-testid="mandatory-documents-section"
+            className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-[#FFF0F5] flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4 text-[#F42F73]" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-bold text-[#14213D]">
+                      Mandatory Documents & Identity Verification
+                    </h3>
+                    <span
+                      data-testid="mandatory-documents-overall-status"
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        anyUploading
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : uploadedMandatoryCount === mandatorySlots.length
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}
+                    >
+                      {anyUploading ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Uploading...</span>
+                        </>
+                      ) : uploadedMandatoryCount === mandatorySlots.length ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>All Mandatory Uploaded</span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock className="w-3 h-3" />
+                          <span>
+                            {uploadedMandatoryCount} of {mandatorySlots.length} Mandatory Uploaded
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Upload mandatory KYC & address verification documents with instant thumbnail previews and live upload status tracking
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-left sm:text-right shrink-0">
+                <div className="text-xs font-black text-[#14213D]">
+                  {mandatoryProgressPct}% Verified
+                </div>
+                <div className="text-[10px] font-semibold text-gray-400">
+                  JPG, PNG, WebP or PDF (Max 5MB)
+                </div>
+              </div>
+            </div>
+
+            {/* Overall Mandatory Upload Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-bold text-gray-600">
+                <span>Mandatory Document Upload Progress</span>
+                <span data-testid="mandatory-documents-progress-label" className="text-[#F42F73]">
+                  {uploadedMandatoryCount}/{mandatorySlots.length} Completed ({mandatoryProgressPct}%)
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Mandatory Document Upload Progress"
+                aria-valuenow={mandatoryProgressPct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                data-testid="mandatory-documents-progressbar"
+                className="w-full h-2 bg-gray-100 rounded-full overflow-hidden"
+              >
+                <div
+                  className="h-full bg-gradient-to-r from-[#F42F73] to-emerald-500 transition-all duration-300 rounded-full"
+                  style={{ width: `${mandatoryProgressPct}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Drag-and-Drop / Quick Multi-File Upload Zone */}
+            <div
+              data-testid="mandatory-documents-dropzone"
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsDraggingOverDropzone(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsDraggingOverDropzone(false);
+              }}
+              onDrop={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsDraggingOverDropzone(false);
+                if (e.dataTransfer?.files?.length) {
+                  await handleDropzoneFiles(e.dataTransfer.files);
+                }
+              }}
+              onClick={() => dropzoneFileInputRef.current?.click()}
+              className={`p-4 rounded-2xl border-2 border-dashed transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-between gap-3 ${
+                isDraggingOverDropzone
+                  ? 'border-[#F42F73] bg-[#FFF0F5]/60'
+                  : 'border-gray-200 bg-gray-50/70 hover:border-[#F42F73]/50 hover:bg-[#FFF0F5]/20'
+              }`}
+            >
+              <div className="flex items-center gap-3 text-center sm:text-left">
+                <div className="w-10 h-10 rounded-2xl bg-white border border-gray-200 flex items-center justify-center text-[#F42F73] shadow-2xs shrink-0">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs sm:text-sm font-bold text-[#14213D]">
+                    Drag & drop mandatory documents here, or click to browse files
+                  </div>
+                  <div className="text-[11px] text-gray-500">
+                    Supports Government ID, Address Proof & Profile Photo (JPG, PNG, PDF • Automatic thumbnail preview)
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  data-testid="open-document-scanner-btn"
+                  aria-label="Scan Document with Camera"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const firstPending =
+                      CUSTOMER_DOCUMENT_SLOTS.find((s) => !getCustomerDocForSlot(s)?.fileUrl) ||
+                      CUSTOMER_DOCUMENT_SLOTS[0];
+                    setActiveScannerSlot(firstPending);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors shadow-2xs"
+                >
+                  <ScanLine className="w-3.5 h-3.5" />
+                  <span>Scan with Camera</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="browse-mandatory-documents-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dropzoneFileInputRef.current?.click();
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-bold shrink-0 cursor-pointer transition-colors"
+                >
+                  Select Files
+                </button>
+              </div>
+              <input
+                ref={dropzoneFileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,application/pdf"
+                aria-label="Upload Mandatory Documents"
+                data-testid="mandatory-documents-file-input"
+                onChange={async (e) => {
+                  if (e.target.files?.length) {
+                    await handleDropzoneFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+            </div>
+
+            {/* Individual Mandatory Document Upload Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {CUSTOMER_DOCUMENT_SLOTS.map((slot) => {
+                const docItem = getCustomerDocForSlot(slot);
+                const status = getSlotUploadStatus(slot, docItem);
+                const progress =
+                  status === 'UPLOADING'
+                    ? docUploadProgress[slot.id] ?? 45
+                    : docItem?.fileUrl
+                      ? 100
+                      : 0;
+                const errorMsg = docUploadErrors[slot.id] || docItem?.errorMessage;
+                const hasUploadedFile = Boolean(docItem?.fileUrl);
+                const thumbSrc =
+                  docItem?.thumbnailUrl ||
+                  (docItem?.mimeType === 'application/pdf'
+                    ? createPdfThumbnailSvgDataUrl(docItem.fileName || slot.title)
+                    : docItem?.fileUrl || '');
+
+                return (
+                  <div
+                    key={slot.id}
+                    data-testid={`mandatory-doc-card-${slot.id}`}
+                    className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                      status === 'ERROR'
+                        ? 'bg-rose-50/30 border-rose-200'
+                        : hasUploadedFile
+                          ? 'bg-emerald-50/20 border-emerald-200/80'
+                          : 'bg-gray-50/70 border-gray-200/80 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      {/* Card Header & Upload Status Badge */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <h4 className="text-xs sm:text-sm font-black text-[#14213D]">
+                              {slot.title}
+                            </h4>
+                            {slot.mandatory ? (
+                              <span className="px-1.5 py-0.5 rounded bg-[#FFF0F5] text-[#F42F73] text-[9px] font-black uppercase">
+                                Mandatory
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 text-[9px] font-bold uppercase">
+                                Optional
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">{slot.subtitle}</p>
+                        </div>
+
+                        {/* Upload Status Badge */}
+                        <span
+                          data-testid={`doc-status-${slot.id}`}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 ${
+                            status === 'UPLOADING'
+                              ? 'bg-blue-100 text-blue-700'
+                              : status === 'ERROR'
+                                ? 'bg-rose-100 text-rose-700'
+                                : hasUploadedFile
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {status === 'UPLOADING' ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>Uploading {progress}%</span>
+                            </>
+                          ) : status === 'ERROR' ? (
+                            <>
+                              <AlertCircle className="w-3 h-3" />
+                              <span>Upload Failed</span>
+                            </>
+                          ) : hasUploadedFile ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Uploaded</span>
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-3 h-3" />
+                              <span>Pending</span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Live Upload Progress Bar when Uploading or Uploaded */}
+                      {(status === 'UPLOADING' || hasUploadedFile) && (
+                        <div className="space-y-1">
+                          <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              data-testid={`doc-progress-${slot.id}`}
+                              className={`h-full transition-all duration-300 ${
+                                status === 'UPLOADING' ? 'bg-blue-600' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error Alert if upload failed */}
+                      {status === 'ERROR' && errorMsg && (
+                        <div
+                          role="alert"
+                          data-testid={`doc-error-${slot.id}`}
+                          className="p-2.5 rounded-xl bg-rose-100/80 border border-rose-200 text-[11px] font-bold text-rose-700 flex items-center gap-1.5"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{errorMsg}</span>
+                        </div>
+                      )}
+
+                      {/* Thumbnail Preview & File Metadata Box */}
+                      {hasUploadedFile && docItem && (
+                        <div
+                          data-testid={`doc-preview-box-${slot.id}`}
+                          className="p-2.5 bg-white rounded-xl border border-gray-200 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewDocModal({
+                                  title: slot.title,
+                                  url: docItem.fileUrl,
+                                  thumbnailUrl: thumbSrc,
+                                  docNumber: docItem.documentNumber,
+                                  fileName: docItem.fileName,
+                                  fileSize: docItem.fileSize,
+                                  mimeType: docItem.mimeType,
+                                  status,
+                                  uploadedAt: docItem.uploadedAt
+                                })
+                              }
+                              className="relative w-14 h-14 rounded-xl overflow-hidden border border-gray-200 bg-gray-100 shrink-0 group cursor-pointer"
+                              title="Click to enlarge thumbnail preview"
+                            >
+                              <img
+                                data-testid={`doc-thumbnail-${slot.id}`}
+                                src={thumbSrc}
+                                alt={`${slot.title} thumbnail`}
+                                className="w-full h-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <Eye className="w-4 h-4 text-white" />
+                              </div>
+                            </button>
+
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-[#14213D] truncate flex items-center gap-1">
+                                <FileCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span className="truncate">
+                                  {docItem.fileName || `${slot.type.toLowerCase()}-verified.jpg`}
+                                </span>
+                              </div>
+                              <div className="text-[10px] font-semibold text-gray-500 mt-0.5">
+                                {formatFileSize(docItem.fileSize)} • Uploaded {docItem.uploadedAt}
+                              </div>
+                              {docItem.documentNumber && (
+                                <div className="text-[10px] font-bold text-[#14213D] mt-0.5 truncate">
+                                  Ref: {docItem.documentNumber}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              data-testid={`preview-doc-btn-${slot.id}`}
+                              onClick={() =>
+                                setPreviewDocModal({
+                                  title: slot.title,
+                                  url: docItem.fileUrl,
+                                  thumbnailUrl: thumbSrc,
+                                  docNumber: docItem.documentNumber,
+                                  fileName: docItem.fileName,
+                                  fileSize: docItem.fileSize,
+                                  mimeType: docItem.mimeType,
+                                  status,
+                                  uploadedAt: docItem.uploadedAt
+                                })
+                              }
+                              className="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-[#14213D] text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Preview</span>
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`remove-doc-btn-${slot.id}`}
+                              onClick={() => handleRemoveCustomerDoc(slot)}
+                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer transition-colors"
+                              title="Remove Document"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Document Number / ID Reference Input */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          aria-label={`${slot.title} Reference Number`}
+                          placeholder={slot.placeholder}
+                          value={
+                            docNumbers[slot.id] !== undefined
+                              ? docNumbers[slot.id]
+                              : docItem?.documentNumber || ''
+                          }
+                          onChange={(e) =>
+                            setDocNumbers((prev) => ({
+                              ...prev,
+                              [slot.id]: e.target.value
+                            }))
+                          }
+                          className="flex-1 min-w-0 px-3 py-1.5 bg-white border border-gray-200 focus:border-[#F42F73] rounded-xl text-xs font-semibold text-[#14213D] outline-hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveCustomerDocNumber(slot)}
+                          className="px-2.5 py-1.5 bg-gray-900 hover:bg-black text-white rounded-xl text-[11px] font-bold cursor-pointer shrink-0"
+                        >
+                          Save Ref
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Upload / Replace / Scan File Trigger Buttons */}
+                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-gray-200/60">
+                      <span className="text-[10px] font-semibold text-gray-500">
+                        {hasUploadedFile
+                          ? 'Thumbnail ready • Scan or Replace to update'
+                          : 'Scan with camera or upload JPG, PNG, PDF'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          data-testid={`scan-doc-btn-${slot.id}`}
+                          aria-label={`Scan ${slot.title}`}
+                          onClick={() => setActiveScannerSlot(slot)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-bold cursor-pointer transition-all shadow-2xs"
+                        >
+                          <Camera className="w-3.5 h-3.5 text-[#F42F73]" />
+                          <span>Scan Document</span>
+                        </button>
+                        <label
+                          data-testid={`upload-doc-label-${slot.id}`}
+                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-2xs ${
+                            hasUploadedFile
+                              ? 'bg-white border border-gray-200 text-[#14213D] hover:border-[#F42F73]'
+                              : 'bg-[#F42F73] hover:bg-[#D81B60] text-white'
+                          }`}
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{hasUploadedFile ? 'Replace File' : 'Upload Document'}</span>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf,application/pdf"
+                            aria-label={`Upload ${slot.title}`}
+                            data-testid={`upload-doc-input-${slot.id}`}
+                            onChange={(e) => handleCustomerSlotFileInput(slot, e)}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Device Camera Document Scanner & Edge Crop Modal */}
+      <DocumentScannerModal
+        isOpen={Boolean(activeScannerSlot)}
+        onClose={() => setActiveScannerSlot(null)}
+        documentTitle={activeScannerSlot?.title || 'Mandatory Identity Document'}
+        documentType={activeScannerSlot?.type}
+        onScanComplete={async (scanned) => {
+          if (activeScannerSlot) {
+            await handleCustomerScannedDocComplete(activeScannerSlot, scanned);
+          }
+        }}
+      />
+
+      {/* Full-Screen Document Thumbnail & Lightbox Preview Modal */}
+      {previewDocModal && (
+        <div
+          data-testid="document-preview-modal"
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setPreviewDocModal(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-gray-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-[#14213D]">{previewDocModal.title}</h3>
+                <p className="text-xs text-gray-500">
+                  {previewDocModal.fileName || 'Verified Document'} •{' '}
+                  {formatFileSize(previewDocModal.fileSize)}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="close-document-preview-modal"
+                onClick={() => setPreviewDocModal(null)}
+                className="p-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-3 border border-gray-200 flex items-center justify-center max-h-[360px] overflow-hidden">
+              <img
+                src={previewDocModal.thumbnailUrl || previewDocModal.url}
+                alt={previewDocModal.title}
+                className="max-h-[320px] w-auto object-contain rounded-xl"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600 pt-1">
+              <div>
+                {previewDocModal.docNumber && (
+                  <span className="font-bold text-[#14213D]">
+                    Reference: {previewDocModal.docNumber}
+                  </span>
+                )}
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-black text-[10px] uppercase">
+                {previewDocModal.status || 'UPLOADED'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Personal Information Card (View & Edit Mode) */}
       <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">

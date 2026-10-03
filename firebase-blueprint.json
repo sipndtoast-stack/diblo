@@ -32,6 +32,8 @@
         "fcmTokenUpdatedAt": { "type": "string" },
         "referralCode": { "type": "string" },
         "walletBalance": { "type": "number" },
+        "mandatoryDocuments": { "type": "array", "items": { "type": "object" } },
+        "documents": { "type": "array", "items": { "type": "object" } },
         "profileCompleted": { "type": "boolean" },
         "profileCompletion": { "type": "number" },
         "createdAt": { "type": "string" }
@@ -49,6 +51,7 @@
         "phone": { "type": "string", "maxLength": 20 },
         "email": { "type": "string" },
         "photo": { "type": "string" },
+        "documents": { "type": "array", "items": { "type": "object" } },
         "rating": { "type": "number" },
         "totalRatings": { "type": "number" },
         "verificationStatus": { "type": "string", "enum": ["VERIFIED", "PENDING", "REJECTED", "SUSPENDED"] },

@@ -38,6 +38,25 @@ export interface ContactPreferences {
   preferredLanguage?: string;
 }
 
+export type DocumentUploadStatus = 'PENDING' | 'UPLOADING' | 'UPLOADED' | 'VERIFIED' | 'ERROR';
+
+export interface MandatoryDocumentItem {
+  id: string;
+  type: string;
+  title: string;
+  documentNumber?: string;
+  fileUrl: string;
+  thumbnailUrl?: string;
+  fileName: string;
+  fileSize?: number;
+  mimeType: string;
+  status: DocumentUploadStatus;
+  progress?: number;
+  mandatory: boolean;
+  uploadedAt: string;
+  errorMessage?: string;
+}
+
 export interface CustomerProfile {
   id: string;
   userId: string;
@@ -66,6 +85,8 @@ export interface CustomerProfile {
     phone?: string;
     notes?: string;
   }[];
+  mandatoryDocuments?: MandatoryDocumentItem[];
+  documents?: MandatoryDocumentItem[];
   favoriteAssistantIds?: string[];
   fcmToken?: string;
   fcmTokenUpdatedAt?: string;
@@ -94,10 +115,14 @@ export interface AssistantDocument {
   title?: string;
   documentNumber: string;
   fileUrl: string;
+  thumbnailUrl?: string;
   fileName?: string;
+  fileSize?: number;
   mimeType?: string;
   backFileUrl?: string;
   backFileName?: string;
+  uploadStatus?: DocumentUploadStatus;
+  uploadProgress?: number;
   verified: boolean;
   uploadedAt: string;
 }

@@ -16,11 +16,17 @@ import {
   X,
   Check,
   Sparkles,
-  CreditCard,
-  FileCheck
+  AlertCircle,
+  Loader2,
+  FileCheck,
+  ScanLine
 } from 'lucide-react';
-import { AssistantProfile, AssistantDocument } from '../../types';
+import { AssistantProfile, AssistantDocument, DocumentUploadStatus } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import {
+  DocumentScannerModal,
+  ScannedDocumentOutput
+} from '../common/DocumentScannerModal';
 
 interface AssistantProfileViewProps {
   mode: 'MY_PROFILE' | 'DOCUMENTS';
@@ -34,6 +40,7 @@ interface DocumentSlotConfig {
   subtitle: string;
   defaultNumber: string;
   placeholder: string;
+  mandatory: boolean;
   supportsBackSide?: boolean;
 }
 
@@ -44,7 +51,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Profile Photo & Identity Match',
     subtitle: 'Clear front-facing selfie or passport photo for Diblo EPL ID badge',
     defaultNumber: 'Biometrics Cleared',
-    placeholder: 'Badge / ID Reference'
+    placeholder: 'Badge / ID Reference',
+    mandatory: true
   },
   {
     id: 'doc-aadhaar',
@@ -53,6 +61,7 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     subtitle: '12-digit UIDAI Government Identity Card (JPG, PNG or PDF)',
     defaultNumber: '•••• •••• 4912',
     placeholder: 'Enter 12-digit Aadhaar Number',
+    mandatory: true,
     supportsBackSide: true
   },
   {
@@ -61,7 +70,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'PAN Card',
     subtitle: 'Permanent Account Number card for tax & weekly payout compliance',
     defaultNumber: 'ABCDE1234F',
-    placeholder: 'Enter 10-character PAN Number'
+    placeholder: 'Enter 10-character PAN Number',
+    mandatory: true
   },
   {
     id: 'doc-licence',
@@ -69,7 +79,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Driving Licence',
     subtitle: 'Valid LMV / Two-Wheeler Driving Licence issued by RTO',
     defaultNumber: 'MH02 20180019284',
-    placeholder: 'Enter Driving Licence Number'
+    placeholder: 'Enter Driving Licence Number',
+    mandatory: true
   },
   {
     id: 'doc-address',
@@ -77,7 +88,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Address Proof (Electricity Bill / Rent Agreement)',
     subtitle: 'Current residential address proof in Mumbai Metropolitan Region',
     defaultNumber: 'Verified at Bandra West',
-    placeholder: 'Address / Consumer Number'
+    placeholder: 'Address / Consumer Number',
+    mandatory: true
   },
   {
     id: 'doc-police',
@@ -85,7 +97,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Police Verification NOC',
     subtitle: 'Mumbai Police Clearance Certificate (PCC) / Character Verification',
     defaultNumber: 'NOC-MUM-W-883921',
-    placeholder: 'Enter Police NOC / Token Number'
+    placeholder: 'Enter Police NOC / Token Number',
+    mandatory: true
   },
   {
     id: 'doc-bank',
@@ -93,7 +106,8 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Bank Passbook / Cancelled Cheque',
     subtitle: 'For automated weekly payouts every Monday/Tuesday',
     defaultNumber: 'HDFC Bank •••• 1234',
-    placeholder: 'Account No / IFSC Code'
+    placeholder: 'Account No / IFSC Code',
+    mandatory: true
   },
   {
     id: 'doc-family',
@@ -101,83 +115,142 @@ const DOCUMENT_SLOTS: DocumentSlotConfig[] = [
     title: 'Family Mobile & Emergency Contact Proof',
     subtitle: 'Emergency family member ID or verified contact details',
     defaultNumber: 'Emergency Family Contact Verified',
-    placeholder: 'Family Name & 10-digit Mobile'
+    placeholder: 'Family Name & 10-digit Mobile',
+    mandatory: true
   }
 ];
 
+export const createPdfThumbnailSvgDataUrl = (fileName: string): string => {
+  const safeLabel = (fileName || 'Document.pdf')
+    .replace(/[^a-zA-Z0-9._ -]/g, '')
+    .slice(0, 22);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="24" fill="#FFF0F5"/><rect x="36" y="22" width="88" height="116" rx="12" fill="#FFFFFF" stroke="#F42F73" stroke-width="3"/><rect x="48" y="42" width="40" height="18" rx="4" fill="#F42F73"/><text x="68" y="55" font-family="sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">PDF</text><line x1="48" y1="74" x2="112" y2="74" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/><line x1="48" y1="88" x2="104" y2="88" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/><line x1="48" y1="102" x2="92" y2="102" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/><text x="80" y="126" font-family="sans-serif" font-size="9" font-weight="bold" fill="#14213D" text-anchor="middle">${safeLabel}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+export const formatFileSize = (bytes?: number): string => {
+  if (!bytes || bytes <= 0) return '120 KB';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+};
+
 export const compressAndReadFile = (
   file: File,
-  maxDimension = 900
-): Promise<{ dataUrl: string; fileName: string; mimeType: string }> => {
+  maxDimension = 900,
+  onProgress?: (percent: number) => void
+): Promise<{
+  dataUrl: string;
+  thumbnailUrl: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+}> => {
   return new Promise((resolve, reject) => {
-    const mimeType = file.type || 'application/octet-stream';
+    const mimeType = file.type || 'image/jpeg';
     const fileName = file.name || 'uploaded-document';
+    const fileSize = file.size || 0;
 
-    if (mimeType.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
+    if (onProgress) onProgress(25);
 
-          if (width > height && width > maxDimension) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else if (height > maxDimension) {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
+    const isJsDom =
+      typeof navigator !== 'undefined' && /jsdom|happydom/i.test(navigator.userAgent || '');
 
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-            resolve({
-              dataUrl: compressedDataUrl,
-              fileName,
-              mimeType: 'image/jpeg'
-            });
-          } else {
-            resolve({
-              dataUrl: String(e.target?.result || ''),
-              fileName,
-              mimeType
-            });
-          }
-        };
-        img.onerror = () => {
+    const reader = new FileReader();
+    reader.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) {
+        const pct = Math.min(85, Math.max(30, Math.round((ev.loaded / ev.total) * 85)));
+        onProgress(pct);
+      }
+    };
+
+    reader.onload = (e) => {
+      const rawDataUrl = String(e.target?.result || '');
+      if (onProgress) onProgress(90);
+
+      if (mimeType.startsWith('image/') && !isJsDom) {
+        let settled = false;
+        const finish = (finalUrl: string) => {
+          if (settled) return;
+          settled = true;
+          if (onProgress) onProgress(100);
           resolve({
-            dataUrl: String(e.target?.result || ''),
+            dataUrl: finalUrl,
+            thumbnailUrl: finalUrl,
             fileName,
-            mimeType
+            fileSize,
+            mimeType: 'image/jpeg'
           });
         };
-        img.src = String(e.target?.result || '');
-      };
-      reader.onerror = () => reject(new Error('Failed to read image file'));
-      reader.readAsDataURL(file);
-    } else {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const rawResult = String(e.target?.result || '');
-        // Keep data URL reasonable size for Firestore/localStorage
+
+        // Safety timer in case Image decoding is blocked or slow
+        const fallbackTimer = setTimeout(() => {
+          finish(rawDataUrl);
+        }, 200);
+
+        const img = new Image();
+        img.onload = () => {
+          clearTimeout(fallbackTimer);
+          try {
+            const canvas = document.createElement('canvas');
+            let width = img.width || 400;
+            let height = img.height || 400;
+
+            if (width > height && width > maxDimension) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else if (height > maxDimension) {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+              finish(compressedDataUrl);
+              return;
+            }
+          } catch {
+            // Fallback to rawDataUrl
+          }
+          finish(rawDataUrl);
+        };
+        img.onerror = () => {
+          clearTimeout(fallbackTimer);
+          finish(rawDataUrl);
+        };
+        img.src = rawDataUrl;
+      } else if (mimeType.startsWith('image/')) {
+        if (onProgress) onProgress(100);
+        resolve({
+          dataUrl: rawDataUrl,
+          thumbnailUrl: rawDataUrl,
+          fileName,
+          fileSize,
+          mimeType
+        });
+      } else {
+        if (onProgress) onProgress(100);
         const safeDataUrl =
-          rawResult.length <= 350000
-            ? rawResult
+          rawDataUrl.length <= 350000
+            ? rawDataUrl
             : `data:application/pdf;name=${encodeURIComponent(fileName)},uploaded`;
+        const pdfThumb = createPdfThumbnailSvgDataUrl(fileName);
         resolve({
           dataUrl: safeDataUrl,
+          thumbnailUrl: pdfThumb,
           fileName,
+          fileSize,
           mimeType: mimeType || 'application/pdf'
         });
-      };
-      reader.onerror = () => reject(new Error('Failed to read document file'));
-      reader.readAsDataURL(file);
-    }
+      }
+    };
+
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
   });
 };
 
@@ -228,12 +301,17 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
   };
 
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [uploadProgressMap, setUploadProgressMap] = useState<Record<string, number>>({});
+  const [uploadStatusMap, setUploadStatusMap] = useState<Record<string, DocumentUploadStatus>>({});
+  const [uploadErrorMap, setUploadErrorMap] = useState<Record<string, string>>({});
   const [statusToast, setStatusToast] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     fileUrl: string;
     fileName?: string;
+    fileSize?: number;
   } | null>(null);
+  const [activeScannerSlot, setActiveScannerSlot] = useState<DocumentSlotConfig | null>(null);
   const [editingDocNumbers, setEditingDocNumbers] = useState<Record<string, string>>({});
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({
@@ -261,17 +339,57 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
     return existingDocs.find((d) => d.id === slot.id || d.type === slot.type);
   };
 
+  // Calculate overall mandatory document upload completion
+  const mandatorySlots = DOCUMENT_SLOTS.filter((s) => s.mandatory);
+  const uploadedMandatoryCount = mandatorySlots.filter((slot) => {
+    const rec = getDocumentRecord(slot);
+    return Boolean(rec?.fileUrl) || (slot.type === 'PROFILE_PHOTO' && Boolean(profile.photo));
+  }).length;
+  const mandatoryCompletionPercent = Math.round(
+    (uploadedMandatoryCount / Math.max(1, mandatorySlots.length)) * 100
+  );
+
   // Handle Profile Photo Upload
   const handleProfilePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!file.type.startsWith('image/')) {
+      setUploadStatusMap((prev) => ({ ...prev, 'doc-photo': 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        'doc-photo': 'Please select a valid image file (JPG, PNG, WEBP).'
+      }));
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadStatusMap((prev) => ({ ...prev, 'doc-photo': 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        'doc-photo': 'File size exceeds 10MB limit.'
+      }));
+      return;
+    }
+
     setUploadingId('profile-photo');
+    setUploadStatusMap((prev) => ({ ...prev, 'doc-photo': 'UPLOADING' }));
+    setUploadErrorMap((prev) => {
+      const next = { ...prev };
+      delete next['doc-photo'];
+      return next;
+    });
+
     try {
-      const { dataUrl, fileName, mimeType } = await compressAndReadFile(file, 700);
+      const { dataUrl, fileName, fileSize, mimeType } = await compressAndReadFile(
+        file,
+        700,
+        (pct) => {
+          setUploadProgressMap((prev) => ({ ...prev, 'doc-photo': pct }));
+        }
+      );
       const nowIso = new Date().toISOString();
 
-      // Also update the PROFILE_PHOTO document entry
       const otherDocs = existingDocs.filter(
         (d) => d.id !== 'doc-photo' && d.type !== 'PROFILE_PHOTO'
       );
@@ -282,7 +400,10 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
         documentNumber: 'Biometrics & Selfie Uploaded',
         fileUrl: dataUrl,
         fileName,
+        fileSize,
         mimeType,
+        uploadStatus: 'UPLOADED',
+        uploadProgress: 100,
         verified: true,
         uploadedAt: nowIso
       };
@@ -292,9 +413,14 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
         documents: [photoDoc, ...otherDocs]
       });
 
+      setUploadStatusMap((prev) => ({ ...prev, 'doc-photo': 'UPLOADED' }));
       showSuccessToast('Profile photo uploaded & updated successfully!');
-    } catch (err) {
-      console.error('Profile photo upload error:', err);
+    } catch (err: any) {
+      setUploadStatusMap((prev) => ({ ...prev, 'doc-photo': 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        'doc-photo': err?.message || 'Upload failed. Please try again.'
+      }));
     } finally {
       setUploadingId(null);
       e.target.value = '';
@@ -310,9 +436,45 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const isAllowedType =
+      file.type.startsWith('image/') ||
+      file.type === 'application/pdf' ||
+      /\.(jpg|jpeg|png|webp|pdf)$/i.test(file.name || '');
+
+    if (!isAllowedType) {
+      setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        [slot.id]: 'Invalid file format. Please upload JPG, PNG, WEBP, or PDF.'
+      }));
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        [slot.id]: 'File size exceeds 10MB limit. Please choose a smaller file.'
+      }));
+      return;
+    }
+
     setUploadingId(`${slot.id}-${side}`);
+    setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'UPLOADING' }));
+    setUploadErrorMap((prev) => {
+      const next = { ...prev };
+      delete next[slot.id];
+      return next;
+    });
+
     try {
-      const { dataUrl, fileName, mimeType } = await compressAndReadFile(file, 1000);
+      const { dataUrl, thumbnailUrl, fileName, fileSize, mimeType } = await compressAndReadFile(
+        file,
+        1000,
+        (pct) => {
+          setUploadProgressMap((prev) => ({ ...prev, [slot.id]: pct }));
+        }
+      );
       const nowIso = new Date().toISOString();
       const currentDoc = getDocumentRecord(slot);
       const docNum =
@@ -324,16 +486,21 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
             }): ${profile.emergencyContact?.phone || profile.phone}`
           : slot.defaultNumber);
 
+      const displayUrl = mimeType.startsWith('image/') ? dataUrl : thumbnailUrl || dataUrl;
+
       const updatedDoc: AssistantDocument = {
         id: slot.id,
         type: slot.type,
         title: slot.title,
         documentNumber: docNum,
-        fileUrl: side === 'FRONT' ? dataUrl : currentDoc?.fileUrl || dataUrl,
+        fileUrl: side === 'FRONT' ? displayUrl : currentDoc?.fileUrl || displayUrl,
         fileName: side === 'FRONT' ? fileName : currentDoc?.fileName || fileName,
+        fileSize: side === 'FRONT' ? fileSize : currentDoc?.fileSize || fileSize,
         mimeType: side === 'FRONT' ? mimeType : currentDoc?.mimeType || mimeType,
-        backFileUrl: side === 'BACK' ? dataUrl : currentDoc?.backFileUrl,
+        backFileUrl: side === 'BACK' ? displayUrl : currentDoc?.backFileUrl,
         backFileName: side === 'BACK' ? fileName : currentDoc?.backFileName,
+        uploadStatus: 'UPLOADED',
+        uploadProgress: 100,
         verified: true,
         uploadedAt: nowIso
       };
@@ -343,7 +510,6 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
       );
       const nextDocs = [...otherDocs, updatedDoc];
 
-      // If uploading to doc-photo, also update the assistant's main avatar photo
       if (slot.type === 'PROFILE_PHOTO' && dataUrl.startsWith('data:image/')) {
         updateAssistantProfile({
           photo: dataUrl,
@@ -355,11 +521,16 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
         });
       }
 
+      setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'UPLOADED' }));
       showSuccessToast(
         `${slot.title}${side === 'BACK' ? ' (Back Side)' : ''} uploaded successfully!`
       );
-    } catch (err) {
-      console.error('Document upload error:', err);
+    } catch (err: any) {
+      setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'ERROR' }));
+      setUploadErrorMap((prev) => ({
+        ...prev,
+        [slot.id]: err?.message || 'Upload failed. Please try again.'
+      }));
     } finally {
       setUploadingId(null);
       e.target.value = '';
@@ -379,9 +550,11 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
       documentNumber: newNumber,
       fileUrl: currentDoc?.fileUrl || '',
       fileName: currentDoc?.fileName,
+      fileSize: currentDoc?.fileSize,
       mimeType: currentDoc?.mimeType,
       backFileUrl: currentDoc?.backFileUrl,
       backFileName: currentDoc?.backFileName,
+      uploadStatus: currentDoc?.fileUrl ? 'UPLOADED' : 'PENDING',
       verified: true,
       uploadedAt: currentDoc?.uploadedAt || new Date().toISOString()
     };
@@ -399,7 +572,53 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
     updateAssistantProfile({
       documents: otherDocs
     });
+    setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'PENDING' }));
+    setUploadProgressMap((prev) => ({ ...prev, [slot.id]: 0 }));
     showSuccessToast(`Removed uploaded file for ${slot.title}`);
+  };
+
+  // Handle Scanned & Cropped Document from Camera Scanner
+  const handleAssistantScannedDocComplete = async (
+    slot: DocumentSlotConfig,
+    scanned: ScannedDocumentOutput
+  ) => {
+    setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'UPLOADING' }));
+    setUploadProgressMap((prev) => ({ ...prev, [slot.id]: 60 }));
+
+    const currentRecord = getDocumentRecord(slot);
+    const updatedDoc: AssistantDocument = {
+      id: slot.id,
+      type: slot.type,
+      title: slot.title,
+      documentNumber:
+        editingDocNumbers[slot.id]?.trim() ||
+        currentRecord?.documentNumber ||
+        slot.defaultNumber,
+      fileUrl: scanned.dataUrl,
+      thumbnailUrl: scanned.thumbnailUrl || scanned.dataUrl,
+      fileName: scanned.fileName,
+      fileSize: scanned.fileSize,
+      mimeType: scanned.mimeType,
+      uploadStatus: 'UPLOADED',
+      uploadProgress: 100,
+      verified: true,
+      uploadedAt: new Date().toISOString()
+    };
+
+    const filteredDocs = existingDocs.filter((d) => d.id !== slot.id && d.type !== slot.type);
+    const updatedDocs = [...filteredDocs, updatedDoc];
+
+    const payload: Partial<AssistantProfile> = {
+      documents: updatedDocs
+    };
+    if (slot.type === 'PROFILE_PHOTO') {
+      payload.photo = scanned.dataUrl;
+    }
+
+    updateAssistantProfile(payload);
+    setUploadStatusMap((prev) => ({ ...prev, [slot.id]: 'UPLOADED' }));
+    setUploadProgressMap((prev) => ({ ...prev, [slot.id]: 100 }));
+    showSuccessToast(`${slot.title} scanned, cropped & uploaded!`);
   };
 
   // Handle Profile Details Save
@@ -435,9 +654,46 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
     showSuccessToast('Assistant profile details saved successfully!');
   };
 
-  // Shared Documents Upload Grid Component (shown in DOCUMENTS mode and at bottom of MY_PROFILE mode)
+  // Shared Documents Upload Grid Component
   const renderDocumentsUploadGrid = () => (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="assistant-mandatory-documents-section">
+      {/* Overall Mandatory Documents Upload Progress & Status Tracker */}
+      <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-[#FFF0F5] text-[#F42F73] flex items-center justify-center shrink-0">
+              <FileCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-[#14213D]">
+                Mandatory Documents Upload Status
+              </h3>
+              <p className="text-[11px] text-gray-500">
+                {uploadedMandatoryCount} of {mandatorySlots.length} mandatory verification documents uploaded
+              </p>
+            </div>
+          </div>
+
+          <span
+            data-testid="mandatory-upload-overall-status"
+            className={`text-xs font-black px-3 py-1 rounded-full w-fit ${
+              mandatoryCompletionPercent === 100
+                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                : 'bg-amber-100 text-amber-800 border border-amber-300'
+            }`}
+          >
+            {mandatoryCompletionPercent}% Uploaded ({uploadedMandatoryCount}/{mandatorySlots.length})
+          </span>
+        </div>
+
+        <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[#F42F73] to-emerald-500 transition-all duration-300 rounded-full"
+            style={{ width: `${mandatoryCompletionPercent}%` }}
+          />
+        </div>
+      </div>
+
       {/* Top Profile Photo Quick Upload Banner */}
       <div className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-[#F42F73]/25 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-5">
         <div className="flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
@@ -500,19 +756,24 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
         </div>
       </div>
 
-      {/* All KYC & Verification Document Cards with Upload Option */}
+      {/* All KYC & Verification Document Cards with Thumbnail Preview & Status Tracking */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {DOCUMENT_SLOTS.map((slot) => {
           const docRecord = getDocumentRecord(slot);
           const hasUploadedFile = Boolean(docRecord?.fileUrl);
           const hasBackFile = Boolean(docRecord?.backFileUrl);
-          const isImageFile =
-            docRecord?.fileUrl?.startsWith('data:image/') ||
-            (slot.type === 'PROFILE_PHOTO' && Boolean(profile.photo));
           const displayImageUrl =
             slot.type === 'PROFILE_PHOTO'
               ? docRecord?.fileUrl || profile.photo
               : docRecord?.fileUrl;
+
+          const activeStatus: DocumentUploadStatus =
+            uploadStatusMap[slot.id] ||
+            docRecord?.uploadStatus ||
+            (hasUploadedFile ? 'UPLOADED' : 'PENDING');
+          const progressVal =
+            uploadProgressMap[slot.id] ?? (hasUploadedFile ? 100 : 0);
+          const errMsg = uploadErrorMap[slot.id];
 
           const currentDocNumber =
             editingDocNumbers[slot.id] !== undefined
@@ -527,26 +788,83 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
           return (
             <div
               key={slot.id}
+              data-testid={`document-card-${slot.id}`}
               className="bg-white rounded-3xl p-5 border border-gray-200 shadow-xs flex flex-col justify-between space-y-4 hover:border-[#F42F73]/40 transition-all"
             >
               <div className="space-y-3">
-                {/* Header & Status Badge */}
+                {/* Header & Upload Status Badge */}
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-sm font-black text-[#14213D]">{slot.title}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black text-[#14213D]">{slot.title}</span>
+                      {slot.mandatory && (
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-50 text-[#F42F73] border border-rose-200">
+                          Mandatory
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-gray-500 mt-0.5">{slot.subtitle}</p>
                   </div>
+
                   <span
+                    data-testid={`upload-status-${slot.id}`}
                     className={`text-[10px] font-black px-2.5 py-1 rounded-full flex items-center gap-1 shrink-0 ${
-                      hasUploadedFile
+                      activeStatus === 'UPLOADING'
+                        ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                        : activeStatus === 'ERROR'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                        : hasUploadedFile
                         ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                        : 'bg-emerald-50 text-emerald-700'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
                     }`}
                   >
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    <span>{hasUploadedFile ? 'Uploaded & Verified' : 'Verified'}</span>
+                    {activeStatus === 'UPLOADING' ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                        <span>Uploading {progressVal}%</span>
+                      </>
+                    ) : activeStatus === 'ERROR' ? (
+                      <>
+                        <AlertCircle className="w-3 h-3 text-rose-600" />
+                        <span>Upload Failed</span>
+                      </>
+                    ) : hasUploadedFile ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Uploaded & Verified</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        <span>Pending Upload</span>
+                      </>
+                    )}
                   </span>
                 </div>
+
+                {/* Upload Progress Bar when uploading */}
+                {activeStatus === 'UPLOADING' && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-bold text-blue-700">
+                      <span>Uploading document...</span>
+                      <span>{progressVal}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-600 transition-all duration-200"
+                        style={{ width: `${progressVal}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload Error Alert */}
+                {errMsg && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-700 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{errMsg}</span>
+                  </div>
+                )}
 
                 {/* Editable Document Number / Reference Field */}
                 <div className="space-y-1">
@@ -580,56 +898,61 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
                   </div>
                 </div>
 
-                {/* Uploaded File Preview Box */}
-                {(hasUploadedFile || slot.type === 'PROFILE_PHOTO') && (
+                {/* Uploaded File Thumbnail Preview Box */}
+                {(hasUploadedFile || slot.type === 'PROFILE_PHOTO') && displayImageUrl && (
                   <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      {isImageFile && displayImageUrl ? (
-                        <img
-                          src={displayImageUrl}
-                          alt={slot.title}
-                          className="w-12 h-12 rounded-xl object-cover border border-emerald-300 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                          <FileCheck className="w-6 h-6" />
-                        </div>
-                      )}
+                      <img
+                        src={displayImageUrl}
+                        alt={`${slot.title} thumbnail preview`}
+                        data-testid={`document-thumbnail-${slot.id}`}
+                        onClick={() =>
+                          setPreviewDoc({
+                            title: slot.title,
+                            fileUrl: displayImageUrl,
+                            fileName: docRecord?.fileName,
+                            fileSize: docRecord?.fileSize
+                          })
+                        }
+                        className="w-14 h-14 rounded-xl object-cover border-2 border-emerald-400 shrink-0 cursor-pointer hover:opacity-90 transition-opacity bg-white"
+                      />
                       <div className="min-w-0">
                         <div className="text-xs font-black text-emerald-950 truncate">
                           {docRecord?.fileName ||
-                            (slot.type === 'PROFILE_PHOTO' ? 'Active Profile Photo' : 'Document Uploaded')}
+                            (slot.type === 'PROFILE_PHOTO'
+                              ? 'Active Profile Photo'
+                              : `${slot.title} Uploaded`)}
                         </div>
-                        <div className="text-[10px] text-emerald-700">
+                        <div className="text-[10px] text-emerald-700 font-medium">
+                          {formatFileSize(docRecord?.fileSize)} •{' '}
                           {docRecord?.uploadedAt
                             ? `Uploaded ${new Date(docRecord.uploadedAt).toLocaleDateString('en-IN', {
                                 day: 'numeric',
                                 month: 'short',
                                 year: 'numeric'
                               })}`
-                            : 'Ready for verification'}
-                          {hasBackFile ? ' • Front & Back attached' : ''}
+                            : 'Verified'}
+                          {hasBackFile ? ' • Front & Back' : ''}
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {displayImageUrl && displayImageUrl.startsWith('data:image/') && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPreviewDoc({
-                              title: slot.title,
-                              fileUrl: displayImageUrl,
-                              fileName: docRecord?.fileName
-                            })
-                          }
-                          className="p-2 rounded-xl bg-white hover:bg-gray-100 text-[#14213D] border border-gray-200 text-xs font-bold"
-                          title="Preview Uploaded Document"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewDoc({
+                            title: slot.title,
+                            fileUrl: displayImageUrl,
+                            fileName: docRecord?.fileName,
+                            fileSize: docRecord?.fileSize
+                          })
+                        }
+                        className="p-2 rounded-xl bg-white hover:bg-gray-100 text-[#14213D] border border-gray-200 text-xs font-bold"
+                        title="Preview Uploaded Document"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
                       {hasUploadedFile && (
                         <button
                           type="button"
@@ -645,9 +968,20 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
                 )}
               </div>
 
-              {/* Upload Action Buttons */}
+              {/* Upload & Camera Scan Action Buttons */}
               <div className="pt-3 border-t border-gray-100 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid={`scan-doc-btn-${slot.id}`}
+                    aria-label={`Scan ${slot.title}`}
+                    onClick={() => setActiveScannerSlot(slot)}
+                    className="py-2.5 px-3.5 rounded-2xl bg-[#F42F73] hover:bg-[#D81B60] text-white text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[40px] shadow-2xs"
+                  >
+                    <ScanLine className="w-3.5 h-3.5" />
+                    <span>Scan Document</span>
+                  </button>
+
                   <label
                     htmlFor={`upload-input-${slot.id}-front`}
                     className="flex-1 py-2.5 px-3.5 rounded-2xl bg-[#14213D] hover:bg-[#1E293B] text-white text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[40px] shadow-2xs"
@@ -666,6 +1000,8 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
                     </span>
                     <input
                       id={`upload-input-${slot.id}-front`}
+                      data-testid={`file-input-${slot.id}`}
+                      aria-label={`Upload ${slot.title}`}
                       type="file"
                       accept={slot.type === 'PROFILE_PHOTO' ? 'image/*' : 'image/*,.pdf'}
                       onChange={(e) => handleDocumentFileChange(slot, e, 'FRONT')}
@@ -699,7 +1035,7 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
 
                 <div className="flex items-center justify-between text-[10px] text-gray-400 font-medium">
                   <span>Supports JPG, PNG, Camera Photo or PDF</span>
-                  <span>Verified by Diblo Safety Ops</span>
+                  <span>Status: {hasUploadedFile ? 'Uploaded' : 'Ready to Upload'}</span>
                 </div>
               </div>
             </div>
@@ -1027,9 +1363,10 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
             <div className="p-4 bg-[#14213D] text-white flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-black">{previewDoc.title}</h4>
-                {previewDoc.fileName && (
-                  <p className="text-[11px] text-gray-300">{previewDoc.fileName}</p>
-                )}
+                <p className="text-[11px] text-gray-300">
+                  {previewDoc.fileName || 'Uploaded Document'}{' '}
+                  {previewDoc.fileSize ? `(${formatFileSize(previewDoc.fileSize)})` : ''}
+                </p>
               </div>
               <button
                 type="button"
@@ -1058,6 +1395,19 @@ export const AssistantProfileView: React.FC<AssistantProfileViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Device Camera Document Scanner & Edge Crop Modal */}
+      <DocumentScannerModal
+        isOpen={Boolean(activeScannerSlot)}
+        onClose={() => setActiveScannerSlot(null)}
+        documentTitle={activeScannerSlot?.title || 'Mandatory Verification Document'}
+        documentType={activeScannerSlot?.type}
+        onScanComplete={async (scanned) => {
+          if (activeScannerSlot) {
+            await handleAssistantScannedDocComplete(activeScannerSlot, scanned);
+          }
+        }}
+      />
     </div>
   );
 };

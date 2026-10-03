@@ -307,6 +307,15 @@ function mergeCustomerProfileSources(
     if (Array.isArray(src.favoriteAssistantIds) && src.favoriteAssistantIds.length > 0) {
       result.favoriteAssistantIds = src.favoriteAssistantIds;
     }
+    if (Array.isArray(src.mandatoryDocuments) && src.mandatoryDocuments.length > 0) {
+      result.mandatoryDocuments = src.mandatoryDocuments;
+    }
+    if (Array.isArray(src.documents) && src.documents.length > 0) {
+      result.documents = src.documents;
+      if (!result.mandatoryDocuments || result.mandatoryDocuments.length === 0) {
+        result.mandatoryDocuments = src.documents;
+      }
+    }
     if (src.referralCode) {
       result.referralCode = src.referralCode;
     }
@@ -1073,6 +1082,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       if (merged.contactPreferences) {
         sanitizedPayload.contactPreferences = merged.contactPreferences;
+      }
+      if (Array.isArray(merged.mandatoryDocuments)) {
+        sanitizedPayload.mandatoryDocuments = merged.mandatoryDocuments;
+        sanitizedPayload.documents = merged.mandatoryDocuments;
+      } else if (Array.isArray(merged.documents)) {
+        sanitizedPayload.documents = merged.documents;
+        sanitizedPayload.mandatoryDocuments = merged.documents;
       }
 
       (async () => {
