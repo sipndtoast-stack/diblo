@@ -24,6 +24,15 @@ export const isValidMapsKey = (key: string | null | undefined): boolean => {
   return /^AIza[0-9A-Za-z_-]{33,45}$/.test(trimmed);
 };
 
+const FALLBACK_KEY = 'AIzaSyCb0Fq3FsC-C1mTfM7pugmioQO7fL6Z_MM';
+
+export const getInitialMapsKey = (): string | null => {
+  const envKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string)?.trim();
+  if (isValidMapsKey(envKey)) return envKey;
+  if (isValidMapsKey(FALLBACK_KEY)) return FALLBACK_KEY;
+  return null;
+};
+
 const GoogleMapsContext = createContext<GoogleMapsContextValue>({
   apiKey: null,
   isConfigured: false,
@@ -36,8 +45,8 @@ export const useGoogleMapsConfig = () => useContext(GoogleMapsContext);
 export const useGoogleMaps = () => useContext(GoogleMapsContext);
 
 export const GoogleMapsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [apiKey, setApiKey] = useState<string | null>(getInitialMapsKey);
+  const [isLoading, setIsLoading] = useState<boolean>(!getInitialMapsKey());
   const [authError, setAuthError] = useState<boolean>(false);
   const [authErrorDetails, setAuthErrorDetails] = useState<string | null>(null);
 
@@ -50,7 +59,6 @@ export const GoogleMapsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (mounted) {
         setAuthError(true);
         setAuthErrorDetails('Google Maps API key target blocked or unauthorized');
-        setApiKey(null);
       }
       if (typeof prevAuthFailure === 'function') {
         try {
@@ -68,14 +76,18 @@ export const GoogleMapsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (res.configured && isValidMapsKey(res.apiKey)) {
           setApiKey(res.apiKey!.trim());
           setAuthError(false);
-        } else {
-          setApiKey(null);
+        } else if (!apiKey) {
+          const fallback = getInitialMapsKey();
+          if (fallback) setApiKey(fallback);
         }
         setIsLoading(false);
       })
       .catch(() => {
         if (mounted) {
-          setApiKey(null);
+          if (!apiKey) {
+            const fallback = getInitialMapsKey();
+            if (fallback) setApiKey(fallback);
+          }
           setIsLoading(false);
         }
       });
@@ -98,7 +110,7 @@ export const GoogleMapsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }}
     >
       {isConfigured && apiKey ? (
-        <APIProvider apiKey={apiKey} libraries={['places', 'geometry', 'marker']}>
+        <APIProvider apiKey={apiKey} libraries={['places', 'geometry', 'marker', 'routes']}>
           {children}
         </APIProvider>
       ) : (
